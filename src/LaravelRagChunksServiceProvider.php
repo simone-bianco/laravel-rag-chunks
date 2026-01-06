@@ -19,6 +19,12 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
-        $this->app->bind(EmbeddingDriverInterface::class, OpenaiEmbeddingDriver::class);
+        $this->app->singleton('rag-chunks-hash', function () {
+            return new Services\HashService();
+        });
+
+        $this->app->bind(EmbeddingDriverInterface::class, function () {
+            return Factories\EmbeddingFactory::make();
+        });
     }
 }

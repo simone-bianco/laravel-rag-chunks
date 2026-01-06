@@ -22,6 +22,14 @@ class TestCase extends Orchestra
         ];
     }
 
+    protected function getPackageAliases($app)
+    {
+        return [
+            'EmbeddingFactory' => \SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory::class,
+            'HashService' => \SimoneBianco\LaravelRagChunks\Facades\HashService::class,
+        ];
+    }
+
     public function getEnvironmentSetUp($app)
     {
         $app['config']->set('database.default', 'testing');

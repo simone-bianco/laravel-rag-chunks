@@ -4,10 +4,12 @@ namespace SimoneBianco\LaravelRagChunks\Tests;
 
 use Illuminate\Support\Facades\Hash;
 use Mockery;
+use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\Exceptions\ChunkingFailedException;
+use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Services\Chunk\ChunkService;
+use SimoneBianco\LaravelRagChunks\Services\ChunkService;
 use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
 
 class ChunkServiceTest extends TestCase
@@ -25,7 +27,9 @@ class ChunkServiceTest extends TestCase
 
         // 3. Execute
         $text = "This is a test text that should be chunked.";
-        $chunks = $service->createChunks($text);
+        $alias = 'test_alias_unique';
+        $document = $service->createChunks(new DocumentDTO(text: $text, alias: $alias));
+        $chunks = $document->chunks;
 
         // 4. Assertions
         $this->assertCount(1, $chunks);
@@ -33,10 +37,11 @@ class ChunkServiceTest extends TestCase
         $this->assertEquals([0.1, 0.2, 0.3], $chunks->first()->embedding);
         
         $this->assertDatabaseHas('documents', [
-            'hash' => hash('sha256', $text) // Note: This might fail if Hash::make is random. Document hash checking logic might need revision or loose check.
+            'alias' => $alias,
+            'hash' => HashService::hash($text)
         ]);
         
-        $this->assertDatabaseCount('chunks', 1);
+        $this->assertDatabaseCount('chunks', 1); // Document has 1 chunk
     }
 
     public function test_it_replaces_existing_chunks()
@@ -47,14 +52,14 @@ class ChunkServiceTest extends TestCase
         $service = new ChunkService($embeddingMock, splitSize: 10); // Small size -> multiple chunks
 
         $text = "1234567890EXTRA";
-        $document = Document::create(['hash' => 'old_hash', 'alias' => 'test']);
+        $dto = new DocumentDTO(text: $text, alias: 'test_alias');
         
         // Initial create
-        $service->createChunks($text, $document);
+        $service->createChunks($dto);
         $this->assertDatabaseCount('chunks', 2);
 
-        // Update (clean slate logic)
-        $service->createChunks($text, $document);
+        // Update (uses same alias/hash inside DTO logic)
+        $service->createChunks($dto);
         // Should still be 2, old ones deleted
         $this->assertDatabaseCount('chunks', 2);
     }

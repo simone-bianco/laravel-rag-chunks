@@ -50,7 +50,7 @@ OPENAI_API_KEY=sk-...
 Use the `ChunkService` to split a text into chunks and generate embeddings automatically.
 
 ```php
-use SimoneBianco\LaravelRagChunks\Chunk\ChunkService;
+use SimoneBianco\LaravelRagChunks\Services\ChunkService;
 
 // Inject the service
 public function index(ChunkService $chunkService)
@@ -84,6 +84,8 @@ $nearestChunks = Chunk::query()
 
 ## Testing
 
+To run the package tests from your Laravel application root:
+
 ```bash
-composer test
+vendor/bin/phpunit packages/simone-bianco/laravel-rag-chunks/tests
 ```

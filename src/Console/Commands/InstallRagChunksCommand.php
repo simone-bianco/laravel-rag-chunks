@@ -27,30 +27,41 @@ class InstallRagChunksCommand extends Command
             'postgres'
         );
 
-        $stubName = match ($driver) {
-            'postgres' => 'postgres_create_chunks_table.php.stub',
-            default => 'generic_create_chunks_table.php.stub',
-        };
+        // Publish Migrations
+        $migrationPath = database_path('migrations');
+        $now = now();
+        
+        // 1. Create Documents Table
+        $this->publishMigration(
+            $driver, 
+            'create_documents_table', 
+            $migrationPath, 
+            $now->format('Y_m_d_His')
+        );
 
-        $this->publishMigration($stubName);
+        // 2. Create Chunks Table (1 second later to ensure order)
+        $this->publishMigration(
+            $driver, 
+            'create_chunks_table', 
+            $migrationPath, 
+            $now->addSecond()->format('Y_m_d_His')
+        );
 
+        $this->info("Published migrations for driver: {$driver}");
         $this->info('Package installed successfully.');
-        $this->info('Please review the configuration file at config/laravel-rag-chunks.php');
+        $this->info('Please review the configuration file at config/rag_chunks.php');
     }
 
-    protected function publishMigration(string $stubName): void
+    protected function publishMigration(string $driver, string $filename, string $migrationPath, string $timestamp): void
     {
-        $stubPath = __DIR__ . '/../../../stubs/migrations/' . $stubName;
-        $timestamp = date('Y_m_d_His');
-        $migrationFileName = "{$timestamp}_create_chunks_table.php";
-        $destinationPath = database_path("migrations/{$migrationFileName}");
+        $stubPath = __DIR__ . "/../../../stubs/migrations/{$driver}/{$filename}.php.stub";
+        $targetPath = "{$migrationPath}/{$timestamp}_{$filename}.php";
 
-        if (File::exists($destinationPath)) {
-            $this->warn("Migration file already exists: {$migrationFileName}");
-            return;
+        if (File::exists($targetPath)) {
+            $this->warn("Migration {$filename} already exists.");
+        } else {
+            File::copy($stubPath, $targetPath);
+            $this->info("Published migration: {$filename}");
         }
-
-        File::copy($stubPath, $destinationPath);
-        $this->info("Published migration: {$migrationFileName}");
     }
 }

@@ -1,12 +1,13 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Services\Chunk;
+namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\Exceptions\ChunkingFailedException;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Factories\ChunkFactory;
@@ -25,49 +26,53 @@ class ChunkService
     public function __construct(
         protected ?EmbeddingDriverInterface $embeddingDriver = null,
         protected int $splitSize = 1000,
-        protected ?LoggerInterface $logger = null
+        protected ?LoggerInterface $logger = null,
+        protected ?HashService $hashService = null
     ) {
         $this->embeddingDriver ??= EmbeddingFactory::make();
         $this->logger ??= Log::channel('chunking');
+        $this->hashService = app(HashService::class);
     }
 
-    protected function getOrCreateDocument(string $text): Document
+    protected function getOrCreateDocument(DocumentDTO $dto): Document
     {
         return Document::firstOrCreate([
-            'hash' => hash('sha256', $text),
+            'alias' => $dto->alias ?? Str::random(64),
         ], [
-            'alias' => Str::random(64),
-            'name' => Str::limit($text),
+            'hash' => $dto->hash ?? $this->hashService->hash($dto->text),
+            'name' => $dto->name ?? Str::limit($dto->text),
+            'metadata' => $dto->metadata,
         ]);
     }
 
     /**
      * @throws Throwable
      */
-    public function createChunks(string $text, ?Document $document = null): Collection
+    public function createChunks(DocumentDTO $documentData): Document
     {
+        $document = null;
+
         try {
             $createdChunks = collect();
-            $rawChunks = array_filter(str_split($text, $this->splitSize), function ($rawChunk) {
+            $rawChunks = array_filter(str_split($documentData->text, $this->splitSize), function ($rawChunk) {
                 return ! empty(trim($rawChunk));
             });
 
             if (empty($rawChunks)) {
-                $document?->delete();
-
-                return $createdChunks;
+                throw new ChunkingFailedException('Text is empty or not chunkable');
             }
 
             $rawChunksData = array_map(function ($rawChunk) {
                 return [
                     'content' => $rawChunk,
-                    'hash' => hash('sha256', $rawChunk),
+                    'hash' => $this->hashService->hash($rawChunk),
                 ];
             }, $rawChunks);
 
             /** @var Collection<string, Chunk> $existingChunks */
             $existingChunks = ChunkQueryFactory::make()
-                ->select(['id', 'hash', 'content', 'embedding'])
+                ->select(['hash', 'content', 'embedding'])
+                ->distinct()
                 ->whereIn('hash', Arr::pluck($rawChunksData, 'hash'))
                 ->get()
                 ->keyBy('hash');
@@ -94,15 +99,13 @@ class ChunkService
                 $createdChunks->push($chunk);
             }
 
-            $document ??= $this->getOrCreateDocument($text);
-
-            $document->getConnection()->transaction(function () use ($document, $createdChunks) {
+            return Document::query()->getConnection()->transaction(function () use ($documentData, $createdChunks, &$document) {
+                $document = $this->getOrCreateDocument($documentData);
                 $document->chunks()->delete();
                 $document->chunks()->saveMany($createdChunks->all());
+
+                return $document;
             });
-
-            return $createdChunks;
-
         } catch (Throwable $e) {
             $this->logger->error("Error during chunking: {$e->getMessage()}", [
                 'trace' => $e->getTrace(),

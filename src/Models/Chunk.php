@@ -10,6 +10,12 @@ class Chunk extends Model
 {
     use HasUuids;
 
+    protected $guarded = [];
+
+    protected $casts = [
+        'embedding' => 'array',
+    ];
+
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class);
