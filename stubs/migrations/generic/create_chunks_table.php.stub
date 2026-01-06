@@ -1,0 +1,26 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('chunks', function (Blueprint $table) {
+            $table->uuid('id')->primary();
+            $table->foreignUuid('document_id')->constrained()->cascadeOnDelete();
+            $table->integer('page')->nullable();
+            $table->text('content');
+            $table->string('hash')->index();
+            $table->json('embedding')->nullable(); // Fallback for standard SQL
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('chunks');
+    }
+};
