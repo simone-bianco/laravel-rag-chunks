@@ -2,38 +2,23 @@
 
 namespace SimoneBianco\LaravelRagChunks;
 
+use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Services\Embedding\OpenaiEmbeddingDriver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use Spatie\LaravelPackageTools\Commands\InstallCommand;
 
 class LaravelRagChunksServiceProvider extends PackageServiceProvider
 {
-    /**
-     * Configure the package.
-     *
-     * @param Package $package
-     * @return void
-     */
     public function configurePackage(Package $package): void
     {
         $package
             ->name('laravel-rag-chunks')
-            ->hasConfigFile('laravel-rag-chunks')
-            ->hasCommands([
-            ])
-            ->hasInstallCommand(function(InstallCommand $command) {
-                $command
-                    ->publishConfigFile()
-                    ->askToStarRepoOnGitHub('simone-bianco/laravel-rag-chunks');
-            });
+            ->hasConfigFile('rag_chunks')
+            ->hasCommand(Console\Commands\InstallRagChunksCommand::class);
     }
 
-    /**
-     * Register package services.
-     *
-     * @return void
-     */
     public function packageRegistered(): void
     {
+        $this->app->bind(EmbeddingDriverInterface::class, OpenaiEmbeddingDriver::class);
     }
 }
