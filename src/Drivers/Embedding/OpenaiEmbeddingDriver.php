@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Services\Embedding;
+namespace SimoneBianco\LaravelRagChunks\Drivers\Embedding;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -8,7 +8,7 @@ use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\EmbeddingFailedException;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidCredentialsException;
-use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use Throwable;
 
 class OpenaiEmbeddingDriver implements EmbeddingDriverInterface

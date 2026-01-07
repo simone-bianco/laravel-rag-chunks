@@ -5,10 +5,11 @@ namespace SimoneBianco\LaravelRagChunks\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Tags\HasTags;
 
 class Chunk extends Model
 {
-    use HasUuids;
+    use HasUuids, HasTags;
 
     protected $guarded = [];
 

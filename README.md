@@ -50,10 +50,10 @@ OPENAI_API_KEY=sk-...
 Use the `ChunkService` to split a text into chunks and generate embeddings automatically.
 
 ```php
-use SimoneBianco\LaravelRagChunks\Services\ChunkService;
+use SimoneBianco\LaravelRagChunks\Services\RagService;
 
 // Inject the service
-public function index(ChunkService $chunkService)
+public function index(RagService $chunkService)
 {
     $text = "Long text content from a PDF or Markdown file...";
 

@@ -4,7 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\Factories;
 
 use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
-use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 
 class EmbeddingFactory
 {

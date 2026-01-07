@@ -2,8 +2,8 @@
 
 namespace SimoneBianco\LaravelRagChunks;
 
-use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
-use SimoneBianco\LaravelRagChunks\Services\Embedding\OpenaiEmbeddingDriver;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\OpenaiEmbeddingDriver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 

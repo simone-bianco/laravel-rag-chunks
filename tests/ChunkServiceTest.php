@@ -9,7 +9,7 @@ use SimoneBianco\LaravelRagChunks\Exceptions\ChunkingFailedException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Services\ChunkService;
+use SimoneBianco\LaravelRagChunks\Services\RagService;
 use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
 
 class ChunkServiceTest extends TestCase
@@ -23,7 +23,7 @@ class ChunkServiceTest extends TestCase
             ->andReturn([0.1, 0.2, 0.3]);
 
         // 2. Instantiate Service
-        $service = new ChunkService($embeddingMock, splitSize: 100);
+        $service = new RagService($embeddingMock, splitSize: 100);
 
         // 3. Execute
         $text = "This is a test text that should be chunked.";
@@ -35,12 +35,12 @@ class ChunkServiceTest extends TestCase
         $this->assertCount(1, $chunks);
         $this->assertInstanceOf(Chunk::class, $chunks->first());
         $this->assertEquals([0.1, 0.2, 0.3], $chunks->first()->embedding);
-        
+
         $this->assertDatabaseHas('documents', [
             'alias' => $alias,
             'hash' => HashService::hash($text)
         ]);
-        
+
         $this->assertDatabaseCount('chunks', 1); // Document has 1 chunk
     }
 
@@ -49,11 +49,11 @@ class ChunkServiceTest extends TestCase
         $embeddingMock = Mockery::mock(EmbeddingDriverInterface::class);
         $embeddingMock->shouldReceive('embed')->times(2)->andReturn([0.1]);
 
-        $service = new ChunkService($embeddingMock, splitSize: 10); // Small size -> multiple chunks
+        $service = new RagService($embeddingMock, splitSize: 10); // Small size -> multiple chunks
 
         $text = "1234567890EXTRA";
         $dto = new DocumentDTO(text: $text, alias: 'test_alias');
-        
+
         // Initial create
         $service->createChunks($dto);
         $this->assertDatabaseCount('chunks', 2);

@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts;
+namespace SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts;
 
 interface EmbeddingDriverInterface
 {

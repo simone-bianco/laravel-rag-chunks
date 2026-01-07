@@ -15,17 +15,17 @@ use SimoneBianco\LaravelRagChunks\Factories\ChunkQueryFactory;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use Throwable;
 
-class ChunkService
+class RagService
 {
     /**
      * @throws InvalidEmbeddingDriverException
      */
     public function __construct(
         protected ?EmbeddingDriverInterface $embeddingDriver = null,
-        protected int $splitSize = 1000,
+        protected int $splitSize = 500,
         protected ?LoggerInterface $logger = null,
         protected ?HashService $hashService = null
     ) {
@@ -36,19 +36,30 @@ class ChunkService
 
     protected function getOrCreateDocument(DocumentDTO $dto): Document
     {
-        return Document::firstOrCreate([
+        $document = Document::firstOrCreate([
             'alias' => $dto->alias ?? Str::random(64),
         ], [
             'hash' => $dto->hash ?? $this->hashService->hash($dto->text),
             'name' => $dto->name ?? Str::limit($dto->text),
+            'description' => $dto->description ?? Str::limit($dto->text),
             'metadata' => $dto->metadata,
         ]);
+
+        if ($dto->tagsByType->isNotEmpty()) {
+            $dto->tagsByType->each(fn (array $value, string $key) => $document->attachTags($value, $key));
+        }
+
+        if (!empty($dto->typelessTags)) {
+            $document->attachTags($dto->typelessTags);
+        }
+
+        return $document;
     }
 
     /**
      * @throws Throwable
      */
-    public function createChunks(DocumentDTO $documentData): Document
+    public function addToRag(DocumentDTO $documentData): Document
     {
         $document = null;
 
@@ -104,6 +115,18 @@ class ChunkService
                 $document->chunks()->delete();
                 $document->chunks()->saveMany($createdChunks->all());
 
+                $document->chunks->each(function ($chunk) use ($documentData) {
+                    if (!empty($documentData->typelessTags)) {
+                        $chunk->attachTags($documentData->typelessTags);
+                    }
+
+                    if ($documentData->tagsByType->isNotEmpty()) {
+                        $documentData->tagsByType->each(
+                            fn (array $value, string $key) => $chunk->attachTags($value, $key)
+                        );
+                    }
+                });
+
                 return $document;
             });
         } catch (Throwable $e) {
@@ -112,7 +135,7 @@ class ChunkService
                 'document_id' => $document?->id ?? 'new',
             ]);
 
-            throw new ChunkingFailedException($e->getMessage(), $e->getCode(), $e);
+            throw new ChunkingFailedException($e->getMessage(), 0, $e);
         }
     }
 }
