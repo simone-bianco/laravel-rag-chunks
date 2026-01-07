@@ -14,7 +14,8 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $package
             ->name('laravel-rag-chunks')
             ->hasConfigFile('rag_chunks')
-            ->hasMigration('create_searches_table')
+            ->hasMigrations(['create_searches_table', 'add_description_embedding_to_documents_table'])
+            ->runsMigrations()
             ->hasCommand(Console\Commands\InstallRagChunksCommand::class);
     }
 
@@ -27,5 +28,10 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $this->app->bind(EmbeddingDriverInterface::class, function () {
             return Factories\EmbeddingFactory::make();
         });
+    }
+
+    public function packageBooted(): void
+    {
+        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
     }
 }

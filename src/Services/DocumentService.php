@@ -2,16 +2,18 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
-use App\DTOs\DocumentSearchDataDTO;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
+use SimoneBianco\LaravelRagChunks\Models\Search;
 
 class DocumentService
 {
@@ -34,7 +36,9 @@ class DocumentService
             ], [
                 'hash' => $dto->hash ?? \SimoneBianco\LaravelRagChunks\Facades\HashService::hash($dto->text),
                 'name' => $dto->name ?? Str::limit($dto->text),
+                'name_embedding' => $dto->name ? $this->embeddingDriver->embed($dto->name) : null,
                 'description' => $dto->description ?? Str::limit($dto->text),
+                'description_embedding' => $dto->description ? $this->embeddingDriver->embed($dto->description) : null,
                 'metadata' => $dto->metadata,
             ]);
 
@@ -116,11 +120,26 @@ class DocumentService
     {
         return $this->documentModel::with('tags')
             ->when(!empty($searchData->alias), function (Builder $query) use ($searchData) {
-                $query->whereLike('alias', "%{$searchData->alias}%");
+                $query->where('alias', 'like', "%{$searchData->alias}%");
             })->when(!empty($searchData->name), function (Builder $query) use ($searchData) {
-                $query->whereLike('name', "%{$searchData->name}%");
+                $nameEmbedding = Search::embed($searchData->name);
+                $vector = '[' . implode(',', $nameEmbedding) . ']';
+
+                $query->select('*')
+                    ->selectRaw("1 - (name_embedding <=> '$vector') as similarity")
+                    ->orderByRaw("name_embedding <=> '$vector'");
             })->when(!empty($searchData->tags), function (Builder $query) use ($searchData) {
-                $query->withAllTagsOfAnyType($searchData->tags);
+                if ($searchData->tagFilterMode === TagFilterMode::ALL) {
+                    $query->withAllTagsOfAnyType($searchData->tags);
+                } else {
+                    $query->withAnyTagsOfAnyType($searchData->tags);
+                }
+            })->when(!empty($searchData->description), function (Builder $query) use ($searchData) {
+                $descriptionEmbedding = Search::embed($searchData->description);
+                $vector = '[' . implode(',', $descriptionEmbedding) . ']';
+                $query->select('*')
+                    ->selectRaw("1 - (description_embedding <=> '$vector') as similarity")
+                    ->orderByRaw("description_embedding <=> '$vector'");
             })->paginate(
                 $searchData->perPage,
                 ['*'],

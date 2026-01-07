@@ -41,7 +41,7 @@ class Search extends Model
         $search = static::where('hash', $hash)->first();
 
         if ($search) {
-            return $search;
+            return $search->embedding;
         }
 
         $search = new Search([
