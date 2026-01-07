@@ -14,6 +14,7 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $package
             ->name('laravel-rag-chunks')
             ->hasConfigFile('rag_chunks')
+            ->hasMigration('create_searches_table')
             ->hasCommand(Console\Commands\InstallRagChunksCommand::class);
     }
 
