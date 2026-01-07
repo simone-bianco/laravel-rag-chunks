@@ -2,6 +2,8 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
+use App\DTOs\DocumentSearchDataDTO;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -89,7 +91,7 @@ class DocumentService
 
         return $this->documentModel::query()
             ->getConnection()
-            ->transaction(function () use ($documentData, $createdChunks, &$document) {
+            ->transaction(function () use ($documentData, $createdChunks) {
                 $document = $this->getOrCreateDocument($documentData);
                 $document->chunks()->delete();
                 $document->chunks()->saveMany($createdChunks->all());
@@ -108,5 +110,27 @@ class DocumentService
 
                 return $document;
             });
+    }
+
+    public function search(DocumentSearchDataDTO $searchData)
+    {
+        return $this->documentModel::with('tags')
+            ->when(!empty($searchData->alias), function (Builder $query) use ($searchData) {
+                $query->whereLike('alias', "%{$searchData->alias}%");
+            })->when(!empty($searchData->name), function (Builder $query) use ($searchData) {
+                $query->whereLike('name', "%{$searchData->name}%");
+            })->when(!empty($searchData->tags), function (Builder $query) use ($searchData) {
+                $query->withAllTagsOfAnyType($searchData->tags);
+            })->paginate(
+                $searchData->perPage,
+                ['*'],
+                'page',
+                $searchData->page
+            );
+    }
+
+    public function delete(Document $document): bool
+    {
+        return $document->delete();
     }
 }
