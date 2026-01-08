@@ -13,7 +13,7 @@ readonly class DocumentSearchDataDTO
         public ?string $name = null,
         public ?string $description = null,
         public float $minSimilarity = 0.0,
-        public ?array $tags = null,
-        public TagFilterMode $tagFilterMode = TagFilterMode::ALL,
+        public ?array $anyTags = null,
+        public ?array $allTags = null,
     ) {}
 }

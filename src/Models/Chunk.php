@@ -29,6 +29,12 @@ class Chunk extends Model
         parent::__construct($attributes);
     }
 
+    protected static function boot()
+    {
+        parent::boot();
+        
+    }
+
     protected function casts()
     {
         return [

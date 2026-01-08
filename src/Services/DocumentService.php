@@ -128,12 +128,10 @@ class DocumentService
                 $query->select('*')
                     ->selectRaw("1 - (name_embedding <=> '$vector') as similarity")
                     ->orderByRaw("name_embedding <=> '$vector'");
-            })->when(!empty($searchData->tags), function (Builder $query) use ($searchData) {
-                if ($searchData->tagFilterMode === TagFilterMode::ALL) {
-                    $query->withAllTagsOfAnyType($searchData->tags);
-                } else {
-                    $query->withAnyTagsOfAnyType($searchData->tags);
-                }
+            })->when(!empty($searchData->anyTags), function (Builder $query) use ($searchData) {
+                $query->withAnyTagsOfAnyType($searchData->anyTags);
+            })->when(!empty($searchData->allTags), function (Builder $query) use ($searchData) {
+                $query->withAllTagsOfAnyType($searchData->allTags);
             })->when(!empty($searchData->description), function (Builder $query) use ($searchData) {
                 $descriptionEmbedding = Search::embed($searchData->description);
                 $vector = '[' . implode(',', $descriptionEmbedding) . ']';
