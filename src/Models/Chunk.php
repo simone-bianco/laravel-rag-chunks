@@ -5,15 +5,15 @@ namespace SimoneBianco\LaravelRagChunks\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
-use Spatie\Tags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 use Illuminate\Database\Eloquent\Builder;
 
 class Chunk extends Model
 {
-    use HasUuids, HasTags, HasNearestNeighbors;
+    use HasUuids, HasNearestNeighbors;
 
     protected ChunkModel $driver;
     protected $guarded = [];
@@ -43,16 +43,23 @@ class Chunk extends Model
         return $this->belongsTo(Document::class);
     }
 
-    public function scopeWithNeighborContext(Builder $query, int $page, int $chars = 100): Builder
+    public function scopeWithNeighborSnippets(Builder $query, int $chars = 200): Builder
     {
-        return $query->whereIn('page', [$page - 1, $page, $page + 1])
-            ->select('id', 'document_id', 'page')
-            ->selectRaw("
-                CASE
-                    WHEN page = ? THEN content
-                    WHEN page < ? THEN RIGHT(content, ?)
-                    WHEN page > ? THEN LEFT(content, ?)
-                END as smart_content
-            ", [$page, $page, $chars, $page, $chars]);
+        $prevQuery = self::from('chunks as neighbors')
+            ->selectRaw("RIGHT(neighbors.content, $chars)")
+            ->whereColumn('neighbors.document_id', 'chunks.document_id')
+            ->whereRaw('neighbors.page = chunks.page - 1')
+            ->limit(1);
+
+        $nextQuery = self::from('chunks as neighbors')
+            ->selectRaw("LEFT(neighbors.content, $chars)")
+            ->whereColumn('neighbors.document_id', 'chunks.document_id')
+            ->whereRaw('neighbors.page = chunks.page + 1')
+            ->limit(1);
+
+        return $query->addSelect([
+            'prev_snippet' => $prevQuery,
+            'next_snippet' => $nextQuery
+        ]);
     }
 }

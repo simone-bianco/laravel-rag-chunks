@@ -4,7 +4,6 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Collection;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Search;
@@ -21,19 +20,25 @@ class ChunkService
     public function search(ChunkSearchDataDTO $searchData): LengthAwarePaginator
     {
         return $this->chunkModel::select('*')
-            ->with('tags')
+            ->withNeighborSnippets()
             ->when(!empty($searchData->anyTags), function (Builder $query) use ($searchData) {
-                $query->withAnyTagsOfAnyType($searchData->anyTags);
+                $query->whereHas('document', function (Builder $q) use ($searchData) {
+                    $q->withAnyTagsOfAnyType($searchData->anyTags);
+                });
             })->when(!empty($searchData->allTags), function (Builder $query) use ($searchData) {
-                $query->withAllTagsOfAnyType($searchData->allTags);
+                $query->whereHas('document', function (Builder $q) use ($searchData) {
+                    $q->withAllTagsOfAnyType($searchData->allTags);
+                });
             })->when(!empty($searchData->allTagsByType), function (Builder $query) use ($searchData) {
                 foreach ($searchData->allTagsByType as $type => $tags) {
-                    $query->withAllTags($tags, $type);
+                    $query->whereHas('document', function (Builder $q) use ($tags, $type) {
+                        $q->withAllTags($tags, $type);
+                    });
                 }
             })->when(!empty($searchData->anyTagsByType), function (Builder $query) use ($searchData) {
-                $query->whereHas('document', function (Builder $query) use ($searchData) {
+                $query->whereHas('document', function (Builder $q) use ($searchData) {
                     foreach ($searchData->anyTagsByType as $type => $tags) {
-                        $query->withAnyTags($tags, $type);
+                        $q->withAnyTags($tags, $type);
                     }
                 });
             })->when(!empty($searchData->search), function (Builder $query) use ($searchData) {
