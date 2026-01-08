@@ -31,16 +31,18 @@ class ChunkService
                     $query->withAllTags($tags, $type);
                 }
             })->when(!empty($searchData->anyTagsByType), function (Builder $query) use ($searchData) {
-                foreach ($searchData->anyTagsByType as $type => $tags) {
-                    $query->withAnyTags($tags, $type);
-                }
+                $query->whereHas('document', function (Builder $query) use ($searchData) {
+                    foreach ($searchData->anyTagsByType as $type => $tags) {
+                        $query->withAnyTags($tags, $type);
+                    }
+                });
             })->when(!empty($searchData->search), function (Builder $query) use ($searchData) {
                 $searchDataEmbedding = Search::embed($searchData->search);
                 $vector = '[' . implode(',', $searchDataEmbedding) . ']';
 
-                $query->nearestNeighbors('description_embedding', $searchDataEmbedding, 'cosine')
-                    ->selectRaw('1 - (description_embedding <=> ?) as description_similarity', [$vector])
-                    ->selectRaw('1 - (description_embedding <=> ?) as similarity', [$vector]);
+                $query->nearestNeighbors('embedding', $searchDataEmbedding, 'cosine')
+                    ->selectRaw('1 - (embedding <=> ?) as content_similarity', [$vector])
+                    ->selectRaw('1 - (embedding <=> ?) as similarity', [$vector]);
             })->paginate(
                 $searchData->perPage,
                 ['*'],
