@@ -132,6 +132,14 @@ class DocumentService
                 $query->withAnyTagsOfAnyType($searchData->anyTags);
             })->when(!empty($searchData->allTags), function (Builder $query) use ($searchData) {
                 $query->withAllTagsOfAnyType($searchData->allTags);
+            })->when(!empty($searchData->allTagsByType), function (Builder $query) use ($searchData) {
+                foreach ($searchData->allTagsByType as $type => $tags) {
+                    $query->withAllTags($tags, $type);
+                }
+            })->when(!empty($searchData->anyTagsByType), function (Builder $query) use ($searchData) {
+                foreach ($searchData->anyTagsByType as $type => $tags) {
+                    $query->withAnyTags($tags, $type);
+                }
             })->when(!empty($searchData->description), function (Builder $query) use ($searchData) {
                 $descriptionEmbedding = Search::embed($searchData->description);
                 $vector = '[' . implode(',', $descriptionEmbedding) . ']';

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use Spatie\Tags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
+use Illuminate\Database\Eloquent\Builder;
 
 class Chunk extends Model
 {
@@ -32,7 +33,7 @@ class Chunk extends Model
     protected static function boot()
     {
         parent::boot();
-        
+
     }
 
     protected function casts()
@@ -45,5 +46,18 @@ class Chunk extends Model
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class);
+    }
+
+    public function scopeWithNeighborContext(Builder $query, int $page, int $chars = 200): Builder
+    {
+        return $query->whereIn('page', [$page - 1, $page, $page + 1])
+            ->select('id', 'document_id', 'page')
+            ->selectRaw("
+                CASE
+                    WHEN page = ? THEN content
+                    WHEN page < ? THEN RIGHT(content, ?)
+                    WHEN page > ? THEN LEFT(content, ?)
+                END as smart_content
+            ", [$page, $page, $chars, $page, $chars]);
     }
 }
