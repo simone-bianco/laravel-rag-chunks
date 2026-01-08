@@ -32,7 +32,7 @@ class DocumentService
         /** @var Document $document */
         $document = $this->documentModel::query()
             ->firstOrCreate([
-                'alias' => $dto->alias ?? Str::random(64),
+                'alias' => $dto->alias,
             ], [
                 'hash' => $dto->hash ?? \SimoneBianco\LaravelRagChunks\Facades\HashService::hash($dto->text),
                 'name' => $dto->name ?? Str::limit($dto->text),
@@ -55,6 +55,8 @@ class DocumentService
         if ($document->isDirty()) {
             $document->save();
         }
+
+        $document->tags()->delete();
 
         if ($dto->tagsByType->isNotEmpty()) {
             $dto->tagsByType->each(fn (array $value, string $key) => $document->attachTags($value, $key));
