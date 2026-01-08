@@ -8,10 +8,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use Spatie\Tags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
+use Tpetry\PostgresqlEnhanced\Eloquent\Traits\HasNeighbors;
 
 class Document extends Model
 {
-    use HasUuids, HasTags;
+    use HasNeighbors, HasTags, HasUuids;
 
     protected $fillable = [
         'name',
