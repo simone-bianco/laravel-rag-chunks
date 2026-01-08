@@ -2,14 +2,12 @@
 
 namespace SimoneBianco\LaravelRagChunks\DTOs;
 
-readonly class DocumentSearchDataDTO
+readonly class ChunkSearchDataDTO
 {
     public function __construct(
         public int $page = 1,
         public int $perPage = 100,
-        public ?string $alias = null,
-        public ?string $name = null,
-        public ?string $description = null,
+        public string $search,
         public ?array $anyTags = null,
         public ?array $allTags = null,
         public ?array $anyTagsByType = null,

@@ -6,13 +6,14 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
+use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use Spatie\Tags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 use Illuminate\Database\Eloquent\Builder;
 
 class Chunk extends Model
 {
-    use HasUuids, HasTags;
+    use HasUuids, HasTags, HasNearestNeighbors;
 
     protected ChunkModel $driver;
     protected $guarded = [];
@@ -30,12 +31,6 @@ class Chunk extends Model
         parent::__construct($attributes);
     }
 
-    protected static function boot()
-    {
-        parent::boot();
-
-    }
-
     protected function casts()
     {
         return [
@@ -48,7 +43,7 @@ class Chunk extends Model
         return $this->belongsTo(Document::class);
     }
 
-    public function scopeWithNeighborContext(Builder $query, int $page, int $chars = 200): Builder
+    public function scopeWithNeighborContext(Builder $query, int $page, int $chars = 100): Builder
     {
         return $query->whereIn('page', [$page - 1, $page, $page + 1])
             ->select('id', 'document_id', 'page')

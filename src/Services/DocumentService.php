@@ -9,7 +9,6 @@ use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
-use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -30,6 +29,7 @@ class DocumentService
 
     public function getOrCreateDocument(DocumentDTO $dto): Document
     {
+        /** @var Document $document */
         $document = $this->documentModel::query()
             ->firstOrCreate([
                 'alias' => $dto->alias ?? Str::random(64),
@@ -41,6 +41,20 @@ class DocumentService
                 'description_embedding' => $dto->description ? $this->embeddingDriver->embed($dto->description) : null,
                 'metadata' => $dto->metadata,
             ]);
+
+        $document->name = $dto->name;
+        $document->description = $dto->description;
+        if ($document->isDirty('name')) {
+            $document->name_embedding = $dto->name ? $this->embeddingDriver->embed($dto->name) : null;
+        }
+        if ($document->isDirty('description')) {
+            $document->description_embedding = $dto->description ? $this->embeddingDriver->embed($dto->description) : null;
+        }
+        $document->metadata = $dto->metadata;
+
+        if ($document->isDirty()) {
+            $document->save();
+        }
 
         if ($dto->tagsByType->isNotEmpty()) {
             $dto->tagsByType->each(fn (array $value, string $key) => $document->attachTags($value, $key));
@@ -118,7 +132,8 @@ class DocumentService
 
     public function search(DocumentSearchDataDTO $searchData)
     {
-        return $this->documentModel::with('tags')
+        return $this->documentModel::select('*')
+            ->with('tags')
             ->when(!empty($searchData->alias), function (Builder $query) use ($searchData) {
                 $query->where('alias', 'like', "%{$searchData->alias}%");
             })->when(!empty($searchData->name), function (Builder $query) use ($searchData) {
@@ -128,11 +143,17 @@ class DocumentService
                 $query->nearestNeighbors('name_embedding', $nameEmbedding, 'cosine')
                     ->selectRaw('1 - (name_embedding <=> ?) as name_similarity', [$vector])
                     ->selectRaw('1 - (name_embedding <=> ?) as similarity', [$vector]);
-            })->when(!empty($searchData->tags), function (Builder $query) use ($searchData) {
-                if ($searchData->tagFilterMode === TagFilterMode::ALL) {
-                    $query->withAllTagsOfAnyType($searchData->tags);
-                } else {
-                    $query->withAnyTagsOfAnyType($searchData->tags);
+            })->when(!empty($searchData->anyTags), function (Builder $query) use ($searchData) {
+                $query->withAnyTagsOfAnyType($searchData->anyTags);
+            })->when(!empty($searchData->allTags), function (Builder $query) use ($searchData) {
+                $query->withAllTagsOfAnyType($searchData->allTags);
+            })->when(!empty($searchData->allTagsByType), function (Builder $query) use ($searchData) {
+                foreach ($searchData->allTagsByType as $type => $tags) {
+                    $query->withAllTags($tags, $type);
+                }
+            })->when(!empty($searchData->anyTagsByType), function (Builder $query) use ($searchData) {
+                foreach ($searchData->anyTagsByType as $type => $tags) {
+                    $query->withAnyTags($tags, $type);
                 }
             })->when(!empty($searchData->description), function (Builder $query) use ($searchData) {
                 $descriptionEmbedding = Search::embed($searchData->description);

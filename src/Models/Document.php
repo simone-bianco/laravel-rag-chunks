@@ -8,11 +8,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use Spatie\Tags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
-use Tpetry\PostgresqlEnhanced\Eloquent\Traits\HasNeighbors;
 
 class Document extends Model
 {
-    use HasNeighbors, HasTags, HasUuids;
+    use HasTags, HasUuids, \SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
+
+    protected ChunkModel $driver;
 
     protected $fillable = [
         'name',
@@ -24,8 +25,6 @@ class Document extends Model
         'description_embedding',
         'metadata'
     ];
-
-    protected ChunkModel $driver;
 
     public function __construct(array $attributes = [])
     {
