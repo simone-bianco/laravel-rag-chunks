@@ -42,8 +42,8 @@ class DocumentService
                 'metadata' => $dto->metadata,
             ]);
 
-        $document->name = $dto->name;
-        $document->description = $dto->description;
+        $document->name = $dto->name ?? $document->name;
+        $document->description = $dto->description ?? $document->description;
         if ($document->isDirty('name')) {
             $document->name_embedding = $dto->name ? $this->embeddingDriver->embed($dto->name) : null;
         }

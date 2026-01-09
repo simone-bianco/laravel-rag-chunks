@@ -12,6 +12,6 @@ readonly class ChunkSearchDataDTO
         public ?array $allTags = null,
         public ?array $anyTagsByType = null,
         public ?array $allTagsByType = null,
-        public ?array $documentsIds = null,
+        public ?array $documentsAliases = null,
     ) {}
 }

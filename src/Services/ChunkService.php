@@ -21,8 +21,8 @@ class ChunkService
     {
         return $this->chunkModel::select('*')
             ->withNeighborSnippets()
-            ->when(!empty($searchData->documentsIds), function (Builder $query) use ($searchData) {
-                $query->whereIn('document_id', $searchData->documentsIds);
+            ->when(!empty($searchData->documentsAliases), function (Builder $query) use ($searchData) {
+                $query->whereIn('document_id', $searchData->documentsAliases);
             })->when(!empty($searchData->anyTags), function (Builder $query) use ($searchData) {
                 $query->whereHas('document', function (Builder $q) use ($searchData) {
                     $q->withAnyTagsOfAnyType($searchData->anyTags);
