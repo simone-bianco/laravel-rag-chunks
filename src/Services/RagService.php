@@ -16,8 +16,8 @@ class RagService
         protected ?LoggerInterface $logger = null,
         protected DocumentService $documentService
     ) {
-        $this->splitSize ??= $config['split_size'] ?? 500;
-        $this->logger ??= Log::channel('chunking');
+        $this->splitSize ??= config('laravel-rag-chunks.split_size', 500);
+        $this->logger ??= Log::channel('rag');
     }
 
     /**
@@ -26,7 +26,21 @@ class RagService
     public function addToRag(DocumentDTO $documentData): Document
     {
         try {
-            $rawChunks = array_filter(str_split($documentData->text, $this->splitSize), function ($rawChunk) {
+            $this->logger->info("RagService: processing document {$documentData->alias}");
+
+            $document = Document::updateOrCreate(
+                ['alias' => $documentData->alias],
+                [
+                    'content' => $documentData->text,
+                    'name' => $documentData->name,
+                    'description' => $documentData->description,
+                    'hash' => $documentData->hash,
+                    'metadata' => $documentData->metadata,
+                ]
+            );
+
+            // use mb_str_split to avoid breaking characters
+            $rawChunks = array_filter(mb_str_split($documentData->text, $this->splitSize), function ($rawChunk) {
                 return ! empty(trim($rawChunk));
             });
 
@@ -37,11 +51,12 @@ class RagService
             return $this->documentService->regenerateChunks($documentData, $rawChunks);
         } catch (Throwable $e) {
             $this->logger->error("Error during chunking: {$e->getMessage()}", [
-                'trace' => $e->getTrace(),
                 'document_alias' => $documentData->alias,
             ]);
 
             throw new ChunkingFailedException($e->getMessage(), 0, $e);
         }
+
+
     }
 }

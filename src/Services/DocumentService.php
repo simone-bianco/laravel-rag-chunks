@@ -98,10 +98,18 @@ class DocumentService
                     'embedding' => $existingChunk->embedding,
                 ]);
             } else {
+                \Illuminate\Support\Facades\Log::info("DocumentService: Embedding chunk index {$index}");
+                try {
+                    $embedding = $this->embeddingDriver->embed($data['content']);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::error("DocumentService: Embedding failed for chunk {$index}. Error: " . $e->getMessage());
+                    throw $e;
+                }
+                
                 $chunk = (new $this->chunkModel)->fill([
                     'content' => $data['content'],
                     'hash' => $hash,
-                    'embedding' => $this->embeddingDriver->embed($data['content']),
+                    'embedding' => $embedding,
                 ]);
             }
 
