@@ -7,7 +7,7 @@ readonly class DocumentSearchDataDTO
     public function __construct(
         public int $page = 1,
         public int $perPage = 100,
-        public ?string $alias = null,
+        public ?string $aliases = null,
         public ?string $name = null,
         public ?string $description = null,
         public ?array $anyTags = null,

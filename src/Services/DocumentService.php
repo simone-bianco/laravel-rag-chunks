@@ -136,8 +136,8 @@ class DocumentService
     {
         return $this->documentModel::select('*')
             ->with('tags')
-            ->when(!empty($searchData->alias), function (Builder $query) use ($searchData) {
-                $query->where('alias', 'like', "%{$searchData->alias}%");
+            ->when(!empty($searchData->aliases), function (Builder $query) use ($searchData) {
+                $query->whereIn('alias', $searchData->aliases);
             })->when(!empty($searchData->name), function (Builder $query) use ($searchData) {
                 $nameEmbedding = Search::embed($searchData->name);
                 $vector = '[' . implode(',', $nameEmbedding) . ']';
