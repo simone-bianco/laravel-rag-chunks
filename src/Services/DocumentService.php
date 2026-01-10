@@ -44,11 +44,11 @@ class DocumentService
 
         $document->name = $dto->name ?? $document->name;
         $document->description = $dto->description ?? $document->description;
-        if ($document->isDirty('name')) {
-            $document->name_embedding = $dto->name ? $this->embeddingDriver->embed($dto->name) : null;
+        if ($document->isDirty('name') || ($document->name && $document->name_embedding === null)) {
+            $document->name_embedding = $document->name ? $this->embeddingDriver->embed($document->name) : null;
         }
-        if ($document->isDirty('description')) {
-            $document->description_embedding = $dto->description ? $this->embeddingDriver->embed($dto->description) : null;
+        if ($document->isDirty('description') || ($document->description && $document->description_embedding === null)) {
+            $document->description_embedding = $document->description ? $this->embeddingDriver->embed($document->description) : null;
         }
         $document->metadata = $dto->metadata;
 
