@@ -28,16 +28,9 @@ class RagService
         try {
             $this->logger->info("RagService: processing document {$documentData->alias}");
 
-            $document = Document::updateOrCreate(
-                ['alias' => $documentData->alias],
-                [
-                    'content' => $documentData->text,
-                    'name' => $documentData->name,
-                    'description' => $documentData->description,
-                    'hash' => $documentData->hash,
-                    'metadata' => $documentData->metadata,
-                ]
-            );
+            $this->logger->info("RagService: processing document {$documentData->alias}");
+            
+            // Document creation/update is handled inside regenerateChunks via getOrCreateDocument
 
             // use mb_str_split to avoid breaking characters
             $rawChunks = array_filter(mb_str_split($documentData->text, $this->splitSize), function ($rawChunk) {

@@ -14,7 +14,8 @@ return new class extends Migration
             $table->integer('page')->nullable();
             $table->text('content');
             $table->string('hash')->index();
-            $table->vector('embedding', 1536); // Default OpenAI dimensions
+            $chosenEmbedder = config('rag_chunks.embedding', \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI)->value;
+            $table->vector('embedding', config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536));
             $table->timestamps();
         });
     }

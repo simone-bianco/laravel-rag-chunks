@@ -6,16 +6,18 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
-use Spatie\Tags\HasTags;
+use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
+use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 class Document extends Model
 {
-    use HasTags, HasUuids, \SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
+    use HasTags, HasUuids, HasNearestNeighbors;
 
     protected ChunkModel $driver;
 
     protected $fillable = [
+        'project_id',
         'name',
         'description',
         'alias',
@@ -45,5 +47,10 @@ class Document extends Model
     public function chunks(): HasMany
     {
         return $this->hasMany(Chunk::class);
+    }
+
+    public function project(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Project::class);
     }
 }

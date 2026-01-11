@@ -12,7 +12,7 @@ use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Models\Search;
+use SimoneBianco\LaravelRagChunks\Models\Embedding;
 
 class DocumentService
 {
@@ -34,6 +34,7 @@ class DocumentService
             ->firstOrCreate([
                 'alias' => $dto->alias,
             ], [
+                'project_id' => $dto->project_id,
                 'hash' => $dto->hash ?? \SimoneBianco\LaravelRagChunks\Facades\HashService::hash($dto->text),
                 'name' => $dto->name ?? Str::limit($dto->text),
                 'name_embedding' => $dto->name ? $this->embeddingDriver->embed($dto->name) : null,
@@ -42,6 +43,7 @@ class DocumentService
                 'metadata' => $dto->metadata,
             ]);
 
+        $document->project_id = $dto->project_id;
         $document->name = $dto->name ?? $document->name;
         $document->description = $dto->description ?? $document->description;
         if ($document->isDirty('name') || ($document->name && $document->name_embedding === null)) {
@@ -56,14 +58,10 @@ class DocumentService
             $document->save();
         }
 
-        $document->tags()->delete();
+        $document->tags()->detach();
 
-        if ($dto->tagsByType->isNotEmpty()) {
-            $dto->tagsByType->each(fn (array $value, string $key) => $document->attachTags($value, $key));
-        }
-
-        if (!empty($dto->typelessTags)) {
-            $document->attachTags($dto->typelessTags);
+        foreach ($dto->tags as $type => $tags) {
+            $document->attachTags($tags, $type);
         }
 
         return $document;
@@ -102,10 +100,10 @@ class DocumentService
                 try {
                     $embedding = $this->embeddingDriver->embed($data['content']);
                 } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::error("DocumentService: Embedding failed for chunk {$index}. Error: " . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error("DocumentService: Embedding failed for chunk {$index}. Error: ".$e->getMessage());
                     throw $e;
                 }
-                
+
                 $chunk = (new $this->chunkModel)->fill([
                     'content' => $data['content'],
                     'hash' => $hash,
@@ -125,14 +123,8 @@ class DocumentService
                 $document->chunks()->saveMany($createdChunks->all());
 
                 $document->chunks->each(function ($chunk) use ($documentData) {
-                    if (!empty($documentData->typelessTags)) {
-                        $chunk->attachTags($documentData->typelessTags);
-                    }
-
-                    if ($documentData->tagsByType->isNotEmpty()) {
-                        $documentData->tagsByType->each(
-                            fn (array $value, string $key) => $chunk->attachTags($value, $key)
-                        );
+                    foreach ($documentData->tags as $type => $tags) {
+                        $chunk->attachTags($tags, $type);
                     }
                 });
 
@@ -142,42 +134,72 @@ class DocumentService
 
     public function search(DocumentSearchDataDTO $searchData)
     {
-        return $this->documentModel::select('*')
-            ->with('tags')
-            ->when(!empty($searchData->aliases), function (Builder $query) use ($searchData) {
+        $query = $this->documentModel::select('*')
+            ->with(['tags', 'project'])
+            ->when(! empty($searchData->aliases), function (Builder $query) use ($searchData) {
                 $query->whereIn('alias', $searchData->aliases);
-            })->when(!empty($searchData->name), function (Builder $query) use ($searchData) {
-                $nameEmbedding = Search::embed($searchData->name);
-                $vector = '[' . implode(',', $nameEmbedding) . ']';
+            })
+            ->when(! empty($searchData->project_alias), function (Builder $query) use ($searchData) {
+                $query->whereHas('project', function ($q) use ($searchData) {
+                    $q->where('alias', $searchData->project_alias);
+                });
+            })
+            ->when(! empty($searchData->name), function (Builder $query) use ($searchData) {
+                $nameEmbedding = Embedding::embed($searchData->name);
+                $vector = '['.implode(',', $nameEmbedding).']';
 
                 $query->nearestNeighbors('name_embedding', $nameEmbedding, 'cosine')
                     ->selectRaw('1 - (name_embedding <=> ?) as name_similarity', [$vector])
                     ->selectRaw('1 - (name_embedding <=> ?) as similarity', [$vector]);
-            })->when(!empty($searchData->anyTags), function (Builder $query) use ($searchData) {
-                $query->withAnyTagsOfAnyType($searchData->anyTags);
-            })->when(!empty($searchData->allTags), function (Builder $query) use ($searchData) {
-                $query->withAllTagsOfAnyType($searchData->allTags);
-            })->when(!empty($searchData->allTagsByType), function (Builder $query) use ($searchData) {
-                foreach ($searchData->allTagsByType as $type => $tags) {
-                    $query->withAllTags($tags, $type);
+            })
+
+            ->when($searchData->tagFilters->isNotEmpty(), function (Builder $query) use ($searchData) {
+                // Group filters by mode (ANY vs ALL) to handle them appropriately
+                // Note: Spatie tags allow multiple tags passed to scope.
+                // However, our filters are structured as individual items with {tag, type, rule}.
+                // We need to iterate and apply them.
+
+                foreach ($searchData->tagFilters as $filter) {
+                    $tags = [$filter->tag];
+                    $type = $filter->type; // can be null
+
+                    if ($filter->rule_filter === \SimoneBianco\LaravelRagChunks\Enums\TagFilterMode::ALL) {
+                         $query->withAllTags($tags, $type);
+                    } else {
+                         // ANY
+                         $query->withAnyTags($tags, $type);
+                    }
                 }
-            })->when(!empty($searchData->anyTagsByType), function (Builder $query) use ($searchData) {
-                foreach ($searchData->anyTagsByType as $type => $tags) {
-                    $query->withAnyTags($tags, $type);
-                }
-            })->when(!empty($searchData->description), function (Builder $query) use ($searchData) {
-                $descriptionEmbedding = Search::embed($searchData->description);
-                $vector = '[' . implode(',', $descriptionEmbedding) . ']';
+            })
+            ->when(! empty($searchData->description), function (Builder $query) use ($searchData) {
+                $descriptionEmbedding = Embedding::embed($searchData->description);
+                $vector = '['.implode(',', $descriptionEmbedding).']';
 
                 $query->nearestNeighbors('description_embedding', $descriptionEmbedding, 'cosine')
                     ->selectRaw('1 - (description_embedding <=> ?) as description_similarity', [$vector])
                     ->selectRaw('1 - (description_embedding <=> ?) as similarity', [$vector]);
-            })->paginate(
+            });
+
+        \Illuminate\Support\Facades\Log::info('Embedding Query', [
+            'sql' => $query->toSql(),
+            'bindings' => $query->getBindings(),
+        ]);
+
+        return $query->paginate(
                 $searchData->perPage,
                 ['*'],
                 'page',
                 $searchData->page
             );
+    }
+
+    public function findExistingDocument(string $projectId, ?string $hash, ?string $alias): ?Document
+    {
+        return $this->documentModel::where('project_id', $projectId)
+            ->where(function ($q) use ($hash, $alias) {
+                $q->where('hash', $hash)
+                    ->orWhere('alias', $alias);
+            })->first();
     }
 
     public function delete(Document $document): bool

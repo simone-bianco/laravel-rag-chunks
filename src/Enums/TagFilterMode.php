@@ -2,8 +2,12 @@
 
 namespace SimoneBianco\LaravelRagChunks\Enums;
 
+use SimoneBianco\LaravelRagChunks\Enums\Traits\HasValues;
+
 enum TagFilterMode: string
 {
-    case ANY = 'any';
-    case ALL = 'all';
+    use HasValues;
+
+    case ANY = 'ANY';
+    case ALL = 'ALL';
 }

@@ -5,7 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Models\Search;
+use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Services\DocumentService;
 use SimoneBianco\LaravelRagChunks\Tests\TestCase;
 
@@ -21,7 +21,7 @@ class DocumentSearchTest extends TestCase
         $service = new DocumentService();
         $embedding = [0.1, 0.2, 0.3];
 
-        // Mock Search::embed
+        // Mock Embedding::embed
         // This is static, so hard to mock without Facade or other tricks.
         // Assuming we could seed data.
 

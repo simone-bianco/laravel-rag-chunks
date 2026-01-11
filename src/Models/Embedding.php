@@ -9,7 +9,7 @@ use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
-class Search extends Model
+class Embedding extends Model
 {
     use HasUuids;
 
@@ -44,7 +44,7 @@ class Search extends Model
             return $search->embedding;
         }
 
-        $search = new Search([
+        $search = new Embedding([
             'text' => $text,
             'hash' => $hash,
             'embedding' => EmbeddingFactory::make()->embed($text)

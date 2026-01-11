@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
-use SimoneBianco\LaravelRagChunks\Models\Search;
+use SimoneBianco\LaravelRagChunks\Models\Embedding;
 
 class ChunkService
 {
@@ -46,7 +46,7 @@ class ChunkService
                     }
                 });
             })->when(!empty($searchData->search), function (Builder $query) use ($searchData) {
-                $searchDataEmbedding = Search::embed($searchData->search);
+                $searchDataEmbedding = Embedding::embed($searchData->search);
                 $vector = '[' . implode(',', $searchDataEmbedding) . ']';
 
                 $query->nearestNeighbors('embedding', $searchDataEmbedding, 'cosine')

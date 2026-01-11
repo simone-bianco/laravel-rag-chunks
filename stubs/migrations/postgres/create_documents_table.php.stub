@@ -10,12 +10,22 @@ return new class extends Migration
     {
         Schema::create('documents', function (Blueprint $table) {
             $table->uuid('id')->primary();
+            $table->foreignUuid('project_id')->constrained()->cascadeOnDelete();
             $table->string('name')->nullable();
-            $table->string('alias')->unique();
+            $table->text('description')->nullable();
+            $table->string('alias');
             $table->string('hash')->index();
             $table->string('path')->nullable();
             $table->json('metadata')->nullable();
+
+            $chosenEmbedder = config('rag_chunks.embedding', EmbeddingDriver::OPENAI)->value;
+            $embeddingSize = config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536);
+            $table->vector('name_embedding', $embeddingSize)->nullable();
+            $table->vector('description_embedding', $embeddingSize)->nullable();
+
             $table->timestamps();
+
+            $table->unique(['alias', 'project_id']);
         });
     }
 

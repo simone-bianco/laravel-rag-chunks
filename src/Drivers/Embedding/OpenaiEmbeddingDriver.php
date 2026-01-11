@@ -5,10 +5,10 @@ namespace SimoneBianco\LaravelRagChunks\Drivers\Embedding;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\EmbeddingFailedException;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidCredentialsException;
-use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use Throwable;
 
 class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
@@ -20,22 +20,12 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
         protected ?string $model = null,
         protected ?LoggerInterface $logger = null
     ) {
-        $this->apiKey ??= config('services.openai.key');
-        $this->model ??= config('services.openai.embedding.model', 'text-embedding-3-small');
+        $this->apiKey ??= config('rag_chunks.embedders.openai.api_key');
+        $this->model ??= config('rag_chunks.embedders.openai.model', 'text-embedding-3-small');
         $this->logger ??= Log::channel('embedding');
     }
 
-    public function refreshApiKey(): self
-    {
-        $this->apiKey = config('services.openai.key');
-
-        return $this;
-    }
-
     /**
-     * @param string $text
-     * @return array
-     *
      * @throws EmbeddingFailedException
      */
     public function embed(string $text): array
@@ -52,7 +42,7 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
                 ]);
 
             if ($response->failed()) {
-                throw new EmbeddingFailedException('OpenAI Embedding Error: ' . $response->body());
+                throw new EmbeddingFailedException('OpenAI Embedding Error: '.$response->body());
             }
 
             $embedding = $response->json('data.0.embedding');
@@ -66,7 +56,7 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
                 'driver' => EmbeddingDriver::OPENAI->value,
                 'text' => $text,
                 'model' => $this->model,
-                'trace' => $throwable->getTrace()
+                'trace' => $throwable->getTrace(),
             ]);
 
             throw new EmbeddingFailedException("Error during embedding: {$throwable->getMessage()}");

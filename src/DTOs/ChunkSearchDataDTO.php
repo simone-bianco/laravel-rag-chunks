@@ -8,10 +8,9 @@ readonly class ChunkSearchDataDTO
         public int $page = 1,
         public int $perPage = 100,
         public ?string $search = null,
-        public ?array $anyTags = null,
-        public ?array $allTags = null,
-        public ?array $anyTagsByType = null,
-        public ?array $allTagsByType = null,
+        public ?\Illuminate\Support\Collection $tagFilters = null, // Collection<TagFilterDTO>
         public ?array $documentsAliases = null,
-    ) {}
+    ) {
+        $this->tagFilters ??= collect();
+    }
 }

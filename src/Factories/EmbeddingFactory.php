@@ -21,7 +21,19 @@ class EmbeddingFactory
             throw new InvalidEmbeddingDriverException('Default embedding driver not configured in rag_chunks.embedding');
         }
 
-        $driverClass = config("rag_chunks.embedders.{$embeddingDriver->value}");
+        $config = config("rag_chunks.embedders.{$embeddingDriver->value}");
+
+        $driverClass = match($embeddingDriver) {
+            EmbeddingDriver::OPENAI => \SimoneBianco\LaravelRagChunks\Drivers\Embedding\OpenaiEmbeddingDriver::class,
+            EmbeddingDriver::OLLAMA => \SimoneBianco\LaravelRagChunks\Drivers\Embedding\OllamaEmbeddingDriver::class, // Assuming Ollama exists or will exist suited for pattern
+            default => null,
+        };
+
+        if (is_array($config) && isset($config['class'])) {
+            $driverClass = $config['class'];
+        } elseif (is_string($config) && class_exists($config)) {
+            $driverClass = $config;
+        }
 
         if (! $driverClass || ! class_exists($driverClass)) {
             throw new InvalidEmbeddingDriverException("Embedding driver class '{$driverClass}' for driver '{$embeddingDriver->value}' not found.");

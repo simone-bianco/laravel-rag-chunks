@@ -2,27 +2,28 @@
 
 namespace SimoneBianco\LaravelRagChunks\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
+use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
-use Illuminate\Database\Eloquent\Builder;
-use Spatie\Tags\HasTags;
 
 class Chunk extends Model
 {
-    use HasUuids, HasNearestNeighbors, HasTags;
+    use HasNearestNeighbors, HasTags, HasUuids;
 
     protected ChunkModel $driver;
+
     protected $guarded = [];
 
     protected $fillable = [
         'content',
         'hash',
         'embedding',
-        'page'
+        'page',
     ];
 
     public function __construct(array $attributes = [])

@@ -18,14 +18,13 @@ class DocumentDTO
      */
     public function __construct(
         public string $text,
+        public string $project_id, // Mandatory
         public ?string $alias = null,
         public ?string $name = null,
         public ?string $description = null,
         public ?string $hash = null,
-        public ?Collection $tagsByType = null,
-        public array $typelessTags = [],
+        public array $tags = [], // type => [tags]
         public array $metadata = [],
     ) {
-        $this->tagsByType ??= collect();
     }
 }

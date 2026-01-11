@@ -8,17 +8,17 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('searches', function (Blueprint $table) {
+        Schema::create('tags_blueprints', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->text('text');
-            $table->string('hash')->unique();
-            $table->vector('embedding', 1536)->nullable();
+            $table->string('name');
+            $table->string('alias')->unique();
+            $table->json('tags_by_type');
             $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('searches');
+        Schema::dropIfExists('tags_blueprints');
     }
 };
