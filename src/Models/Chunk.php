@@ -20,6 +20,7 @@ class Chunk extends Model
     protected $guarded = [];
 
     protected $fillable = [
+        'document_id',
         'content',
         'hash',
         'embedding',

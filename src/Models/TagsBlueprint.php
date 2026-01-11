@@ -13,5 +13,6 @@ class TagsBlueprint extends Model
 
     protected $casts = [
         'tags_by_type' => 'array',
+        'tags' => 'array',
     ];
 }

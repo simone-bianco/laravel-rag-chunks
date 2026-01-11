@@ -13,6 +13,11 @@ class Project extends Model
 {
     use HasFactory, HasTags, HasUuids;
 
+    protected static function newFactory()
+    {
+        return \SimoneBianco\LaravelRagChunks\Database\Factories\ProjectFactory::new();
+    }
+
     protected $guarded = [];
 
     protected $fillable = [

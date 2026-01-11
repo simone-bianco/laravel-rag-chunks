@@ -4,6 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
@@ -12,7 +13,7 @@ use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 class Document extends Model
 {
-    use HasTags, HasUuids, HasNearestNeighbors;
+    use HasNearestNeighbors, HasTags, HasUuids;
 
     protected ChunkModel $driver;
 
@@ -25,8 +26,9 @@ class Document extends Model
         'path',
         'name_embedding',
         'description_embedding',
-        'metadata'
+        'metadata',
     ];
+    // protected $guarded = [];
 
     public function __construct(array $attributes = [])
     {
@@ -37,6 +39,7 @@ class Document extends Model
     protected function casts()
     {
         $embedCast = $this->driver === ChunkModel::POSTGRES ? VectorArray::class : 'array';
+
         return [
             'metadata' => 'array',
             'description_embedding' => $embedCast,
@@ -49,7 +52,7 @@ class Document extends Model
         return $this->hasMany(Chunk::class);
     }
 
-    public function project(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
     }

@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -136,54 +137,42 @@ class DocumentService
     {
         $query = $this->documentModel::select('*')
             ->with(['tags', 'project'])
-            ->when(! empty($searchData->aliases), function (Builder $query) use ($searchData) {
-                $query->whereIn('alias', $searchData->aliases);
+            ->when(! empty($searchData->documentsAliases), function (Builder $query) use ($searchData) {
+                $query->whereIn('alias', $searchData->documentsAliases);
             })
-            ->when(! empty($searchData->project_alias), function (Builder $query) use ($searchData) {
+            ->when(! empty($searchData->projectsAliases), function (Builder $query) use ($searchData) {
                 $query->whereHas('project', function ($q) use ($searchData) {
-                    $q->where('alias', $searchData->project_alias);
+                    $q->whereIn('alias', $searchData->projectsAliases);
                 });
             })
-            ->when(! empty($searchData->name), function (Builder $query) use ($searchData) {
-                $nameEmbedding = Embedding::embed($searchData->name);
+            ->when(! empty($searchData->documentNameSearch), function (Builder $query) use ($searchData) {
+                $nameEmbedding = Embedding::embed($searchData->documentNameSearch);
                 $vector = '['.implode(',', $nameEmbedding).']';
 
                 $query->nearestNeighbors('name_embedding', $nameEmbedding, 'cosine')
                     ->selectRaw('1 - (name_embedding <=> ?) as name_similarity', [$vector])
                     ->selectRaw('1 - (name_embedding <=> ?) as similarity', [$vector]);
             })
-
             ->when($searchData->tagFilters->isNotEmpty(), function (Builder $query) use ($searchData) {
-                // Group filters by mode (ANY vs ALL) to handle them appropriately
-                // Note: Spatie tags allow multiple tags passed to scope.
-                // However, our filters are structured as individual items with {tag, type, rule}.
-                // We need to iterate and apply them.
-
                 foreach ($searchData->tagFilters as $filter) {
                     $tags = [$filter->tag];
-                    $type = $filter->type; // can be null
+                    $type = $filter->type;
 
-                    if ($filter->rule_filter === \SimoneBianco\LaravelRagChunks\Enums\TagFilterMode::ALL) {
+                    if ($filter->rule_filter === TagFilterMode::ALL) {
                          $query->withAllTags($tags, $type);
                     } else {
-                         // ANY
                          $query->withAnyTags($tags, $type);
                     }
                 }
             })
-            ->when(! empty($searchData->description), function (Builder $query) use ($searchData) {
-                $descriptionEmbedding = Embedding::embed($searchData->description);
+            ->when(! empty($searchData->documentDescriptionSearch), function (Builder $query) use ($searchData) {
+                $descriptionEmbedding = Embedding::embed($searchData->documentDescriptionSearch);
                 $vector = '['.implode(',', $descriptionEmbedding).']';
 
                 $query->nearestNeighbors('description_embedding', $descriptionEmbedding, 'cosine')
                     ->selectRaw('1 - (description_embedding <=> ?) as description_similarity', [$vector])
                     ->selectRaw('1 - (description_embedding <=> ?) as similarity', [$vector]);
             });
-
-        \Illuminate\Support\Facades\Log::info('Embedding Query', [
-            'sql' => $query->toSql(),
-            'bindings' => $query->getBindings(),
-        ]);
 
         return $query->paginate(
                 $searchData->perPage,
