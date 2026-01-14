@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
+use SimoneBianco\LaravelRagChunks\Builders\ChunkBuilder;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
@@ -15,29 +15,32 @@ class Chunk extends Model
 {
     use HasNearestNeighbors, HasTags, HasUuids;
 
-    protected ChunkModel $driver;
-
     protected $guarded = [];
 
     protected $fillable = [
         'document_id',
         'content',
+        'semantic_tags',
+        'semantic_tags_embedding',
+        'keywords',
         'hash',
         'embedding',
         'page',
     ];
 
-    public function __construct(array $attributes = [])
-    {
-        $this->driver = config('rag_chunks.driver', ChunkModel::POSTGRES);
-        parent::__construct($attributes);
-    }
-
     protected function casts()
     {
+        $embeddingCast = config('rag_chunks.embedding_cast', VectorArray::class);
         return [
-            'embedding' => $this->driver === ChunkModel::POSTGRES ? VectorArray::class : 'array',
+            'embedding' => $embeddingCast,
+            'semantic_tags_embedding' => $embeddingCast,
+            'keywords' => 'array',
         ];
+    }
+
+    public function newEloquentBuilder($query): ChunkBuilder
+    {
+        return new ChunkBuilder($query);
     }
 
     public function document(): BelongsTo

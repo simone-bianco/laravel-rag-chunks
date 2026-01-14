@@ -26,13 +26,6 @@ class RagService
     public function addToRag(DocumentDTO $documentData): Document
     {
         try {
-            $this->logger->info("RagService: processing document {$documentData->alias}");
-
-            $this->logger->info("RagService: processing document {$documentData->alias}");
-            
-            // Document creation/update is handled inside regenerateChunks via getOrCreateDocument
-
-            // use mb_str_split to avoid breaking characters
             $rawChunks = array_filter(mb_str_split($documentData->text, $this->splitSize), function ($rawChunk) {
                 return ! empty(trim($rawChunk));
             });
@@ -49,7 +42,5 @@ class RagService
 
             throw new ChunkingFailedException($e->getMessage(), 0, $e);
         }
-
-
     }
 }

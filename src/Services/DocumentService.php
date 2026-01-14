@@ -14,6 +14,7 @@ use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
+use SimoneBianco\LaravelRagChunks\Facades\HashService;
 
 class DocumentService
 {
@@ -36,11 +37,11 @@ class DocumentService
                 'alias' => $dto->alias,
             ], [
                 'project_id' => $dto->project_id,
-                'hash' => $dto->hash ?? \SimoneBianco\LaravelRagChunks\Facades\HashService::hash($dto->text),
-                'name' => $dto->name ?? Str::limit($dto->text),
-                'name_embedding' => $dto->name ? $this->embeddingDriver->embed($dto->name) : null,
-                'description' => $dto->description ?? Str::limit($dto->text),
-                'description_embedding' => $dto->description ? $this->embeddingDriver->embed($dto->description) : null,
+                'hash' => $dto->hash ?? HashService::hash($dto->text),
+                'name' => $dto->name,
+                'name_embedding' => $dto->name ? Embedding::embed($dto->name) : null,
+                'description' => $dto->description,
+                'description_embedding' => $dto->description ? Embedding::embed($dto->description) : null,
                 'metadata' => $dto->metadata,
             ]);
 
@@ -73,7 +74,7 @@ class DocumentService
         $rawChunksData = array_map(function ($rawChunk) {
             return [
                 'content' => $rawChunk,
-                'hash' => \SimoneBianco\LaravelRagChunks\Facades\HashService::hash($rawChunk),
+                'hash' => HashService::hash($rawChunk),
             ];
         }, $rawChunks);
 
@@ -97,13 +98,7 @@ class DocumentService
                     'embedding' => $existingChunk->embedding,
                 ]);
             } else {
-                \Illuminate\Support\Facades\Log::info("DocumentService: Embedding chunk index {$index}");
-                try {
-                    $embedding = $this->embeddingDriver->embed($data['content']);
-                } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::error("DocumentService: Embedding failed for chunk {$index}. Error: ".$e->getMessage());
-                    throw $e;
-                }
+                $embedding = $this->embeddingDriver->embed($data['content']);
 
                 $chunk = (new $this->chunkModel)->fill([
                     'content' => $data['content'],

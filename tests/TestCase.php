@@ -38,10 +38,10 @@ class TestCase extends Orchestra
         $app['config']->set('app.key', 'base64:6Cu/ozj4w0CjZ+h4F1ZO0a4Yy7d5Zc7eX0y0z1a2b3c=');
 
         // Setup Package Config
-        $app['config']->set('rag_chunks.driver', \SimoneBianco\LaravelRagChunks\Enums\ChunkModel::POSTGRES);
+        $app['config']->set('rag_chunks.driver', \SimoneBianco\LaravelRagChunks\Enums\ChunkingDriver::POSTGRES);
         $app['config']->set('rag_chunks.embedding', \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI);
         $app['config']->set('rag_chunks.models', [
-            \SimoneBianco\LaravelRagChunks\Enums\ChunkModel::POSTGRES->value => \SimoneBianco\LaravelRagChunks\Tests\Models\TestChunk::class
+            'chunk' => \SimoneBianco\LaravelRagChunks\Tests\Models\TestChunk::class
         ]);
         $app['config']->set('rag_chunks.embedders', [
             \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI->value => \SimoneBianco\LaravelRagChunks\Services\Embedding\OpenaiEmbeddingDriver::class

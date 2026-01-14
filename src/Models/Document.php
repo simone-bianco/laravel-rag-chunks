@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use SimoneBianco\LaravelRagChunks\Enums\ChunkModel;
+use SimoneBianco\LaravelRagChunks\Enums\ChunkingDriver;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
@@ -15,7 +15,7 @@ class Document extends Model
 {
     use HasNearestNeighbors, HasTags, HasUuids;
 
-    protected ChunkModel $driver;
+    protected ChunkingDriver $driver;
 
     protected $fillable = [
         'project_id',
@@ -28,17 +28,10 @@ class Document extends Model
         'description_embedding',
         'metadata',
     ];
-    // protected $guarded = [];
-
-    public function __construct(array $attributes = [])
-    {
-        $this->driver = config('rag_chunks.driver', ChunkModel::POSTGRES);
-        parent::__construct($attributes);
-    }
 
     protected function casts()
     {
-        $embedCast = $this->driver === ChunkModel::POSTGRES ? VectorArray::class : 'array';
+        $embedCast = config('rag_chunks.embedding_cast', VectorArray::class);
 
         return [
             'metadata' => 'array',

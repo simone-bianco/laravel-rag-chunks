@@ -2,7 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Enums;
 
-enum ChunkModel: string
+enum ChunkingDriver: string
 {
     case POSTGRES = 'postgres';
 }

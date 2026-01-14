@@ -2,15 +2,12 @@
 
 namespace SimoneBianco\LaravelRagChunks\Tests;
 
-use Illuminate\Support\Facades\Hash;
 use Mockery;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
-use SimoneBianco\LaravelRagChunks\Exceptions\ChunkingFailedException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
-use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Services\RagService;
 use SimoneBianco\LaravelRagChunks\Services\Embedding\Contracts\EmbeddingDriverInterface;
+use SimoneBianco\LaravelRagChunks\Services\RagService;
 
 class ChunkServiceTest extends TestCase
 {

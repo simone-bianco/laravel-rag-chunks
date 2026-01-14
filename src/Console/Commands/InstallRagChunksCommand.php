@@ -115,7 +115,7 @@ class InstallRagChunksCommand extends Command
         $content = file_get_contents($configFile);
 
         // Update Driver
-        // Assuming config has 'driver' => ChunkModel::POSTGRES, or similar
+        // Assuming config has 'driver' => ChunkingDriver::POSTGRES, or similar
         // We replace the line 'driver' => ... with the new value
         $driverUpper = strtoupper($driver);
         $content = preg_replace(
