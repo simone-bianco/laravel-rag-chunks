@@ -14,6 +14,6 @@ class ProcessDocumentJob implements ShouldQueue, ShouldBeUnique
 
     public function handle(): void
     {
-
+        logger()->debug("Processed document $this->documentId");
     }
 }

@@ -1,145 +1,59 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Models\Traits;
+namespace SimoneBianco\LaravelRagChunks\Values;
 
-use App\Enums\ProcessStatus;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
-use Illuminate\Database\Eloquent\Relations\MorphOne;
-use SimoneBianco\LaravelRagChunks\Models\Process;
+use Illuminate\Support\Collection;
 
-trait HasProcesses
+class LogCollection extends Collection
 {
-    public function processes(): MorphMany
+    public function addLog(string $severity, string $content, array $context = []): self
     {
-        return $this->morphMany(Process::class, 'processable');
-    }
-
-    public function latestProcess(): MorphOne
-    {
-        return $this->morphOne(Process::class, 'processable')->latestOfMany();
-    }
-
-    public function latestPendingProcess(string $type = 'default'): ?Process
-    {
-        return $this->processes()
-            ->where('type', $type)
-            ->where('status', ProcessStatus::PENDING)
-            ->latest()
-            ->first();
-    }
-
-    public function latestErrorProcess(string $type = 'default'): ?Process
-    {
-        return $this->processes()
-            ->where('type', $type)
-            ->where('status', ProcessStatus::ERROR)
-            ->latest()
-            ->first();
-    }
-
-    public function latestCompleteProcess(string $type = 'default'): ?Process
-    {
-        return $this->processes()
-            ->where('type', $type)
-            ->where('status', ProcessStatus::COMPLETE)
-            ->latest()
-            ->first();
-    }
-
-    protected function getCurrentProcess(): Process
-    {
-        $process = $this->latestProcess;
-
-        if (!$process || in_array($process->status, [ProcessStatus::COMPLETE, ProcessStatus::ERROR])) {
-            return $this->startProcess();
-        }
-
-        return $process;
-    }
-
-    protected function log(string $method, string $content, array $context = []): self
-    {
-        $process = $this->getCurrentProcess();
-
-        $process->log->{$method}($content, $context);
-        $process->save();
+        $this->push(new LogEntry(
+            $severity,
+            $content,
+            now(),
+            $context
+        ));
 
         return $this;
     }
 
-    public function error(string $content, array $context = []): self
+    public function info(string $content, array $context = []): static
     {
-        return $this->log('error', $content, $context);
+        return $this->addLog('INFO', $content, $context);
     }
 
-    public function warning(string $content, array $context = []): self
+    public function error(string $content, array $context = []): static
     {
-        return $this->log('warning', $content, $context);
+        return $this->addLog('ERROR', $content, $context);
     }
 
-    public function info(string $content, array $context = []): self
+    public function warning(string $content, array $context = []): static
     {
-        return $this->log('info', $content, $context);
+        return $this->addLog('WARNING', $content, $context);
     }
 
-    public function setStatus(
-        string $method,
-        ProcessStatus $status,
-        ?string $logContext = null,
-        array $context = []
-    ): self {
-        $process = $this->getCurrentProcess();
-
-        $process->status = $status;
-
-        if ($logContext) {
-            $process->log->{$method}($logContext, $context);
-        }
-
-        $process->save();
-
-        return $this;
+    public function logErrors(): static
+    {
+        return $this->filter(function (LogEntry $entry) {
+            return $entry->severity === 'ERROR';
+        });
     }
 
-    public function setComplete(?string $logContent = null, array $context = []): self
+    public function errors(): static
     {
-        return $this->setStatus('info', ProcessStatus::COMPLETE, $logContent, $context);
+        return $this->logErrors()->map(function (LogEntry $entry) {
+            return $entry->content;
+        });
     }
 
-    public function setError(?string $logContent = null, array $context = []): self
+    public function toFormattedString(): string
     {
-        return $this->setStatus('error', ProcessStatus::ERROR, $logContent, $context);
+        return $this->map(fn (LogEntry $entry) => $entry->toString())->implode(PHP_EOL);
     }
 
-    public function setPending(?string $logContent = null, array $context = []): self
+    public function __toString(): string
     {
-        return $this->setStatus('info', ProcessStatus::PENDING, $logContent, $context);
-    }
-
-    public function setProcessing(?string $logContent = null, array $context = []): self
-    {
-        return $this->setStatus('info', ProcessStatus::PROCESSING, $logContent, $context);
-    }
-
-    public function cleanOldProcesses(int $retentionDays = 7): self
-    {
-        $this->processes()
-            ->where('created_at', '<', now()->subDays($retentionDays))
-            ->delete();
-
-        return $this;
-    }
-
-    public function startProcess(string $type = 'default', array $initialLog = []): Process
-    {
-        $process = $this->processes()->create([
-            'type'   => $type,
-            'status' => ProcessStatus::PENDING,
-            'log'    => $initialLog,
-        ]);
-
-        $this->setRelation('latestProcess', $process);
-
-        return $process;
+        return $this->toFormattedString();
     }
 }

@@ -46,10 +46,20 @@ trait HasProcesses
             ->first();
     }
 
+    protected function getCurrentProcess(): Process
+    {
+        $process = $this->latestProcess;
+
+        if (!$process || in_array($process->status, [ProcessStatus::COMPLETE, ProcessStatus::ERROR])) {
+            return $this->startProcess();
+        }
+
+        return $process;
+    }
+
     protected function log(string $method, string $content, array $context = []): self
     {
-        /** @var Process $process */
-        $process = $this->latestProcess ?? $this->startProcess();
+        $process = $this->getCurrentProcess();
 
         $process->log->{$method}($content, $context);
         $process->save();
@@ -78,8 +88,7 @@ trait HasProcesses
         ?string $logContext = null,
         array $context = []
     ): self {
-        /** @var Process $process */
-        $process = $this->latestProcess ?? $this->startProcess();
+        $process = $this->getCurrentProcess();
 
         $process->status = $status;
 
