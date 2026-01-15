@@ -14,7 +14,6 @@ class ChunkSearchDataDTO
         public ?string     $semanticTagsSearch = null,
         public ?float      $weightContent = null,
         public ?float      $weightSemanticTags = null,
-        public ?array      $keywords = null,
         public ?array      $projectsAliases = null,
         public ?Collection $tagFilters = null,
         public ?array      $documentsAliases = null,

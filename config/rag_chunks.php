@@ -15,6 +15,11 @@ return [
         'semantic_tags' => 0.3
     ],
 
+    'semantic_tagger' => [
+        'provider' => 'openai',
+        'model' => 'gpt-4.1-nano'
+    ],
+
     'models' => [
         'chunk' => Chunk::class,
     ],

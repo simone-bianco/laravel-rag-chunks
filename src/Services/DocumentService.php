@@ -5,68 +5,71 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
-use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
+use SimoneBianco\LaravelRagChunks\Models\Project;
+use Throwable;
 
 class DocumentService
 {
     public function __construct(
         protected ?string $chunkModel = null,
-        protected ?string $documentModel = null,
-        protected ?EmbeddingDriverInterface $embeddingDriver = null,
+        protected ?string $documentModel = null
     ) {
         $config = config('rag_chunks', []);
         $this->chunkModel ??= $config['chunk_model'] ?? Chunk::class;
         $this->documentModel ??= $config['document_model'] ?? Document::class;
-        $this->embeddingDriver ??= EmbeddingFactory::make();
     }
 
+    /**
+     * @throws Throwable
+     */
     public function getOrCreateDocument(DocumentDTO $dto): Document
     {
-        /** @var Document $document */
-        $document = $this->documentModel::query()
-            ->firstOrCreate([
-                'alias' => $dto->alias,
-            ], [
-                'project_id' => $dto->project_id,
-                'hash' => $dto->hash ?? HashService::hash($dto->text),
-                'name' => $dto->name,
-                'name_embedding' => $dto->name ? Embedding::embed($dto->name) : null,
-                'description' => $dto->description,
-                'description_embedding' => $dto->description ? Embedding::embed($dto->description) : null,
-                'metadata' => $dto->metadata,
-            ]);
+        return DB::transaction(function () use ($dto) {
+            /** @var Document $document */
+            $document = $this->documentModel::query()
+                ->firstOrCreate([
+                    'alias' => $dto->alias ?? Project::where('id', $dto->project_id)->firstOrFail()->alias . '-' . Str::uuid()->toString(),
+                ], [
+                    'project_id' => $dto->project_id,
+                    'file_path' => $dto->filePath,
+                    'hash' => $dto->hash ?? HashService::hash($dto->text),
+                    'name' => $dto->name,
+                    'description' => $dto->description,
+                    'metadata' => $dto->metadata,
+                ]);
 
-        $document->project_id = $dto->project_id;
-        $document->name = $dto->name ?? $document->name;
-        $document->description = $dto->description ?? $document->description;
-        if ($document->isDirty('name') || ($document->name && $document->name_embedding === null)) {
-            $document->name_embedding = $document->name ? $this->embeddingDriver->embed($document->name) : null;
-        }
-        if ($document->isDirty('description') || ($document->description && $document->description_embedding === null)) {
-            $document->description_embedding = $document->description ? $this->embeddingDriver->embed($document->description) : null;
-        }
-        $document->metadata = $dto->metadata;
+            $document->project_id = $dto->project_id;
+            $document->name = $dto->name ?? $document->name;
+            $document->description = $dto->description ?? $document->description;
+            if ($document->isDirty('name') || $document->wasRecentlyCreated) {
+                $document->name_embedding = $document->name ? Embedding::embed($document->name) : null;
+            }
+            if ($document->isDirty('description') || $document->wasRecentlyCreated) {
+                $document->description_embedding = $document->description ? Embedding::embed($document->description) : null;
+            }
+            $document->metadata = $dto->metadata;
 
-        if ($document->isDirty()) {
-            $document->save();
-        }
+            if ($document->isDirty()) {
+                $document->save();
+            }
 
-        $document->tags()->detach();
+            $document->tags()->detach();
 
-        foreach ($dto->tags as $type => $tags) {
-            $document->attachTags($tags, $type);
-        }
+            foreach ($dto->tags as $type => $tags) {
+                $document->attachTags($tags, $type);
+            }
 
-        return $document;
+            return $document;
+        });
     }
 
     public function regenerateChunks(DocumentDTO $documentData, array $rawChunks): Document
@@ -98,7 +101,7 @@ class DocumentService
                     'embedding' => $existingChunk->embedding,
                 ]);
             } else {
-                $embedding = $this->embeddingDriver->embed($data['content']);
+                $embedding = Embedding::embed($data['content']);
 
                 $chunk = (new $this->chunkModel)->fill([
                     'content' => $data['content'],
@@ -131,6 +134,7 @@ class DocumentService
     public function search(DocumentSearchDataDTO $searchData)
     {
         $query = $this->documentModel::select('*')
+            ->where('enabled', true)
             ->with(['tags', 'project'])
             ->when(! empty($searchData->documentsAliases), function (Builder $query) use ($searchData) {
                 $query->whereIn('alias', $searchData->documentsAliases);
@@ -181,8 +185,7 @@ class DocumentService
     {
         return $this->documentModel::where('project_id', $projectId)
             ->where(function ($q) use ($hash, $alias) {
-                $q->where('hash', $hash)
-                    ->orWhere('alias', $alias);
+                $q->where('hash', $hash)->orWhere('alias', $alias);
             })->first();
     }
 

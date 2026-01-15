@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
@@ -37,9 +38,11 @@ class ChunkService
         return $this->chunkModel::query()
             ->select('*')
             ->with('document')
+            ->whereHas('document', function (Builder $query) {
+                $query->where('enabled', true);
+            })
             ->withNeighborSnippets()
             ->whereBasicFilters($searchData->chunksIds, $searchData->textSearch)
-            ->whereKeywords($searchData->keywords)
             ->whereAliases($searchData->documentsAliases, $searchData->projectsAliases)
             ->whereTagFilters($searchData->tagFilters)
             ->withHybridRanking(

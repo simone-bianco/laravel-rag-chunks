@@ -7,13 +7,6 @@ use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 
 class ChunkBuilder extends Builder
 {
-    public function whereKeywords(?array $keywords): self
-    {
-        return $this->when(!empty($keywords), function ($q) use ($keywords) {
-            $q->whereJsonOverlaps('keywords', $keywords);
-        });
-    }
-
     public function whereAliases(?array $docAliases, ?array $projAliases): self
     {
         return $this

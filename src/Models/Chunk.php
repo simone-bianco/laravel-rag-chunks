@@ -22,7 +22,6 @@ class Chunk extends Model
         'content',
         'semantic_tags',
         'semantic_tags_embedding',
-        'keywords',
         'hash',
         'embedding',
         'page',
@@ -34,7 +33,6 @@ class Chunk extends Model
         return [
             'embedding' => $embeddingCast,
             'semantic_tags_embedding' => $embeddingCast,
-            'keywords' => 'array',
         ];
     }
 

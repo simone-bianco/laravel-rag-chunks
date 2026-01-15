@@ -5,7 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\DTOs;
 class DocumentDTO
 {
     /**
-     * @param string $text
+     * @param string $filePath
      * @param string $project_id
      * @param string $name
      * @param string|null $alias
@@ -15,7 +15,7 @@ class DocumentDTO
      * @param array $metadata
      */
     public function __construct(
-        public string $text,
+        public string $filePath,
         public string $project_id,
         public string $name,
         public ?string $alias = null,
@@ -24,5 +24,19 @@ class DocumentDTO
         public array $tags = [],
         public array $metadata = [],
     ) {
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'filePath' => $this->filePath,
+            'project_id' => $this->project_id,
+            'name' => $this->name,
+            'alias' => $this->alias,
+            'description' => $this->description,
+            'hash' => $this->hash,
+            'tags' => $this->tags,
+            'metadata' => $this->metadata,
+        ];
     }
 }
