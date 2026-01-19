@@ -14,7 +14,7 @@ use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use Throwable;
 
-class ProcessDocumentJob implements ShouldQueue, ShouldBeUnique
+class PollDocumentParsingJob implements ShouldQueue, ShouldBeUnique
 {
     use Queueable;
 

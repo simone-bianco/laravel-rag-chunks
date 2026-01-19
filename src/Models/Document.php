@@ -2,12 +2,13 @@
 
 namespace SimoneBianco\LaravelRagChunks\Models;
 
+use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
-use SimoneBianco\LaravelRagChunks\Models\Traits\HasProcesses;
+use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
@@ -19,6 +20,7 @@ class Document extends Model
     protected $fillable = [
         'project_id',
         'name',
+        'extension',
         'enabled',
         'description',
         'alias',
@@ -39,6 +41,20 @@ class Document extends Model
             'description_embedding' => $embedCast,
             'name_embedding' => $embedCast,
         ];
+    }
+
+    /**
+     * @return string
+     * @throws FileNotFoundException
+     */
+    public function getAbsolutePath(): string
+    {
+        $path = Storage::path($this->file_path);
+        if (!file_exists($path)) {
+            throw new FileNotFoundException("Document $this->alias not found at $path");
+        }
+
+        return $path;
     }
 
     public function chunks(): HasMany

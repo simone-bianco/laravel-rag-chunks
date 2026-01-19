@@ -15,7 +15,8 @@
       "illuminate/cache": "^12.0",
       "spatie/laravel-package-tools": "^1.92",
       "maestroerror/laragent": "*",
-      "tpetry/laravel-postgresql-enhanced": "^3.5"
+      "tpetry/laravel-postgresql-enhanced": "^3.5",
+      "simone-bianco/laravel-processes": "*"
   },
   "require-dev": {
       "phpunit/phpunit": "^12.3",
