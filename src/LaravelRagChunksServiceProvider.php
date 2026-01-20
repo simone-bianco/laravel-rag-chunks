@@ -21,5 +21,9 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $this->app->bind('rag-chunks-hash', function () {
             return new \SimoneBianco\LaravelRagChunks\Services\HashService();
         });
+
+        $this->app->bind('rag-chunks-file', function () {
+            return new \SimoneBianco\LaravelRagChunks\Services\FileService();
+        });
     }
 }

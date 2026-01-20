@@ -36,15 +36,21 @@ class ProcessDocumentJob implements ShouldQueue, ShouldBeUnique
             $parser = DocumentParserFactory::make($document->extension);
 
             DB::transaction(function () use ($document, $parser) {
-                $document->setProcessing("Document parsing dispatched with " . get_class($parser));
+                // Ensure a process exists or start a new one
+                $process = $document->latestProcess ?? $document->startProcess();
+                if ($process->status->isFinal()) {
+                   $process = $document->startProcess();
+                }
+
+                $process->setProcessing("Document parsing dispatched with " . get_class($parser));
                 $parser->dispatchParsing($document);
             });
         } catch (ModelNotFoundException $exception) {
             $this->logger->warning("Document not found: " . $this->documentId);
-        } catch (ExtensionParsingNotSupportedException $e) {
-            $document->setError($e->getMessage());
+        } catch (ExtensionParsingNotSupportedException $e) { // @phpstan-ignore-line
+             $document->latestProcess?->setError($e->getMessage());
         } catch (Throwable $e) {
-            $document->setError($e->getMessage());
+             $document->latestProcess?->setError($e->getMessage());
         }
     }
 }
