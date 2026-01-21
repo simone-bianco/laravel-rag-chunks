@@ -2,8 +2,10 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
-use Dolphin\SimpleStorage\Facades\SimpleStorage;
-use SimoneBianco\DolphinParser\Facades\DolphinParser;
+use Dolphin\SimpleStorage\SimpleStorageClient;
+use Illuminate\Http\Client\ConnectionException;
+use SimoneBianco\DolphinParser\DolphinParserClient;
+use SimoneBianco\DolphinParser\Exceptions\ApiRequestException;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
 use SimoneBianco\LaravelRagChunks\Exceptions\ParsingDispatchException;
@@ -15,16 +17,20 @@ class PdfParser implements DocumentParserInterface
 {
     public function __construct(
         protected FileService $fileService,
+        protected DolphinParserClient $dolphinParser,
+        protected SimpleStorageClient $simpleStorage
     ) {}
 
     /**
      * @param string $absolutePath
      * @return array
      * @throws ParsingDispatchException
+     * @throws ConnectionException
+     * @throws ApiRequestException
      */
     public function dispatchParsing(string $absolutePath): array
     {
-        $response = DolphinParser::parseFileAsync($absolutePath);
+        $response = $this->dolphinParser->parseFileAsync($absolutePath);
 
         if (!$response->jobId || $response->isFailed()) {
             throw new ParsingDispatchException(
@@ -41,7 +47,7 @@ class PdfParser implements DocumentParserInterface
      */
     public function pollParsing(array $data): ParserStatus
     {
-        $response = DolphinParser::status($data['job_id']);
+        $response = $this->dolphinParser->status($data['job_id']);
 
         if ($response->isFailed()) {
             throw new ParsingDispatchException(
@@ -65,13 +71,13 @@ class PdfParser implements DocumentParserInterface
      */
     public function getParsingResult(array $data): string
     {
-        if (!SimpleStorage::exists($data['job_id'])) {
+        if (!$this->simpleStorage->exists($data['job_id'])) {
             throw new RemoteStorageFileMissingException();
         }
 
         $directoryPath = $this->fileService->generateDirPath();
         $filePath = $this->fileService->generateFilePath($directoryPath, '.zip');
-        SimpleStorage::downloadTo($data['job_id'], $this->fileService->getAbsolutePath($filePath));
+        $this->simpleStorage->downloadTo($data['job_id'], $this->fileService->getAbsolutePath($filePath));
 
        return $this->fileService->extractAndDelete($filePath, $directoryPath);
     }

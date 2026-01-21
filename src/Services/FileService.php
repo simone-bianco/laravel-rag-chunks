@@ -39,7 +39,7 @@ class FileService
     public function generateFilePath(?string $relativePath = null, ?string $extension = null): string
     {
         if (!$relativePath) {
-            $dir = $this->generateDirPath();
+            $relativePath = $this->generateDirPath();
         }
 
         $relativePath .= Str::random(8);
@@ -61,6 +61,7 @@ class FileService
      * @param string|null $relativeDestinationPath
      * @return string
      * @throws InvalidFileException
+     * @throws Exception
      */
     public function extractAndDelete(string $relativeFilePath, ?string $relativeDestinationPath = null): string
     {

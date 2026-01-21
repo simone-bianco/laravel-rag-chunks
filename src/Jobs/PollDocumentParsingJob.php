@@ -4,15 +4,12 @@ namespace SimoneBianco\LaravelRagChunks\Jobs;
 
 use Illuminate\Contracts\Broadcasting\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Exceptions\ExtensionParsingNotSupportedException;
-use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use Throwable;
 
 class PollDocumentParsingJob implements ShouldQueue, ShouldBeUnique
@@ -21,7 +18,7 @@ class PollDocumentParsingJob implements ShouldQueue, ShouldBeUnique
 
     public function uniqueId(): string
     {
-        return "{$this->documentId}_$this->processId";
+        return $this->documentId;
     }
 
     public function __construct(
@@ -35,20 +32,9 @@ class PollDocumentParsingJob implements ShouldQueue, ShouldBeUnique
     public function handle(): void
     {
         try {
-            /** @var Document $document */
-            $document = Document::with(['processes' => function (Builder $query) {
-                $query->where('id', $this->processId);
-            }])->firstOrFail();
+            $process = Process::with('document')->findOrFail($this->processId);
 
-            $process = $document->processes->first();
 
-            $parser = DocumentParserFactory::make($document->extension);
-
-            DB::transaction(function () use ($document, $parser, $process) {
-                // Here we use the specific process instance
-                $process->setProcessing("Document parsing dispatched with " . get_class($parser));
-                $parser->dispatchParsing($document);
-            });
         } catch (ModelNotFoundException $exception) {
             $this->logger->warning("Document '$this->documentId' with process ID '$this->processId' not found");
         } catch (ExtensionParsingNotSupportedException $e) { // @phpstan-ignore-line
@@ -60,12 +46,10 @@ class PollDocumentParsingJob implements ShouldQueue, ShouldBeUnique
 
     protected function logErrorToProcess(string $message): void
     {
-        // Try to find process directly if document load failed or not available in scope
         try {
-             $process = \SimoneBianco\LaravelProcesses\Models\Process::find($this->processId);
+             $process = Process::find($this->processId);
              $process?->setError($message);
         } catch (Throwable) {
-             // If everything fails, just log to system log
              $this->logger->error("Failed to update process status for {$this->processId}: $message");
         }
     }
