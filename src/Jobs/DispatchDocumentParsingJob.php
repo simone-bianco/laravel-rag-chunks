@@ -70,14 +70,11 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
 
             /** @var Process $process */
             $process = Process::with('document')->findOrFail($this->processId);
-            /** @var Document $document */
-            $document = $process->document;
 
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($document->extension);
-            $process->info("Dispatching document with parser: " . get_class($parser));
-            $parser->dispatchParsing($document);
-            $process->setProcessing("Document parsing dispatched");
+            $parser = DocumentParserFactory::make($process->document->extension);
+            $parser->dispatchParsing($process->document);
+            $process->setProcessing(['message' => "Document parsing dispatched"]);
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning("Process not found: " . $this->documentId);
             $this->fail($exception);
@@ -104,7 +101,7 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
         ]);
 
         if ($process) {
-            $process->warning("Temporary failure, retry... ($currentTrial/$totalTries)", $context);
+
         } else {
             $this->logger()->warning("Temporary failure (No Process), retry... ($currentTrial/$totalTries)", $context);
         }
@@ -120,7 +117,7 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
             $process = Process::find($this->processId);
 
             if ($process) {
-                $process->error("[DispatchDocumentParsingJob] FINAL FAILURE. Job aborted.", [
+                $process->setError("[DispatchDocumentParsingJob] FINAL FAILURE. Job aborted.", [
                     'message' => $exception->getMessage(),
                     'trace' => $exception->getTraceAsString(),
                     'final_attempt' => $this->attempts()
