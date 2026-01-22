@@ -71,6 +71,8 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
             /** @var Process $process */
             $process = Process::with('document')->findOrFail($this->processId);
 
+            Context::push('process_id', $process->id);
+
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($process->document->extension);
             $parser->dispatchParsing($process->document);
@@ -90,23 +92,21 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
     /**
      * @throws Throwable
      */
-    protected function handleTemporaryFailure(Throwable $e, ?Process $process, array $context = []): void
+    protected function handleTemporaryFailure(Throwable $exception, ?Process $process, array $context = []): void
     {
         $currentTrial = $this->attempts();
         $totalTries = $this->tries;
 
         $context = array_merge($context, [
-            'message' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
+            'message' => $exception->getMessage(),
+            'trace' => $exception->getTraceAsString(),
         ]);
 
         if ($process) {
-
-        } else {
-            $this->logger()->warning("Temporary failure (No Process), retry... ($currentTrial/$totalTries)", $context);
+            $this->logger()->warning("Temporary failure for dispatch document, retry... ($currentTrial/$totalTries)", $context);
         }
 
-        throw $e;
+        throw $exception;
     }
 
     public function failed(Throwable $exception): void
