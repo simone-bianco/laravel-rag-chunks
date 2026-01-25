@@ -6,15 +6,13 @@ use Illuminate\Contracts\Broadcasting\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
-use SimoneBianco\DolphinParser\Exceptions\ApiRequestException;
 use SimoneBianco\LaravelProcesses\Models\Process;
-use SimoneBianco\LaravelRagChunks\Exceptions\ParsingDispatchException;
+use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
@@ -80,9 +78,7 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning("Process not found: " . $this->documentId);
             $this->fail($exception);
-        } catch (ConnectionException $e) {
-            $this->handleTemporaryFailure($e, $process);
-        } catch (ApiRequestException|ParsingDispatchException $e) {
+        } catch (ClientException $e) {
             $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
         } catch (Throwable $e) {
             $this->fail($e);
@@ -117,7 +113,7 @@ class DispatchDocumentParsingJob implements ShouldQueue, ShouldBeUnique
             $process = Process::find($this->processId);
 
             if ($process) {
-                $process->setError("[DispatchDocumentParsingJob] FINAL FAILURE. Job aborted.", [
+                $process->setError("FINAL FAILURE. Job aborted.", [
                     'message' => $exception->getMessage(),
                     'trace' => $exception->getTraceAsString(),
                     'final_attempt' => $this->attempts()

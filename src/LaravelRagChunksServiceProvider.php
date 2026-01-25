@@ -13,7 +13,9 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $package
             ->name('laravel-rag-chunks')
             ->hasConfigFile('rag_chunks')
-            ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\InstallRagChunksCommand::class);
+            ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\InstallRagChunksCommand::class)
+            ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\TestDispatchParsingCommand::class)
+            ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\TestPollParsingCommand::class);
     }
 
     public function packageRegistered(): void
