@@ -21,7 +21,7 @@ class Embedding extends Model
     protected function casts()
     {
         return [
-            'embedding' => config('rag_chunks.embedding_cast', VectorArray::class)
+            'embedding' => VectorArray::class
         ];
     }
 

@@ -114,29 +114,12 @@ class InstallRagChunksCommand extends Command
 
         $content = file_get_contents($configFile);
 
-        // Update Driver
-        // Assuming config has 'driver' => ChunkingDriver::POSTGRES, or similar
-        // We replace the line 'driver' => ... with the new value
-        $driverUpper = strtoupper($driver);
-        $content = preg_replace(
-            "/'driver' => .*,/",
-            "'driver' => \SimoneBianco\LaravelRagChunks\Enums\ChunkModel::{$driverUpper},",
-            $content
-        );
-
-        // Update Embedder
         $embedderUpper = strtoupper($embedder);
         $content = preg_replace(
             "/'embedding' => .*,/",
             "'embedding' => \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::{$embedderUpper},",
             $content
         );
-
-        // Also update embedders array key if needed, or specific config?
-        // User asked to set the selected embedder. The config structure keys might already be fine.
-        // The default config structure:
-        // 'embedders' => [ EmbeddingDriver::OPENAI->value => ... ]
-        // We don't need to change the array keys, just the default 'embedding' selection.
 
         file_put_contents($configFile, $content);
         $this->info("Updated config/rag_chunks.php with driver: $driver and embedder: $embedder");

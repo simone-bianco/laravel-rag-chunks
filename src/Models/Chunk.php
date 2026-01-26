@@ -29,10 +29,9 @@ class Chunk extends Model
 
     protected function casts()
     {
-        $embeddingCast = config('rag_chunks.embedding_cast', VectorArray::class);
         return [
-            'embedding' => $embeddingCast,
-            'semantic_tags_embedding' => $embeddingCast,
+            'embedding' => VectorArray::class,
+            'semantic_tags_embedding' => VectorArray::class,
         ];
     }
 

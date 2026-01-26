@@ -11,22 +11,24 @@ use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class DispatchDocumentParsingJob extends BaseDocumentParsingJob
+class ChunkDocumentJob extends BaseDocumentParsingJob
 {
     public function backoff(): array
     {
-        return [10, 30, 60];
+        return [];
     }
+
+    public int $tries = 0;
 
     protected function getJobName(): string
     {
-        return 'dispatch_document_parsing';
+        return 'chunk_document';
     }
 
-    public function __construct(Document $document)
+    public function __construct(Document $document, Process $process)
     {
         $this->documentId = $document->id;
-        $this->processId = $document->startProcess('document_parsing')->id;
+        $this->processId = $process->id;
     }
 
     /**
@@ -46,8 +48,6 @@ class DispatchDocumentParsingJob extends BaseDocumentParsingJob
             $parser = DocumentParserFactory::make($process->document->extension);
             $dispatchData = $parser->dispatchParsing($process->document->getAbsolutePath());
             $process->setProcessing($dispatchData);
-
-            PollDocumentParsingJob::dispatch($process->document->id, $process->id)->delay(60);
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning("Process not found: " . $this->documentId);
             $this->fail($exception);

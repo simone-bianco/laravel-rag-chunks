@@ -7,6 +7,7 @@ use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
+use Throwable;
 use ZanySoft\Zip\Facades\Zip;
 
 class FileService
@@ -15,6 +16,11 @@ class FileService
         protected ?Filesystem $storage = null,
     ) {
         $this->storage ??= Storage::disk('private');
+    }
+
+    public function getStorage(): ?Filesystem
+    {
+        return $this->storage;
     }
 
     public function getTempDirPath(): string
@@ -56,18 +62,28 @@ class FileService
         return $this->storage->path($relativePath);
     }
 
+    public function getRelativePath(string $absolutePath): string
+    {
+        $path = str_replace($this->storage->path(''), '', $absolutePath);
+
+        if (!str_starts_with($path, DIRECTORY_SEPARATOR)) {
+            $path = DIRECTORY_SEPARATOR . $path;
+        }
+
+        return $path;
+    }
+
     /**
      * @param string $relativeFilePath
      * @param string|null $relativeDestinationPath
      * @return string
      * @throws InvalidFileException
-     * @throws Exception
      */
-    public function extractAndDelete(string $relativeFilePath, ?string $relativeDestinationPath = null): string
+    public function extract(string $relativeFilePath, ?string $relativeDestinationPath = null): string
     {
         $absoluteFilePath = $this->storage->path($relativeFilePath);
         if (!Zip::check($absoluteFilePath)) {
-            throw new InvalidFileException('File is not a valid zip');
+            throw new InvalidFileException('File is not a valid zip (check failed)');
         }
 
         if (! $relativeDestinationPath) {
@@ -75,11 +91,28 @@ class FileService
         }
 
         $zip = Zip::open($absoluteFilePath);
-        if (! $zip || ! $zip->extract($this->storage->path($relativeDestinationPath))) {
-            throw new InvalidFileException('Zip extraction failed');
+        try {
+            if (! $zip || ! $zip->extract($this->storage->path($relativeDestinationPath))) {
+                throw new InvalidFileException('Zip extraction failed');
+            }
+
+            $zip->close();
+        } catch (Throwable $exception) {
+            throw new InvalidFileException(message: 'Zip extraction failed', previous: $exception);
         }
 
-        $zip->close();
+        return $relativeDestinationPath;
+    }
+
+    /**
+     * @param string $relativeFilePath
+     * @param string|null $relativeDestinationPath
+     * @return string
+     * @throws InvalidFileException
+     */
+    public function extractAndDelete(string $relativeFilePath, ?string $relativeDestinationPath = null): string
+    {
+        $relativeDestinationPath = $this->extract($relativeFilePath, $relativeDestinationPath);
 
         $this->storage->delete($relativeFilePath);
 

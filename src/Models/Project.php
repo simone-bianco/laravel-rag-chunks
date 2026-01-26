@@ -20,12 +20,7 @@ class Project extends Model
 
     protected $guarded = [];
 
-    protected $fillable = [
-        'name',
-        'alias',
-        'category',
-        'settings',
-    ];
+    // protected $fillable removed in favor of guarded = []
 
     protected $casts = [
         'settings' => 'array',

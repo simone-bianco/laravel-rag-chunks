@@ -11,11 +11,8 @@ use SimoneBianco\LaravelRagChunks\Models\Embedding;
 
 class ChunkService
 {
-    public function __construct(
-        protected ?string $chunkModel = null,
-    ) {
-        $config = config('rag_chunks', []);
-        $this->chunkModel ??= Arr::get($config, 'model.chunk', Chunk::class);
+    public function __construct()
+    {
     }
 
     public function search(ChunkSearchDataDTO $searchData): LengthAwarePaginator
@@ -35,7 +32,7 @@ class ChunkService
             }
         }
 
-        return $this->chunkModel::query()
+        return Chunk::query()
             ->select('*')
             ->with('document')
             ->whereHas('document', function (Builder $query) {

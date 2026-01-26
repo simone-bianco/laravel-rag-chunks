@@ -33,13 +33,11 @@ class Document extends Model
 
     protected function casts()
     {
-        $embedCast = config('rag_chunks.embedding_cast', VectorArray::class);
-
         return [
             'enabled' => 'boolean',
             'metadata' => 'array',
-            'description_embedding' => $embedCast,
-            'name_embedding' => $embedCast,
+            'description_embedding' => VectorArray::class,
+            'name_embedding' => VectorArray::class,
         ];
     }
 
@@ -67,7 +65,7 @@ class Document extends Model
         return $this->belongsTo(Project::class);
     }
 
-    public function delete()
+    public function delete(): ?bool
     {
         if ($this->file_path && Storage::exists($this->file_path)) {
             Storage::delete($this->file_path);
