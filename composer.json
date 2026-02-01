@@ -17,7 +17,8 @@
       "maestroerror/laragent": "*",
       "tpetry/laravel-postgresql-enhanced": "^3.5",
       "simone-bianco/laravel-processes": "*",
-      "halaxa/json-machine": "*"
+      "halaxa/json-machine": "*",
+      "simone-bianco/laravel-dedup-media": "*"
   },
   "require-dev": {
       "phpunit/phpunit": "^12.3",

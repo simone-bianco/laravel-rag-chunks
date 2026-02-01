@@ -2,7 +2,6 @@
 
 namespace SimoneBianco\LaravelRagChunks;
 
-use SimoneBianco\LaravelRagChunks\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 

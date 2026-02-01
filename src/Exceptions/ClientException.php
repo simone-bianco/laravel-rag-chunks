@@ -53,12 +53,12 @@ class ClientException extends Exception
         }
 
         return new self(
-            message: $exception->getMessage(),
-            code: (int) $statusCode,
-            previous: $exception,
-            exceptionClass: get_class($exception),
-            response: $responseData,
-            retryable: null
+            $exception->getMessage(),
+            (int) $statusCode,
+            $exception,
+            get_class($exception),
+            $responseData,
+            null
         );
     }
 

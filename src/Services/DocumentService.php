@@ -15,19 +15,11 @@ use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Models\Project;
+use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use Throwable;
 
 class DocumentService
 {
-    public function __construct(
-        protected ?string $chunkModel = null,
-        protected ?string $documentModel = null
-    ) {
-        $config = config('rag_chunks', []);
-        $this->chunkModel ??= $config['chunk_model'] ?? Chunk::class;
-        $this->documentModel ??= $config['document_model'] ?? Document::class;
-    }
-
     /**
      * @throws Throwable
      */
@@ -35,7 +27,7 @@ class DocumentService
     {
         return DB::transaction(function () use ($dto) {
             /** @var Document $document */
-            $document = $this->documentModel::query()
+            $document = Document::query()
                 ->firstOrCreate([
                     'alias' => $dto->alias ?? Project::where('id', $dto->project_id)->firstOrFail()->alias . '-' . Str::uuid()->toString(),
                 ], [
@@ -72,8 +64,24 @@ class DocumentService
         });
     }
 
-    public function regenerateChunks(DocumentDTO $documentData, array $rawChunks): Document
+    public function regenerateChunks(DocumentDTO $documentData): Document
     {
+        $document = $this->getOrCreateDocument($documentData);
+        $parser = DocumentParserFactory::make($document->extension);
+
+        foreach ($parser->chunkDocument($document->file_path) as $chunks) {
+            $existingChunks = Chunk::query()
+                ->select(['hash', 'embedding'])
+                ->distinct()
+                ->whereIn('hash', Arr::pluck($chunks, 'hash'), 'hash')
+                ->get()
+                ->keyBy('hash');
+
+            foreach ($chunks as $chunk) {
+
+            }
+        }
+
         $rawChunksData = array_map(function ($rawChunk) {
             return [
                 'content' => $rawChunk,
@@ -82,7 +90,7 @@ class DocumentService
         }, $rawChunks);
 
         /** @var Collection<string, Chunk> $existingChunks */
-        $existingChunks = $this->chunkModel::query()
+        $existingChunks = Chunk::query()
             ->select(['hash', 'content', 'embedding'])
             ->distinct()
             ->whereIn('hash', Arr::pluck($rawChunksData, 'hash'))
@@ -95,7 +103,7 @@ class DocumentService
 
             if ($existingChunks->has($hash)) {
                 $existingChunk = $existingChunks->get($hash);
-                $chunk = (new $this->chunkModel)->fill([
+                $chunk = (new Chunk)->fill([
                     'content' => $existingChunk->content,
                     'hash' => $existingChunk->hash,
                     'embedding' => $existingChunk->embedding,
@@ -103,7 +111,7 @@ class DocumentService
             } else {
                 $embedding = Embedding::embed($data['content']);
 
-                $chunk = (new $this->chunkModel)->fill([
+                $chunk = (new Chunk)->fill([
                     'content' => $data['content'],
                     'hash' => $hash,
                     'embedding' => $embedding,
@@ -114,7 +122,7 @@ class DocumentService
             $createdChunks->push($chunk);
         }
 
-        return $this->documentModel::query()
+        return Document::query()
             ->getConnection()
             ->transaction(function () use ($documentData, $createdChunks) {
                 $document = $this->getOrCreateDocument($documentData);
@@ -133,7 +141,7 @@ class DocumentService
 
     public function search(DocumentSearchDataDTO $searchData)
     {
-        $query = $this->documentModel::select('*')
+        $query = Document::select('*')
             ->where('enabled', true)
             ->with(['tags', 'project'])
             ->when(! empty($searchData->documentsAliases), function (Builder $query) use ($searchData) {
@@ -183,7 +191,7 @@ class DocumentService
 
     public function findExistingDocument(string $projectId, ?string $hash, ?string $alias): ?Document
     {
-        return $this->documentModel::where('project_id', $projectId)
+        return Document::where('project_id', $projectId)
             ->where(function ($q) use ($hash, $alias) {
                 $q->where('hash', $hash)->orWhere('alias', $alias);
             })->first();

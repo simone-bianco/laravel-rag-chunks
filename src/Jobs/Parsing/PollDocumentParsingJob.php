@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Jobs;
+namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Context;
@@ -47,18 +47,22 @@ class PollDocumentParsingJob extends BaseDocumentParsingJob
 
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($process->document->extension);
-            $status = $parser->pollParsing($process->data);
+            $status = $parser->pollParsing($process->context);
 
             match ($status) {
                 ParserStatus::COMPLETED => $this->handleCompleted($process, $parser),
-                ParserStatus::PROCESSING => $this->handleProcessing($process),
-                ParserStatus::FAILED => $this->handleFailed($process, "Parser returned FAILED status"),
+                ParserStatus::PROCESSING => $this->handleProcessing(),
+                ParserStatus::FAILED => $this->handleFailed($process, 'Parser returned FAILED status'),
             };
         } catch (ModelNotFoundException $exception) {
-            $this->logger()->warning("Process not found: " . $this->processId);
+            $this->logger()->warning('Process not found: '.$this->processId);
             $this->fail($exception);
         } catch (ClientException $e) {
-            $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            if ($e->isRetryable()) {
+                $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            }
+
+            $this->handleFailed($process, $e->getMessage());
         } catch (Throwable $e) {
             $this->fail($e);
         }
@@ -67,16 +71,15 @@ class PollDocumentParsingJob extends BaseDocumentParsingJob
     protected function handleCompleted(Process $process, DocumentParserInterface $parser): void
     {
         $context = $parser->saveParsingResult($process->data);
-        $process->setProcessing($context);
+        $process->mergeContextAndSave($context);
         $this->logger()->info("Polling completed for document {$this->documentId}");
     }
 
-    protected function handleProcessing(Process $process): void
+    protected function handleProcessing(): void
     {
         $currentTrial = $this->attempts();
         $totalTries = $this->tries;
 
-        $process->setProcessing();
         $this->logger()->info("Document {$this->documentId} still processing, will retry... ($currentTrial/$totalTries)");
 
         $backoff = $this->backoff();

@@ -2,35 +2,30 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
-use Dolphin\SimpleStorage\Exceptions\SimpleStorageException;
-use Dolphin\SimpleStorage\SimpleStorageClient;
-use Generator;
+use SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf\PollingContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf\ProcessingContextDTO;
+use SimoneBianco\SimpleStorageClient\Exceptions\ConnectionFailedException;
+use SimoneBianco\SimpleStorageClient\Exceptions\SimpleStorageException;
+use SimoneBianco\SimpleStorageClient\Exceptions\UnauthorizedException;
+use SimoneBianco\SimpleStorageClient\SimpleStorageClient;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use JsonMachine\Exception\InvalidArgumentException;
-use JsonMachine\Items;
-use JsonMachine\JsonDecoder\ExtJsonDecoder;
 use SimoneBianco\DolphinParser\DolphinParserClient;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
-use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
-use SimoneBianco\LaravelRagChunks\Exceptions\RemoteStorageFileMissingException;
+use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
+use SimoneBianco\LaravelRagChunks\Services\Chunkers\DolphinOutputChunkerService;
 use SimoneBianco\LaravelRagChunks\Services\FileService;
-use SimoneBianco\LaravelRagChunks\Services\HashService;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\Contracts\DocumentParserInterface;
 use Throwable;
 
 class PdfParser implements DocumentParserInterface
 {
-    protected const string JOB_ID = 'job_id';
-    protected const string ZIP_ABSOLUTE_PATH = 'zip_absolute_path';
-    protected const string ZIP_RELATIVE_PATH = 'zip_relative_path';
-    protected const string FILENAME = 'filename';
-
     public function __construct(
-        protected FileService $fileService,
-        protected DolphinParserClient $dolphinParser,
-        protected SimpleStorageClient $simpleStorage,
-        protected HashService $hashService
+        protected FileService                 $fileService,
+        protected DolphinParserClient         $dolphinParser,
+        protected DolphinOutputChunkerService $dolphinOutputChunker,
+        protected SimpleStorageClient         $simpleStorage,
     ) {}
 
     protected function getRelativeTempPath(): string
@@ -38,14 +33,9 @@ class PdfParser implements DocumentParserInterface
         return 'temp';
     }
 
-    protected function getRandomFilename(string $extension): string
+    public function needsPolling(): bool
     {
-        return $this->fileService->generateFilePath(extension: $extension);
-    }
-
-    protected function getAbsolutePath(string $relativePath): string
-    {
-        return $this->fileService->getAbsolutePath($relativePath);
+        return true;
     }
 
     /**
@@ -61,14 +51,7 @@ class PdfParser implements DocumentParserInterface
             throw ClientException::makeFromException($exception);
         }
 
-        if (!$response->jobId || $response->isFailed()) {
-            throw new ClientException(
-                message: "Parsing dispatch failed: $response->error",
-                response: $response->toArray(),
-            );
-        }
-
-        return [self::JOB_ID => $response->jobId];
+        return new PollingContextDTO($response->jobId)->toArray();
     }
 
     /**
@@ -79,15 +62,20 @@ class PdfParser implements DocumentParserInterface
     public function pollParsing(array $data): ParserStatus
     {
         try {
-            $response = $this->dolphinParser->status($data[self::JOB_ID]);
+            $context = PollingContextDTO::fromArray($data);
+
+            $response = $this->dolphinParser->status($context->jobId);
         } catch (Throwable $exception) {
             throw ClientException::makeFromException($exception);
         }
 
         if ($response->isFailed()) {
             throw new ClientException(
-                message: "Parsing processing failed: $response->error",
-                response: $response->toArray(),
+                "Parsing processing failed: $response->error",
+                0,
+                null,
+                null,
+                $response->toArray()
             );
         }
 
@@ -99,24 +87,31 @@ class PdfParser implements DocumentParserInterface
     }
 
     /**
-     * @param string $jobId
+     * @param array $data
      * @return array
      * @throws ClientException
+     * @throws InvalidFileException
      */
-    public function saveParsingResult(string $jobId): array
+    public function saveParsingResult(array $data): array
     {
-        try {
-            $path = $this->getRelativeTempPath();
-            $filename = $this->getRandomFilename('zip');
-            $targetAbsolutePath = $this->getAbsolutePath("$path/$filename");
-            $zipPath = $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, true);
+        $jobId = PollingContextDTO::fromArray($data)->jobId;
 
-            return [
-                self::ZIP_ABSOLUTE_PATH => $zipPath,
-                self::ZIP_RELATIVE_PATH => $this->fileService->getRelativePath($zipPath),
-                self::FILENAME => $filename,
-            ];
-        } catch (SimpleStorageException $exception) {
+        try {
+            if (!$jobId || !$this->simpleStorage->exists($jobId)) {
+                throw new \InvalidArgumentException("Job '$jobId' not found");
+            }
+
+            $path = sprintf(
+                '%s/%s/%s.zip',
+                $this->getRelativeTempPath(),
+                $jobId,
+                $jobId
+            );
+            $targetAbsolutePath = $this->fileService->getAbsolutePath("$path");
+            $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, true);
+
+            return new ProcessingContextDTO($this->extractParsingResult($path))->toArray();
+        } catch (SimpleStorageException|ConnectionFailedException|UnauthorizedException $exception) {
             throw ClientException::makeFromException($exception);
         }
     }
@@ -127,125 +122,65 @@ class PdfParser implements DocumentParserInterface
     }
 
     /**
-     * @param array $data
-     * @param int $maxChunkSize
-     * @param int $generatorChunkSize
-     * @param array $errors
-     * @return Generator
+     * @param string $zipRelativePath
+     * @param bool $deleteLocal
+     * @return string Returns the relative path to the directory containing the parsed result
      * @throws InvalidFileException
      */
-    public function chunkDocument(
-        array $data,
-        int $maxChunkSize = 500,
-        int $generatorChunkSize = 50,
-        array &$errors = []
-    ): Generator {
-        try {
-            $relativePath = $this->fileService->extract($data[self::ZIP_RELATIVE_PATH] ?? null);
+    public function extractParsingResult(string $zipRelativePath, bool $deleteLocal = true): string
+    {
+        $dirRelativePath = $this->fileService->extract($zipRelativePath);
 
-            $outputJsonPath = "$relativePath/output.json";
-            if (!$this->storage()->exists($outputJsonPath)) {
-                throw new InvalidFileException("$outputJsonPath does not exist");
-            }
-
-            $streamPages = $this->storage()->readStream($outputJsonPath);
-
-            $pages = Items::fromStream($streamPages, [
-                'pointer' => '/pages',
-                'decoder' => new ExtJsonDecoder(true)
-            ]);
-
-            $accumulator = [];
-            $lastChunk = '';
-            $lastFigures = [];
-            foreach ($pages as $pageIndex => $page) {
-                $elements = $page['elements'] ?? [];
-                foreach ($elements as $elementIndex => $element) {
-                    try {
-                        if ($figurePath = $element['figure_path'] ?? null) {
-                            $lastFigures[] = $figurePath;
-                            continue;
-                        }
-
-                        $text = isset($element['text']) ? trim((string) $element['text']) : '';
-                        if ($text !== '') {
-                            $separator = ($lastChunk === '') ? '' : "\n";
-
-                            if (strlen($lastChunk) + strlen($text) + strlen($separator) < $maxChunkSize) {
-                                $lastChunk .= $separator . $text;
-                                continue;
-                            }
-
-                            if (!$lastChunk) {
-                                $lastChunk = $text;
-                                continue;
-                            }
-
-                            $trimmedText = trim($lastChunk);
-                            $accumulator[] = [
-                                'text' => $trimmedText,
-                                'figures' => $lastFigures,
-                                'hash' => $this->hashService->hash($trimmedText)
-                            ];
-
-                            if (count($accumulator) >= $generatorChunkSize) {
-                                yield $accumulator;
-                                $accumulator = [];
-                            }
-
-                            $lastChunk = $text;
-                            $lastFigures = [];
-                        }
-                    } catch (Throwable $exception) {
-                        $errors[] = [
-                            'pageIndex' => $pageIndex,
-                            'elementIndex' => $elementIndex,
-                            'exception' => $exception->getMessage()
-                        ];
-                    }
-                }
-            }
-
-            if (!empty($lastChunk) || !empty($lastFigures)) {
-                $trimmedText = trim($lastChunk);
-                $accumulator[] = [
-                    'text' => $trimmedText,
-                    'figures' => $lastFigures,
-                    'hash' => $this->hashService->hash($trimmedText)
-                ];
-            }
-
-            if (!empty($accumulator)) {
-                yield $accumulator;
-            }
-        } catch (InvalidFileException|InvalidArgumentException $exception) {
-            throw new InvalidFileException(message: $exception->getMessage(), previous: $exception);
+        if ($deleteLocal) {
+            $this->storage()->delete($zipRelativePath);
         }
+
+        return $dirRelativePath;
     }
 
     /**
      * @param array $data
-     * @return string
+     * @param array $errors
+     * @return array
      * @throws InvalidFileException
-     * @throws RemoteStorageFileMissingException
-     * @throws ClientException
      */
-    public function getParsingResult(array $data): string
+    public function refineOutputJson(array $data, array &$errors = []): array
     {
         try {
-            if (!$this->simpleStorage->exists($data[self::JOB_ID])) {
-                throw new RemoteStorageFileMissingException();
+            $dirRelativePath = ProcessingContextDTO::fromArray($data)->relativeDirPath;
+
+            /** @var string $outputJsonRelativePath */
+            $outputJsonRelativePath = collect($this->storage()->files($dirRelativePath))->first(function ($file) {
+                return pathinfo($file, PATHINFO_EXTENSION) === 'json';
+            });
+
+            if (!$this->storage()->exists($outputJsonRelativePath)) {
+                throw new InvalidFileException("$outputJsonRelativePath does not exist");
             }
 
-            $directoryPath = $this->fileService->generateDirPath();
-            $filePath = $this->fileService->generateFilePath($directoryPath, '.zip');
-            $this->simpleStorage->downloadTo($data[self::JOB_ID], $this->fileService->getAbsolutePath($filePath));
-        } catch (RemoteStorageFileMissingException $e) {
-            throw $e;
-        } catch (Throwable $exception) {
-            throw ClientException::makeFromException($exception);
-        }
+            $writeRelativePath = "$dirRelativePath/refined_output.jsonl";
+            $writeAbsolutePath = $this->storage()->path($writeRelativePath);
 
-       return $this->fileService->extractAndDelete($filePath, $directoryPath);
+            $directory = dirname($writeAbsolutePath);
+            if (!is_dir($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            $stream = fopen($writeAbsolutePath, 'w');
+
+            fwrite($stream, '');
+            foreach ($this->dolphinOutputChunker->chunkOutputJson($outputJsonRelativePath, $errors) as $chunks) {
+                foreach ($chunks as $row) {
+                    fwrite($stream, json_encode($row, JSON_UNESCAPED_UNICODE) . "\n");
+                }
+            }
+            fclose($stream);
+
+            $this->storage()->delete($outputJsonRelativePath);
+
+            return new ProcessingContextDTO($writeRelativePath)->toArray();
+        } catch (InvalidArgumentException $exception) {
+            throw new InvalidFileException(message: $exception->getMessage(), previous: $exception);
+        }
     }
 }

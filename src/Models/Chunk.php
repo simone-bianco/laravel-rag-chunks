@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use SimoneBianco\LaravelDedupMedia\Traits\HasDedupMedia;
 use SimoneBianco\LaravelRagChunks\Builders\ChunkBuilder;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
@@ -13,7 +14,7 @@ use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 class Chunk extends Model
 {
-    use HasNearestNeighbors, HasTags, HasUuids;
+    use HasDedupMedia, HasNearestNeighbors, HasTags, HasUuids;
 
     protected $guarded = [];
 

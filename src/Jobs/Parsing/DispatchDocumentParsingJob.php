@@ -1,9 +1,8 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Jobs;
+namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Facades\Context;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -40,19 +39,25 @@ class DispatchDocumentParsingJob extends BaseDocumentParsingJob
 
             $process = Process::with('document')->findOrFail($this->processId);
 
-            Context::push('process_id', $process->id);
-
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($process->document->extension);
             $dispatchData = $parser->dispatchParsing($process->document->getAbsolutePath());
             $process->setProcessing($dispatchData);
 
-            PollDocumentParsingJob::dispatch($process->document->id, $process->id)->delay(60);
+            if ($parser->needsPolling()) {
+                PollDocumentParsingJob::dispatch($process->document->id, $process->id)->delay(60);
+            } else {
+                ChunkParsingResultsJob::dispatch($process->document->id, $process->id);
+            }
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning("Process not found: " . $this->documentId);
             $this->fail($exception);
         } catch (ClientException $e) {
-            $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            if ($e->isRetryable()) {
+                $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            }
+
+            $this->fail($e);
         } catch (Throwable $e) {
             $this->fail($e);
         }

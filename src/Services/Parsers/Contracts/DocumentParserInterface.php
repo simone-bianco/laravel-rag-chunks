@@ -2,24 +2,43 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers\Contracts;
 
-use Generator;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
+use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
 
 interface DocumentParserInterface
 {
+    /**
+     * @return bool
+     */
+    public function needsPolling(): bool;
+
     /**
      * @param string $absolutePath
      * @return array
      * @throws ClientException
      */
     public function dispatchParsing(string $absolutePath): array;
+
+    /**
+     * @param array $data
+     * @return ParserStatus
+     * @throws ClientException
+     */
     public function pollParsing(array $data): ParserStatus;
-    public function saveParsingResult(string $jobId): array;
-    public function chunkDocument(
-        array $data,
-        int $maxChunkSize = 500,
-        int $generatorChunkSize = 50,
-        array &$errors = []
-    ): Generator;
+
+    /**
+     * @param array $data
+     * @return array
+     * @throws ClientException
+     */
+    public function saveParsingResult(array $data): array;
+
+    /**
+     * @param array $data
+     * @param array $errors
+     * @return array
+     * @throws InvalidFileException
+     */
+    public function refineOutputJson(array $data, array &$errors = []): array;
 }

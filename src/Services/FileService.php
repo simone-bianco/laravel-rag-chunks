@@ -15,7 +15,7 @@ class FileService
     public function __construct(
         protected ?Filesystem $storage = null,
     ) {
-        $this->storage ??= Storage::disk('private');
+        $this->storage ??= Storage::disk('local');
     }
 
     public function getStorage(): ?Filesystem

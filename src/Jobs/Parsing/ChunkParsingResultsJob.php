@@ -1,34 +1,32 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Jobs;
+namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Facades\Context;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
-use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class ChunkDocumentJob extends BaseDocumentParsingJob
+class ChunkParsingResultsJob extends BaseDocumentParsingJob
 {
+    public int $tries = 12;
+
     public function backoff(): array
     {
         return [];
     }
 
-    public int $tries = 0;
-
     protected function getJobName(): string
     {
-        return 'chunk_document';
+        return 'document_chunking';
     }
 
-    public function __construct(Document $document, Process $process)
+    public function __construct(string $documentId, string $processId)
     {
-        $this->documentId = $document->id;
-        $this->processId = $process->id;
+        $this->documentId = $documentId;
+        $this->processId = $processId;
     }
 
     /**
@@ -42,17 +40,20 @@ class ChunkDocumentJob extends BaseDocumentParsingJob
 
             $process = Process::with('document')->findOrFail($this->processId);
 
-            Context::push('process_id', $process->id);
-
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($process->document->extension);
-            $dispatchData = $parser->dispatchParsing($process->document->getAbsolutePath());
+
+            $refinedOutputJsonPath = $parser->refineOutputJson($process->data[self::ZIP_RELATIVE_PATH]);
             $process->setProcessing($dispatchData);
         } catch (ModelNotFoundException $exception) {
-            $this->logger()->warning("Process not found: " . $this->documentId);
+            $this->logger()->warning("Process not found: " . $this->processId);
             $this->fail($exception);
         } catch (ClientException $e) {
-            $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            if ($e->isRetryable()) {
+                $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            }
+
+            $this->fail($e);
         } catch (Throwable $e) {
             $this->fail($e);
         }
