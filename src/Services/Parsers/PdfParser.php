@@ -10,6 +10,7 @@ use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
+use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
@@ -198,7 +199,7 @@ class PdfParser implements DocumentParserInterface
     }
 
     protected function processPostProcessingBuffer(
-        iterable $items,
+        array &$items,
         $writeStream,
         EmbeddingDriverInterface $embedder
     ): void {
@@ -228,21 +229,23 @@ class PdfParser implements DocumentParserInterface
             $existingEmbeddings = $existingEmbeddings + $newEmbeddingsMap;
         }
 
-        foreach ($items as $item) {
+        foreach ($items as $key => $item) {
             $postProcessedItem = new PostProcessedItemDTO(
                 text: $item['text'],
                 figures: $item['figures'],
                 textHash: $item['text_hash'],
-                textEmbedding: $existingEmbeddings[$item['text_hash']],
+                textEmbedding: $existingEmbeddings[$item['text_hash']] ?? null,
                 tags: $item['tags'],
                 tagsHash: $item['tags_hash'],
-                tagsEmbedding: $existingEmbeddings[$item['tags_hash']],
+                tagsEmbedding: $existingEmbeddings[$item['tags_hash']] ?? null,
                 questions: $item['questions'],
                 questionsHash: $item['questions_hash'],
-                questionsEmbedding: $existingEmbeddings[$item['questions_hash']]
+                questionsEmbedding: $existingEmbeddings[$item['questions_hash']] ?? null
             );
 
             fwrite($writeStream, json_encode($postProcessedItem->toArray(), JSON_UNESCAPED_UNICODE) . "\n");
+
+            unset($items[$key]);
         }
     }
 
@@ -253,6 +256,7 @@ class PdfParser implements DocumentParserInterface
      * @return array
      * @throws InvalidFileException
      * @throws PostProcessingException
+     * @throws InvalidEmbeddingDriverException
      */
     public function postProcess(string $documentContext, array $data, int $batchSize = 50): array
     {
@@ -267,7 +271,7 @@ class PdfParser implements DocumentParserInterface
             $this->storage()->put($relativePostProcessedOutputPath, '');
         }
         $postProcessingData->relativePostProcessedPath = $relativePostProcessedOutputPath;
-
+        $embedder = EmbeddingFactory::make();
         try {
             $readStream = $this->storage()->readStream($postProcessingData->relativeRefinedPath);
 
@@ -285,7 +289,6 @@ class PdfParser implements DocumentParserInterface
                 $this->streamService->goToEnd($writeStream);
             }
 
-            $embedder = EmbeddingFactory::make();
             $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
 
             $currentInputLine = 0;
@@ -324,7 +327,6 @@ class PdfParser implements DocumentParserInterface
 
                 if (count($buffer) >= $batchSize) {
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                    $buffer = [];
                 }
             }
 
@@ -332,8 +334,16 @@ class PdfParser implements DocumentParserInterface
                 $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
             }
         } catch (Throwable $exception) {
-            if (isset($readStream)) fclose($readStream);
-            if (isset($writeStream)) fclose($writeStream);
+            if (isset($readStream) && is_resource($readStream)) fclose($readStream);
+            if (isset($writeStream) && is_resource($writeStream)) {
+                if (!empty($buffer)) {
+                    try {
+                        $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                    } catch (Throwable $rescueException) {}
+                }
+
+                fclose($writeStream);
+            }
 
             throw new PostProcessingException(
                 "Error during PDF post-processing: {$exception->getMessage()}",
@@ -341,7 +351,7 @@ class PdfParser implements DocumentParserInterface
                 $exception,
                 get_class($exception),
                 $postProcessingData->relativeRefinedPath,
-                $currentInputLine ?? '',
+                $currentInputLine ?? 0,
                 $line ?? '',
                 false
             );
