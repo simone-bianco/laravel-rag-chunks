@@ -101,11 +101,13 @@ class PdfParser implements DocumentParserInterface
 
     /**
      * @param array $data
+     * @param bool $deleteLocal
+     * @param bool $deleteRemote
      * @return array
      * @throws ClientException
      * @throws InvalidFileException
      */
-    public function saveParsingResult(array $data): array
+    public function saveParsingResult(array $data, bool $deleteLocal = true, bool $deleteRemote = false): array
     {
         $jobId = PollingContextDTO::fromArray($data)->jobId;
 
@@ -123,9 +125,9 @@ class PdfParser implements DocumentParserInterface
                 $jobId
             );
             $targetAbsolutePath = $this->fileService->getAbsolutePath("$path");
-            $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, true);
+            $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, !$deleteRemote);
 
-            return new RefiningContextDTO($this->extractParsingResult($path))->toArray();
+            return new RefiningContextDTO($this->extractParsingResult($path, $deleteLocal))->toArray();
         } catch (SimpleStorageException|ConnectionFailedException|UnauthorizedException $exception) {
             throw ClientException::makeFromException($exception);
         }
@@ -232,7 +234,7 @@ class PdfParser implements DocumentParserInterface
         foreach ($items as $key => $item) {
             $postProcessedItem = new PostProcessedItemDTO(
                 text: $item['text'],
-                figures: $item['figures'],
+                figurePath: $item['figure_path'],
                 textHash: $item['text_hash'],
                 textEmbedding: $existingEmbeddings[$item['text_hash']] ?? null,
                 tags: $item['tags'],
@@ -317,7 +319,7 @@ class PdfParser implements DocumentParserInterface
 
                 $buffer[] = [
                     'text' => $item->text,
-                    'figures' => $item->figures,
+                    'figure_path' => $item->figurePath,
                     'text_hash' => HashService::hash($item->text),
                     'tags' => $tags,
                     'tags_hash' => HashService::hash($tags),

@@ -29,10 +29,12 @@ interface DocumentParserInterface
 
     /**
      * @param array $data
+     * @param bool $deleteLocal
+     * @param bool $deleteRemote
      * @return array
      * @throws ClientException
      */
-    public function saveParsingResult(array $data): array;
+    public function saveParsingResult(array $data, bool $deleteLocal = true, bool $deleteRemote = false): array;
 
     /**
      * @param array $data

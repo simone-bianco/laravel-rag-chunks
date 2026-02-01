@@ -3,13 +3,14 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use LarAgent\Agent;
+use LarAgent\Context\Drivers\CacheStorage;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessingAgentResponseDTO;
 
 class PostProcessingAgent extends Agent
 {
     protected string $previousChunkTags = '';
 
-    protected $history = null;
+    protected $history = CacheStorage::class;
 
     public function __construct(
         $key,

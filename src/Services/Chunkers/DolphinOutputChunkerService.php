@@ -9,7 +9,6 @@ use Illuminate\Support\Str;
 use JsonMachine\Exception\InvalidArgumentException;
 use JsonMachine\Items;
 use JsonMachine\JsonDecoder\ExtJsonDecoder;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\FigureDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
 
 class DolphinOutputChunkerService
@@ -27,64 +26,103 @@ class DolphinOutputChunkerService
         return $this->storage;
     }
 
-    /**
-     * @param string $outputJsonRelativePath
-     * @return Generator
-     * @throws InvalidArgumentException
-     */
     public function chunkOutputJson(string $outputJsonRelativePath): Generator
     {
         $elementsStream = $this->createElementsStream($outputJsonRelativePath);
 
-        $accumulator = [];
         $currentText = '';
-        $currentFigures = [];
-        $pendingFigures = [];
+        $accumulator = [];
+        $lastLabel = ''; // Variabile per tracciare il tipo dell'elemento precedente
         foreach ($this->yieldFlattenedElements($elementsStream) as $element) {
+            $text = isset($element['text']) ? trim((string) $element['text']) : '';
+            $label = $element['label'] ?? 'text';
+
+            $isFigure = str_contains($label, 'fig');
+            // Check testo vuoto (mantenendo le figure)
+            if ($text === '' && !$isFigure) {
+                continue;
+            }
+
+            $isSection = str_contains($label, 'sec');
+            $wasSection = str_contains($lastLabel, 'sec');
+
+            // --- LOGICA DI FLUSH MODIFICATA ---
+            // 1. Figure: Flush sempre.
+            // 2. Tabelle: Flush sempre.
+            // 3. Sezioni: Flush SOLO SE quello prima NON era una sezione.
+            //    (Se ho sec_1 seguito da sec_2, li voglio uniti nello stesso blocco di testo)
+            $shouldFlushText = $isFigure
+                || $label === 'tab'
+                || ($isSection && !$wasSection);
+
+            if ($shouldFlushText && $currentText !== '') {
+                $this->addToAccumulator($accumulator, $currentText);
+
+                if (count($accumulator) >= $this->generatorChunkSize) {
+                    yield $accumulator;
+                    $accumulator = [];
+                }
+                $currentText = '';
+            }
+
             // A. Gestione Figure
-            if (str_contains($element['label'], 'fig')) {
+            if ($isFigure) {
                 $imgDescription = Str::between($element['text'], '![', ']');
                 $imgPath = Str::between($element['text'], '](', ')');
-                if (!empty($imgPath)) {
-                    $pendingFigures[] = new FigureDTO(
-                        path: $imgPath,
-                        description: $imgDescription
-                    );
-                }
-                continue;
-            }
 
-            // B. Gestione Testo
-            $text = isset($element['text']) ? trim((string) $element['text']) : '';
-            if ($text === '') {
-                continue;
-            }
-
-            // C. Logica di Split
-            $separator = ($currentText === '') ? '' : "\n";
-            $projectedSize = strlen($currentText) + strlen($text) + strlen($separator);
-            if ($projectedSize < $this->maxChunkSize) {
-                $currentText .= $separator . $text;
-            } else {
-                if ($currentText !== '') {
-                    $this->addToAccumulator($accumulator, $currentText, $currentFigures);
+                if (!empty($imgPath) && !empty($imgDescription)) {
+                    $this->addToAccumulator($accumulator, $imgDescription, $imgPath);
 
                     if (count($accumulator) >= $this->generatorChunkSize) {
                         yield $accumulator;
                         $accumulator = [];
                     }
                 }
-
-                $currentText = $text;
-                $currentFigures = [];
+                $lastLabel = $label; // Aggiorno lastLabel
+                continue;
             }
-            $this->mergePendingFigures($currentFigures, $pendingFigures);
+
+            // B. Gestione Tabelle
+            if ($label === 'tab') {
+                $this->addToAccumulator($accumulator, $text);
+
+                if (count($accumulator) >= $this->generatorChunkSize) {
+                    yield $accumulator;
+                    $accumulator = [];
+                }
+                $lastLabel = $label; // Aggiorno lastLabel
+                continue;
+            }
+
+            // C. Gestione Testo e Sezioni (Merging)
+            // Se siamo qui, significa che NON abbiamo flushato, oppure abbiamo flushato ed è vuoto.
+            // In caso di sezioni consecutive ($isSection && $wasSection), il flush non è scattato,
+            // quindi il codice qui sotto accoderà il nuovo titolo a quello vecchio.
+
+            $separator = ($currentText === '') ? '' : "\n";
+            $projectedSize = strlen($currentText) + strlen($text) + strlen($separator);
+
+            if ($projectedSize < $this->maxChunkSize) {
+                $currentText .= $separator . $text;
+            } else {
+                if ($currentText !== '') {
+                    $this->addToAccumulator($accumulator, $currentText);
+
+                    if (count($accumulator) >= $this->generatorChunkSize) {
+                        yield $accumulator;
+                        $accumulator = [];
+                    }
+                }
+                $currentText = $text;
+            }
+
+            // Importante: Aggiornare lastLabel alla fine del ciclo
+            $lastLabel = $label;
         }
 
-        $this->mergePendingFigures($currentFigures, $pendingFigures);
-
-        if ($currentText !== '' || !empty($currentFigures)) {
-            $this->addToAccumulator($accumulator, $currentText, $currentFigures);
+        // Cleanup finale (identico a prima, garantisce nessun dato perso)
+        if ($currentText !== '') {
+            $this->addToAccumulator($accumulator, $currentText);
         }
 
         if (!empty($accumulator)) {
@@ -122,31 +160,18 @@ class DolphinOutputChunkerService
     }
 
     /**
-     * @param array $currentFigures
-     * @param array $pendingFigures
-     * @return void
-     */
-    protected function mergePendingFigures(array &$currentFigures, array &$pendingFigures): void
-    {
-        if (!empty($pendingFigures)) {
-            $currentFigures = array_merge($currentFigures, $pendingFigures);
-            $pendingFigures = [];
-        }
-    }
-
-    /**
      * @param array $accumulator
      * @param string $text
-     * @param array $figures
+     * @param string|null $figurePath
      * @return void
      */
-    protected function addToAccumulator(array &$accumulator, string $text, array $figures): void
+    protected function addToAccumulator(array &$accumulator, string $text, ?string $figurePath = null): void
     {
         $trimmedText = trim($text);
 
         $accumulator[] = new RefinedItemDTO(
             text: $trimmedText,
-            figures: $figures,
+            figurePath: $figurePath,
         );
     }
 }

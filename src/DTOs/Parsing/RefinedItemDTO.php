@@ -6,31 +6,24 @@ use Illuminate\Contracts\Support\Arrayable;
 
 class RefinedItemDTO implements Arrayable
 {
-    /**
-     * @param string $text
-     * @param array<FigureDTO> $figures
-     */
     public function __construct(
         public string $text,
-        public array $figures,
+        public ?string $figurePath = null,
     ) {}
 
     public function toArray(): array
     {
-        return [
+        return array_filter([
             'text' => $this->text,
-            'figures' => array_map(function (FigureDTO $figure) {
-                return $figure->toArray();
-            }, $this->figures),
-        ];
+            'figure_path' => $this->figurePath,
+        ]);
     }
 
     public static function fromArray(array $data): static
     {
-        $data['figures'] = array_map(function ($figure) {
-            return FigureDTO::fromArray($figure);
-        }, $data['figures']);
-
-        return new static(...$data);
+        return new static(
+            text: $data['text'],
+            figurePath: $data['figure_path'] ?? null,
+        );
     }
 }

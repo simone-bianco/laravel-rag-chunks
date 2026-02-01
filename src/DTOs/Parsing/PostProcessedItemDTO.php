@@ -8,7 +8,7 @@ class PostProcessedItemDTO implements Arrayable
 {
     public function __construct(
         public string $text,
-        public array $figures,
+        public ?string $figurePath = null,
         public ?string $textHash = null,
         public ?array $textEmbedding = null,
         public ?string $tags = null,
@@ -23,12 +23,7 @@ class PostProcessedItemDTO implements Arrayable
     {
         return [
             'text' => $this->text,
-            'figures' => array_map(function ($figure) {
-                if (is_array($figure)) {
-                    return $figure;
-                }
-                return $figure->toArray();
-            }, $this->figures),
+            'figure_path' => $this->figurePath,
             'text_hash' => $this->textHash,
             'text_embedding' => $this->textEmbedding,
             'tags' => $this->tags,
