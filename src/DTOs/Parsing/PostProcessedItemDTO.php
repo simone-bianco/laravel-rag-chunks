@@ -8,17 +8,23 @@ class PostProcessedItemDTO implements Arrayable
 {
     /**
      * @param string $text
-     * @param array $figures
+     * @param FigureDTO[] $figures
      * @param string $hash
+     * @param string|null $textEmbedding
      * @param string|null $tags
+     * @param array|null $tagsEmbedding
      * @param string|null $questions
+     * @param array|null $questionsEmbedding
      */
     public function __construct(
         public string $text,
         public array $figures,
         public string $hash,
+        public ?string $textEmbedding = null,
         public ?string $tags = null,
+        public ?array $tagsEmbedding = null,
         public ?string $questions = null,
+        public ?array $questionsEmbedding = null,
     ) {}
 
     public function toArray(): array
@@ -29,8 +35,11 @@ class PostProcessedItemDTO implements Arrayable
                 return $figure->toArray();
             }, $this->figures),
             'hash' => $this->hash,
+            'text_embedding' => $this->textEmbedding,
             'tags' => $this->tags,
+            'tags_embedding' => $this->tagsEmbedding,
             'questions' => $this->questions,
+            'questions_embedding' => $this->questionsEmbedding,
         ]);
     }
 }

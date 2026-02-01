@@ -16,6 +16,6 @@ class PostProcessingAgentResponseDTO
 
     public function getImplodedQuestions(): string
     {
-        return implode(',', $this->questions);
+        return implode(' ', $this->questions);
     }
 }

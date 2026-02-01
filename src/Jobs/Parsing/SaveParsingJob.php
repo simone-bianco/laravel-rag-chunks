@@ -4,12 +4,11 @@ namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
-use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class PostProcessParsingJob extends BaseDocumentParsingJob
+class SaveParsingJob extends BaseDocumentParsingJob
 {
     public int $tries = 12;
 
@@ -49,16 +48,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
         /** @var PdfParser $parser */
         $parser = DocumentParserFactory::make($process->document->extension);
 
-        try {
-            $postProcessData = $parser->postProcess($process->document->description, $process->context);
-        } catch (PostProcessingException $exception) {
-            $process->setError($exception->getMessage(), [
-                ParsingPhase::POST_PROCESSING->value => $exception->toArray()
-            ]);
-            $this->fail($exception);
-            return;
-        }
-
+        $postProcessData = $parser->postProcess($process->document->description, $process->context);
         $process->mergeContextAndSave([$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
     }
 }

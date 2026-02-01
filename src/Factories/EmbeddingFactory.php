@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Factories;
 
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\OpenaiEmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
@@ -24,8 +25,7 @@ class EmbeddingFactory
         $config = config("rag_chunks.embedders.{$embeddingDriver->value}");
 
         $driverClass = match($embeddingDriver) {
-            EmbeddingDriver::OPENAI => \SimoneBianco\LaravelRagChunks\Drivers\Embedding\OpenaiEmbeddingDriver::class,
-            EmbeddingDriver::OLLAMA => \SimoneBianco\LaravelRagChunks\Drivers\Embedding\OllamaEmbeddingDriver::class, // Assuming Ollama exists or will exist suited for pattern
+            EmbeddingDriver::OPENAI => OpenaiEmbeddingDriver::class,
             default => null,
         };
 

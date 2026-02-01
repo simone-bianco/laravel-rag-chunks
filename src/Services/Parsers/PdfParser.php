@@ -11,7 +11,11 @@ use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
+use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
+use SimoneBianco\LaravelRagChunks\Facades\HashService;
+use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
+use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Services\StreamService;
 use SimoneBianco\SimpleStorageClient\Exceptions\ConnectionFailedException;
 use SimoneBianco\SimpleStorageClient\Exceptions\SimpleStorageException;
@@ -35,7 +39,7 @@ class PdfParser implements DocumentParserInterface
         protected DolphinParserClient         $dolphinParser,
         protected DolphinOutputChunkerService $dolphinOutputChunker,
         protected SimpleStorageClient         $simpleStorage,
-        protected StreamService               $streamService
+        protected StreamService               $streamService,
     ) {}
 
     protected function getRelativeTempPath(): string
@@ -217,17 +221,18 @@ class PdfParser implements DocumentParserInterface
         }
         $postProcessingData->relativePostProcessedPath = $relativePostProcessedOutputPath;
 
-        $readStream = $this->storage()->readStream($postProcessingData->relativeRefinedPath);
+        try {
+            $readStream = $this->storage()->readStream($postProcessingData->relativeRefinedPath);
 
-        $writeStream = fopen($this->storage()->path($relativePostProcessedOutputPath), 'a+');
-        $alreadyProcessed = $this->streamService->countLines($writeStream);
+            $writeStream = fopen($this->storage()->path($relativePostProcessedOutputPath), 'a+');
+            $alreadyProcessed = $this->streamService->countLines($writeStream);
 
-        $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
+            $embedder = EmbeddingFactory::make();
+            $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
 
-        $previousChunkTags = '';
-        $currentInputLine = 0;
-        while (($line = fgets($readStream)) !== false) {
-            try {
+            $previousChunkTags = '';
+            $currentInputLine = 0;
+            while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
 
                 if ($currentInputLine <= $alreadyProcessed) {
@@ -238,37 +243,52 @@ class PdfParser implements DocumentParserInterface
                     continue;
                 }
 
-                $singleObject = RefinedItemDTO::fromArray(json_decode($line, true));
+                $item = RefinedItemDTO::fromArray(json_decode($line, true));
                 $response = $postProcessingAgent
                     ->clear()
                     ->withPreviousChunkTags($previousChunkTags)
-                    ->respondAndGetFormattedResults($singleObject->text);
+                    ->respondAndGetFormattedResults($item->text);
 
-                $previousChunkTags = $response->getImplodedTags();
+                $tags = $response->getImplodedTags();
+                $questions = $response->getImplodedQuestions();
+                $tagsHash = HashService::hash($tags);
+                $questionsHash = HashService::hash($response->getImplodedQuestions());
+                $textHash = $item->hash;
+
+                $embeddings = Embedding::whereIn('hash', [$tagsHash, $questionsHash, $textHash])->get();
+
+                $tagsEmbedding = $embeddings->where('hash', $tagsHash)->first()->embedding ?? $embedder->embed($tags);
+                $questionsEmbedding = $embeddings->where('hash', $questionsHash)->first()->embedding ?? $embedder->embed($questions);
+                $textEmbedding = $embeddings->where('hash', $textHash)->first()->embedding ?? $embedder->embed($item->text);
+
                 $postProcessedItem = new PostProcessedItemDTO(
-                    text: $singleObject->text,
-                    figures: $singleObject->figures,
-                    hash: $singleObject->hash,
-                    tags: $previousChunkTags,
-                    questions: $response->getImplodedQuestions()
+                    text: $item->text,
+                    figures: $item->figures,
+                    hash: $item->hash,
+                    textEmbedding: $textEmbedding,
+                    tags: $tags,
+                    tagsEmbedding: $tagsEmbedding,
+                    questions: $response->getImplodedQuestions(),
+                    questionsEmbedding: $questionsEmbedding
                 );
+                $previousChunkTags = $tags;
 
                 fwrite($writeStream, json_encode($postProcessedItem->toArray()) . "\n");
-            } catch (Throwable $exception) {
-                fclose($readStream);
-                fclose($writeStream);
-
-                throw new PostProcessingException(
-                    "Error during PDF post-processing: {$exception->getMessage()}",
-                    0,
-                    $exception,
-                    get_class($exception),
-                    $postProcessingData->relativeRefinedPath,
-                    $currentInputLine,
-                    $line,
-                    false
-                );
             }
+        } catch (Throwable $exception) {
+            if (isset($readStream)) fclose($readStream);
+            if (isset($writeStream)) fclose($writeStream);
+
+            throw new PostProcessingException(
+                "Error during PDF post-processing: {$exception->getMessage()}",
+                0,
+                $exception,
+                get_class($exception),
+                $postProcessingData->relativeRefinedPath,
+                $currentInputLine ?? '',
+                $line ?? '',
+                false
+            );
         }
 
         fclose($readStream);
