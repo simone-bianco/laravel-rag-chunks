@@ -9,6 +9,8 @@ class PostProcessingAgent extends Agent
 {
     protected string $previousChunkTags = '';
 
+    protected $history = null;
+
     public function __construct(
         $key,
         bool $usesUserId = false,

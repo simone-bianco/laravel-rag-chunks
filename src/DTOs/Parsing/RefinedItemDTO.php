@@ -9,12 +9,10 @@ class RefinedItemDTO implements Arrayable
     /**
      * @param string $text
      * @param array<FigureDTO> $figures
-     * @param string $hash
      */
     public function __construct(
         public string $text,
         public array $figures,
-        public string $hash
     ) {}
 
     public function toArray(): array
@@ -24,7 +22,6 @@ class RefinedItemDTO implements Arrayable
             'figures' => array_map(function (FigureDTO $figure) {
                 return $figure->toArray();
             }, $this->figures),
-            'hash' => $this->hash
         ];
     }
 

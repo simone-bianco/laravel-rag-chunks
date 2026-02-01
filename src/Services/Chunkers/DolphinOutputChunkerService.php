@@ -11,13 +11,10 @@ use JsonMachine\Items;
 use JsonMachine\JsonDecoder\ExtJsonDecoder;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\FigureDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
-use SimoneBianco\LaravelRagChunks\Services\HashService;
-use Throwable;
 
 class DolphinOutputChunkerService
 {
     public function __construct(
-        protected HashService $hashService,
         protected ?Filesystem $storage = null,
         protected int $maxChunkSize = 500,
         protected int $generatorChunkSize = 50,
@@ -150,7 +147,6 @@ class DolphinOutputChunkerService
         $accumulator[] = new RefinedItemDTO(
             text: $trimmedText,
             figures: $figures,
-            hash: $this->hashService->hash($trimmedText)
         );
     }
 }

@@ -3,15 +3,13 @@
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
 use Illuminate\Support\Str;
-use JsonMachine\Items;
-use JsonMachine\JsonDecoder\ExtJsonDecoder;
 use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessingAgent;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PollingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
-use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
@@ -183,7 +181,6 @@ class PdfParser implements DocumentParserInterface
 
             $stream = fopen($writeAbsolutePath, 'w');
 
-            fwrite($stream, '');
             foreach ($this->dolphinOutputChunker->chunkOutputJson($outputJsonRelativePath) as $chunks) {
                 /** @var RefinedItemDTO $row */
                 foreach ($chunks as $row) {
@@ -200,14 +197,64 @@ class PdfParser implements DocumentParserInterface
         }
     }
 
+    protected function processPostProcessingBuffer(
+        iterable $items,
+        $writeStream,
+        EmbeddingDriverInterface $embedder
+    ): void {
+        if (empty($items)) return;
+
+        $neededMap = [];
+        foreach ($items as $item) {
+            $neededMap[$item['tags_hash']] = $item['tags'];
+            $neededMap[$item['questions_hash']] = $item['questions'];
+            $neededMap[$item['text_hash']] = $item['text'];
+        }
+
+        $existingEmbeddings = Embedding::whereIn('hash', array_keys($neededMap))
+            ->pluck('embedding', 'hash')
+            ->toArray();
+
+        $missingHashes = array_diff_key($neededMap, $existingEmbeddings);
+        if (!empty($missingHashes)) {
+            $textsToEmbed = array_values($missingHashes);
+
+            $newVectors = [];
+            foreach ($textsToEmbed as $text) {
+                $newVectors[] = $embedder->embed($text);
+            }
+
+            $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
+            $existingEmbeddings = $existingEmbeddings + $newEmbeddingsMap;
+        }
+
+        foreach ($items as $item) {
+            $postProcessedItem = new PostProcessedItemDTO(
+                text: $item['text'],
+                figures: $item['figures'],
+                textHash: $item['text_hash'],
+                textEmbedding: $existingEmbeddings[$item['text_hash']],
+                tags: $item['tags'],
+                tagsHash: $item['tags_hash'],
+                tagsEmbedding: $existingEmbeddings[$item['tags_hash']],
+                questions: $item['questions'],
+                questionsHash: $item['questions_hash'],
+                questionsEmbedding: $existingEmbeddings[$item['questions_hash']]
+            );
+
+            fwrite($writeStream, json_encode($postProcessedItem->toArray(), JSON_UNESCAPED_UNICODE) . "\n");
+        }
+    }
+
     /**
      * @param string $documentContext
      * @param array $data
+     * @param int $batchSize
      * @return array
      * @throws InvalidFileException
      * @throws PostProcessingException
      */
-    public function postProcess(string $documentContext, array $data): array
+    public function postProcess(string $documentContext, array $data, int $batchSize = 50): array
     {
         $postProcessingData = PostProcessingContextDTO::fromArray($data);
 
@@ -227,23 +274,34 @@ class PdfParser implements DocumentParserInterface
             $writeStream = fopen($this->storage()->path($relativePostProcessedOutputPath), 'a+');
             $alreadyProcessed = $this->streamService->countLines($writeStream);
 
+            $previousChunkTags = '';
+            if ($alreadyProcessed > 0) {
+                $this->streamService->goToLine($writeStream, $alreadyProcessed - 1);
+                $lastLine = fgets($writeStream);
+                if ($lastLine) {
+                    $lastItem = json_decode($lastLine, true);
+                    $previousChunkTags = $lastItem['tags'] ?? '';
+                }
+                $this->streamService->goToEnd($writeStream);
+            }
+
             $embedder = EmbeddingFactory::make();
             $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
 
-            $previousChunkTags = '';
             $currentInputLine = 0;
+            $buffer = [];
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
 
-                if ($currentInputLine <= $alreadyProcessed) {
+                if ($currentInputLine <= $alreadyProcessed || trim($line) === '') {
                     continue;
                 }
 
-                if (trim($line) === '') {
+                $decoded = json_decode($line, true);
+                if ($decoded === null) {
                     continue;
                 }
-
-                $item = RefinedItemDTO::fromArray(json_decode($line, true));
+                $item = RefinedItemDTO::fromArray($decoded);
                 $response = $postProcessingAgent
                     ->clear()
                     ->withPreviousChunkTags($previousChunkTags)
@@ -251,29 +309,27 @@ class PdfParser implements DocumentParserInterface
 
                 $tags = $response->getImplodedTags();
                 $questions = $response->getImplodedQuestions();
-                $tagsHash = HashService::hash($tags);
-                $questionsHash = HashService::hash($response->getImplodedQuestions());
-                $textHash = $item->hash;
 
-                $embeddings = Embedding::whereIn('hash', [$tagsHash, $questionsHash, $textHash])->get();
-
-                $tagsEmbedding = $embeddings->where('hash', $tagsHash)->first()->embedding ?? $embedder->embed($tags);
-                $questionsEmbedding = $embeddings->where('hash', $questionsHash)->first()->embedding ?? $embedder->embed($questions);
-                $textEmbedding = $embeddings->where('hash', $textHash)->first()->embedding ?? $embedder->embed($item->text);
-
-                $postProcessedItem = new PostProcessedItemDTO(
-                    text: $item->text,
-                    figures: $item->figures,
-                    hash: $item->hash,
-                    textEmbedding: $textEmbedding,
-                    tags: $tags,
-                    tagsEmbedding: $tagsEmbedding,
-                    questions: $response->getImplodedQuestions(),
-                    questionsEmbedding: $questionsEmbedding
-                );
                 $previousChunkTags = $tags;
 
-                fwrite($writeStream, json_encode($postProcessedItem->toArray()) . "\n");
+                $buffer[] = [
+                    'text' => $item->text,
+                    'figures' => $item->figures,
+                    'text_hash' => HashService::hash($item->text),
+                    'tags' => $tags,
+                    'tags_hash' => HashService::hash($tags),
+                    'questions' => $questions,
+                    'questions_hash' => HashService::hash($questions),
+                ];
+
+                if (count($buffer) >= $batchSize) {
+                    $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                    $buffer = [];
+                }
+            }
+
+            if (!empty($buffer)) {
+                $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
             }
         } catch (Throwable $exception) {
             if (isset($readStream)) fclose($readStream);

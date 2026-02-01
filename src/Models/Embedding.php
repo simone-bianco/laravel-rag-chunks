@@ -13,7 +13,6 @@ class Embedding extends Model
     use HasUuids;
 
     protected $fillable = [
-        'text',
         'hash',
         'embedding'
     ];
@@ -36,7 +35,6 @@ class Embedding extends Model
         }
 
         $search = new Embedding([
-            'text' => $text,
             'hash' => $hash,
             'embedding' => EmbeddingFactory::make()->embed($text)
         ]);
