@@ -1,11 +1,11 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf;
+namespace SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf;
 
 use InvalidArgumentException;
-use SimoneBianco\LaravelRagChunks\DTOs\Parser\BaseContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\BaseContextDTO;
 
-class ProcessingContextDTO extends BaseContextDTO
+class RefiningContextDTO extends BaseContextDTO
 {
     public function __construct(
         public string $relativeDirPath

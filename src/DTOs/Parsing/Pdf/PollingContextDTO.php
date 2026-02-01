@@ -1,9 +1,9 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf;
+namespace SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf;
 
 use InvalidArgumentException;
-use SimoneBianco\LaravelRagChunks\DTOs\Parser\BaseContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\BaseContextDTO;
 
 class PollingContextDTO extends BaseContextDTO
 {

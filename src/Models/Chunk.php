@@ -26,6 +26,7 @@ class Chunk extends Model
         'hash',
         'embedding',
         'page',
+        'order',
     ];
 
     protected function casts()
@@ -33,6 +34,7 @@ class Chunk extends Model
         return [
             'embedding' => VectorArray::class,
             'semantic_tags_embedding' => VectorArray::class,
+            'semantic_tags' => 'array',
         ];
     }
 
@@ -50,12 +52,12 @@ class Chunk extends Model
     {
         $prevBase = self::from('chunks as neighbors')
             ->whereColumn('neighbors.document_id', 'chunks.document_id')
-            ->whereRaw('neighbors.page = chunks.page - 1')
+            ->whereRaw('neighbors.order = chunks.order - 1')
             ->limit(1);
 
         $nextBase = self::from('chunks as neighbors')
             ->whereColumn('neighbors.document_id', 'chunks.document_id')
-            ->whereRaw('neighbors.page = chunks.page + 1')
+            ->whereRaw('neighbors.order = chunks.order + 1')
             ->limit(1);
 
         return $query->addSelect([

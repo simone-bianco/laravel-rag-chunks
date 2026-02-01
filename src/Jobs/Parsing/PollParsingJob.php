@@ -6,13 +6,14 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Context;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
+use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\Contracts\DocumentParserInterface;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class PollDocumentParsingJob extends BaseDocumentParsingJob
+class PollParsingJob extends BaseDocumentParsingJob
 {
     public int $tries = 12;
 
@@ -43,6 +44,12 @@ class PollDocumentParsingJob extends BaseDocumentParsingJob
 
             $process = Process::with('document')->findOrFail($this->processId);
 
+            if ($process->context['phase'] !== ParsingPhase::POLLING->value) {
+                $process->mergeContextAndSave([
+                    'phase' => ParsingPhase::POLLING->value
+                ]);
+            }
+
             Context::push('process_id', $process->id);
 
             /** @var PdfParser $parser */
@@ -68,10 +75,16 @@ class PollDocumentParsingJob extends BaseDocumentParsingJob
         }
     }
 
+    /**
+     * @param Process $process
+     * @param DocumentParserInterface $parser
+     * @return void
+     * @throws ClientException
+     */
     protected function handleCompleted(Process $process, DocumentParserInterface $parser): void
     {
         $context = $parser->saveParsingResult($process->data);
-        $process->mergeContextAndSave($context);
+        $process->mergeContextAndSave([$context, ...['phase' => ParsingPhase::SAVED->value]]);
         $this->logger()->info("Polling completed for document {$this->documentId}");
     }
 

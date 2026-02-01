@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\DTOs\Parser;
+namespace SimoneBianco\LaravelRagChunks\DTOs\Parsing;
 
 use Illuminate\Contracts\Support\Arrayable;
 

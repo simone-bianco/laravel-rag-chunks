@@ -118,6 +118,7 @@ class DocumentService
                 ]);
             }
 
+            $chunk->order = $index + 1;
             $chunk->page = $index + 1;
             $createdChunks->push($chunk);
         }
@@ -200,5 +201,38 @@ class DocumentService
     public function delete(Document $document): bool
     {
         return $document->delete();
+    }
+
+    /**
+     * @param Document $document
+     * @param int $targetOrder
+     * @param array{content: string, embedding?: array} $data
+     * @return Chunk
+     * @throws Throwable
+     */
+    public function insertChunk(Document $document, int $targetOrder, array $data): Chunk
+    {
+        return DB::transaction(function () use ($document, $targetOrder, $data) {
+            // Shift subsequent chunks
+            $document->chunks()
+                ->where('order', '>=', $targetOrder)
+                ->increment('order');
+
+            // Create new chunk
+            $chunk = new Chunk();
+            $chunk->document_id = $document->id;
+            $chunk->fill($data);
+            $chunk->order = $targetOrder;
+            $chunk->page = $document->chunks()->where('order', '<', $targetOrder)->max('page') ?? 1; // Best guess for page
+            $chunk->hash = HashService::hash($data['content']);
+            
+            if (!isset($data['embedding'])) {
+                 $chunk->embedding = Embedding::embed($data['content']);
+            }
+
+            $chunk->save();
+
+            return $chunk;
+        });
     }
 }

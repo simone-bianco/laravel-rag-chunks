@@ -2,8 +2,17 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
-use SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf\PollingContextDTO;
-use SimoneBianco\LaravelRagChunks\DTOs\Parser\Pdf\ProcessingContextDTO;
+use Illuminate\Support\Str;
+use JsonMachine\Items;
+use JsonMachine\JsonDecoder\ExtJsonDecoder;
+use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessingAgent;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PollingContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
+use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
+use SimoneBianco\LaravelRagChunks\Services\StreamService;
 use SimoneBianco\SimpleStorageClient\Exceptions\ConnectionFailedException;
 use SimoneBianco\SimpleStorageClient\Exceptions\SimpleStorageException;
 use SimoneBianco\SimpleStorageClient\Exceptions\UnauthorizedException;
@@ -26,6 +35,7 @@ class PdfParser implements DocumentParserInterface
         protected DolphinParserClient         $dolphinParser,
         protected DolphinOutputChunkerService $dolphinOutputChunker,
         protected SimpleStorageClient         $simpleStorage,
+        protected StreamService               $streamService
     ) {}
 
     protected function getRelativeTempPath(): string
@@ -102,15 +112,17 @@ class PdfParser implements DocumentParserInterface
             }
 
             $path = sprintf(
-                '%s/%s/%s.zip',
+                '%s%s%s%s%s.zip',
                 $this->getRelativeTempPath(),
+                DIRECTORY_SEPARATOR,
                 $jobId,
+                DIRECTORY_SEPARATOR,
                 $jobId
             );
             $targetAbsolutePath = $this->fileService->getAbsolutePath("$path");
             $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, true);
 
-            return new ProcessingContextDTO($this->extractParsingResult($path))->toArray();
+            return new RefiningContextDTO($this->extractParsingResult($path))->toArray();
         } catch (SimpleStorageException|ConnectionFailedException|UnauthorizedException $exception) {
             throw ClientException::makeFromException($exception);
         }
@@ -140,14 +152,13 @@ class PdfParser implements DocumentParserInterface
 
     /**
      * @param array $data
-     * @param array $errors
      * @return array
      * @throws InvalidFileException
      */
-    public function refineOutputJson(array $data, array &$errors = []): array
+    public function refineOutputJson(array $data): array
     {
         try {
-            $dirRelativePath = ProcessingContextDTO::fromArray($data)->relativeDirPath;
+            $dirRelativePath = RefiningContextDTO::fromArray($data)->relativeDirPath;
 
             /** @var string $outputJsonRelativePath */
             $outputJsonRelativePath = collect($this->storage()->files($dirRelativePath))->first(function ($file) {
@@ -169,18 +180,100 @@ class PdfParser implements DocumentParserInterface
             $stream = fopen($writeAbsolutePath, 'w');
 
             fwrite($stream, '');
-            foreach ($this->dolphinOutputChunker->chunkOutputJson($outputJsonRelativePath, $errors) as $chunks) {
+            foreach ($this->dolphinOutputChunker->chunkOutputJson($outputJsonRelativePath) as $chunks) {
+                /** @var RefinedItemDTO $row */
                 foreach ($chunks as $row) {
-                    fwrite($stream, json_encode($row, JSON_UNESCAPED_UNICODE) . "\n");
+                    fwrite($stream, json_encode($row->toArray(), JSON_UNESCAPED_UNICODE) . "\n");
                 }
             }
             fclose($stream);
 
             $this->storage()->delete($outputJsonRelativePath);
 
-            return new ProcessingContextDTO($writeRelativePath)->toArray();
+            return new PostProcessingContextDTO($dirRelativePath, $writeRelativePath)->toArray();
         } catch (InvalidArgumentException $exception) {
             throw new InvalidFileException(message: $exception->getMessage(), previous: $exception);
         }
+    }
+
+    /**
+     * @param string $documentContext
+     * @param array $data
+     * @return array
+     * @throws InvalidFileException
+     * @throws PostProcessingException
+     */
+    public function postProcess(string $documentContext, array $data): array
+    {
+        $postProcessingData = PostProcessingContextDTO::fromArray($data);
+
+        if (!$this->storage()->exists($postProcessingData->relativeRefinedPath)) {
+            throw new InvalidFileException("$postProcessingData->relativeRefinedPath does not exist");
+        }
+
+        $relativePostProcessedOutputPath = "$postProcessingData->relativeDirPath/post_processed.jsonl";
+        if (!$this->storage()->exists($relativePostProcessedOutputPath)) {
+            $this->storage()->put($relativePostProcessedOutputPath, '');
+        }
+        $postProcessingData->relativePostProcessedPath = $relativePostProcessedOutputPath;
+
+        $readStream = $this->storage()->readStream($postProcessingData->relativeRefinedPath);
+
+        $writeStream = fopen($this->storage()->path($relativePostProcessedOutputPath), 'a+');
+        $alreadyProcessed = $this->streamService->countLines($writeStream);
+
+        $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
+
+        $previousChunkTags = '';
+        $currentInputLine = 0;
+        while (($line = fgets($readStream)) !== false) {
+            try {
+                $currentInputLine++;
+
+                if ($currentInputLine <= $alreadyProcessed) {
+                    continue;
+                }
+
+                if (trim($line) === '') {
+                    continue;
+                }
+
+                $singleObject = RefinedItemDTO::fromArray(json_decode($line, true));
+                $response = $postProcessingAgent
+                    ->clear()
+                    ->withPreviousChunkTags($previousChunkTags)
+                    ->respondAndGetFormattedResults($singleObject->text);
+
+                $previousChunkTags = $response->getImplodedTags();
+                $postProcessedItem = new PostProcessedItemDTO(
+                    text: $singleObject->text,
+                    figures: $singleObject->figures,
+                    hash: $singleObject->hash,
+                    tags: $previousChunkTags,
+                    questions: $response->getImplodedQuestions()
+                );
+
+                fwrite($writeStream, json_encode($postProcessedItem->toArray()) . "\n");
+            } catch (Throwable $exception) {
+                fclose($readStream);
+                fclose($writeStream);
+
+                throw new PostProcessingException(
+                    "Error during PDF post-processing: {$exception->getMessage()}",
+                    0,
+                    $exception,
+                    get_class($exception),
+                    $postProcessingData->relativeRefinedPath,
+                    $currentInputLine,
+                    $line,
+                    false
+                );
+            }
+        }
+
+        fclose($readStream);
+        fclose($writeStream);
+
+        return $postProcessingData->toArray();
     }
 }

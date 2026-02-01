@@ -36,9 +36,8 @@ interface DocumentParserInterface
 
     /**
      * @param array $data
-     * @param array $errors
      * @return array
      * @throws InvalidFileException
      */
-    public function refineOutputJson(array $data, array &$errors = []): array;
+    public function refineOutputJson(array $data): array;
 }

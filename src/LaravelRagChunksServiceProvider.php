@@ -12,6 +12,7 @@ class LaravelRagChunksServiceProvider extends PackageServiceProvider
         $package
             ->name('laravel-rag-chunks')
             ->hasConfigFile('rag_chunks')
+            ->hasMigration('2026_02_01_141016_add_order_to_chunks_table')
             ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\InstallRagChunksCommand::class)
             ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\TestDispatchParsingCommand::class)
             ->hasCommand(\SimoneBianco\LaravelRagChunks\Console\Commands\TestPollParsingCommand::class);
