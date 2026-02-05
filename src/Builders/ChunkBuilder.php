@@ -37,17 +37,17 @@ class ChunkBuilder extends Builder
         ?float $weightTags
     ): self {
         $weightContent = $weightContent ?? config('rag_chunks.semantic_weights.content', 0.7);
-        $weightTags = $weightTags ?? config('rag_chunks.semantic_weights.semantic_tags', 0.3);
+        $weightTags = $weightTags ?? config('rag_chunks.semantic_weights.tags', 0.3);
 
         $contentVectorStr = $contentVector ? '[' . implode(',', $contentVector) . ']' : null;
         $tagsVectorStr    = $tagsVector    ? '[' . implode(',', $tagsVector) . ']'    : null;
 
         if ($contentVectorStr && $tagsVectorStr) {
-            $scoreSql = "( (1 - (embedding <=> ?)) * {$weightContent} ) + ( (1 - (semantic_tags_embedding <=> ?)) * {$weightTags} )";
+            $scoreSql = "( (1 - (embedding <=> ?)) * {$weightContent} ) + ( (1 - (tags_embedding <=> ?)) * {$weightTags} )";
 
             return $this->selectRaw("$scoreSql as combined_score", [$contentVectorStr, $tagsVectorStr])
                 ->selectRaw('1 - (embedding <=> ?) as content_similarity', [$contentVectorStr])
-                ->selectRaw('1 - (semantic_tags_embedding <=> ?) as semantic_tags_similarity', [$tagsVectorStr])
+                ->selectRaw('1 - (tags_embedding <=> ?) as tags_similarity', [$tagsVectorStr])
                 ->orderByRaw("$scoreSql DESC", [$contentVectorStr, $tagsVectorStr]);
         }
 
@@ -57,8 +57,8 @@ class ChunkBuilder extends Builder
         }
 
         if ($tagsVectorStr) {
-            return $this->nearestNeighbors('semantic_tags_embedding', $tagsVectorStr, 'cosine')
-                ->selectRaw('1 - (semantic_tags_embedding <=> ?) as semantic_tags_similarity', [$tagsVectorStr]);
+            return $this->nearestNeighbors('tags_embedding', $tagsVectorStr, 'cosine')
+                ->selectRaw('1 - (tags_embedding <=> ?) as tags_similarity', [$tagsVectorStr]);
         }
 
         return $this;

@@ -4,17 +4,12 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Arr;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 
 class ChunkService
 {
-    public function __construct()
-    {
-    }
-
     public function search(ChunkSearchDataDTO $searchData): LengthAwarePaginator
     {
         $contentVector = null;

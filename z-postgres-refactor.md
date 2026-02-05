@@ -59,7 +59,7 @@ use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 protected function casts() {
     return [
         'embedding' => VectorArray::class,
-        'semantic_tags_embedding' => VectorArray::class,
+        'tags_embedding' => VectorArray::class,
     ];
 }
 ```

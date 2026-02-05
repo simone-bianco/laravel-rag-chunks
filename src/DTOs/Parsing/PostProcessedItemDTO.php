@@ -34,4 +34,20 @@ class PostProcessedItemDTO implements Arrayable
             'questions_embedding' => $this->questionsEmbedding,
         ];
     }
+
+    public static function fromArray(array $data): static
+    {
+        return new static(
+            text: $data['text'],
+            figurePath: $data['figure_path'],
+            textHash: $data['text_hash'],
+            textEmbedding: $data['text_embedding'],
+            tags: $data['tags'],
+            tagsHash: $data['tags_hash'],
+            tagsEmbedding: $data['tags_embedding'],
+            questions: $data['questions'],
+            questionsHash: $data['questions_hash'],
+            questionsEmbedding: $data['questions_embedding']
+        );
+    }
 }

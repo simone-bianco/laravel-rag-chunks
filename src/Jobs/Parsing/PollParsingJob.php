@@ -27,10 +27,15 @@ class PollParsingJob extends BaseDocumentParsingJob
         return 'poll_document_parsing';
     }
 
-    public function __construct(string $documentId, string $processId)
+    public function uniqueId(): string
     {
-        $this->documentId = $documentId;
+        return $this->processId;
+    }
+
+    public function __construct(string $processId)
+    {
         $this->processId = $processId;
+        // documentId will be set after process is loaded
     }
 
     /**
@@ -42,7 +47,16 @@ class PollParsingJob extends BaseDocumentParsingJob
         try {
             $this->enrichContext();
 
-            $process = Process::with('document')->findOrFail($this->processId);
+            $this->logger()->debug('Polling parsing job started');
+
+            $process = Process::with('processable')->findOrFail($this->processId);
+
+            /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
+            $document = $process->processable;
+            $this->documentId = $document->id;
+            
+            // Update context with document ID
+            $this->enrichContext();
 
             if ($process->context['phase'] !== ParsingPhase::POLLING->value) {
                 $process->mergeContextAndSave([
@@ -50,17 +64,17 @@ class PollParsingJob extends BaseDocumentParsingJob
                 ]);
             }
 
-            Context::push('process_id', $process->id);
-
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($process->document->extension);
+            $parser = DocumentParserFactory::make($document->extension);
             $status = $parser->pollParsing($process->context);
 
             match ($status) {
                 ParserStatus::COMPLETED => $this->handleCompleted($process, $parser),
-                ParserStatus::PROCESSING => $this->handleProcessing(),
+                ParserStatus::PROCESSING => $this->handleProcessing($process),
                 ParserStatus::FAILED => $this->handleFailed($process, 'Parser returned FAILED status'),
             };
+
+            $this->logger()->debug('Polling parsing job finished');
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning('Process not found: '.$this->processId);
             $this->fail($exception);
@@ -88,7 +102,7 @@ class PollParsingJob extends BaseDocumentParsingJob
         $this->logger()->info("Polling completed for document {$this->documentId}");
     }
 
-    protected function handleProcessing(): void
+    protected function handleProcessing(Process $process): void
     {
         $currentTrial = $this->attempts();
         $totalTries = $this->tries;

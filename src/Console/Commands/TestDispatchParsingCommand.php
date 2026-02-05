@@ -3,48 +3,49 @@
 namespace SimoneBianco\LaravelRagChunks\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use SimoneBianco\LaravelRagChunks\Jobs\Parsing\DispatchParsingJob;
+use SimoneBianco\LaravelRagChunks\Models\Document;
+use SimoneBianco\LaravelRagChunks\Models\Project;
+use SimoneBianco\LaravelRagChunks\Services\DocumentService;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
 class TestDispatchParsingCommand extends Command
 {
-    protected $signature = 'rag-chunks:test-dispatch 
-                            {file? : Absolute path to the PDF file (optional, uses bundled test.pdf if not provided)}';
+    protected $signature = 'rag-chunks:test-dispatch';
 
     protected $description = 'Test the PdfParser::dispatchParsing service directly';
 
-    public function __construct(protected PdfParser $pdfParser)
+    public function __construct(protected PdfParser $pdfParser, protected DocumentService $documentService)
     {
         parent::__construct();
     }
 
     public function handle(): int
     {
-        $filePath = $this->argument('file') ?? __DIR__ . '/test.pdf';
-
-        if (!file_exists($filePath)) {
-            $this->error("File not found: $filePath");
-            return self::FAILURE;
-        }
-
         $this->info("Testing PdfParser::dispatchParsing()");
-        $this->info("File: $filePath");
-        $this->newLine();
 
         try {
+            $project = Project::firstOrFail();
+
+            $document = $project->documents()->create([
+                'alias' => Str::uuid()->toString(),
+                'name' => 'test',
+                'description' => 'PDF that explains how a keep was in medieval times',
+                'extension' => 'pdf',
+                'file_path' => '\test\test.pdf',
+                'hash' => $this->documentService->calculateFileHash(Storage::disk('local')->path('\test\test.pdf'))
+            ]);
+            $document->save();
+
             $this->info('Calling dispatchParsing...');
-            $result = $this->pdfParser->dispatchParsing($filePath);
+//            $result = $this->pdfParser->dispatchParsing($absoluteFilePath);
+
+            $result = DispatchParsingJob::dispatch($document->id);
 
             $this->info('SUCCESS!');
-            $this->newLine();
-            $this->table(
-                ['Key', 'Value'],
-                collect($result)->map(fn($v, $k) => [$k, is_array($v) ? json_encode($v) : $v])->toArray()
-            );
-
-            $this->newLine();
-            $this->info("Use this job_id to test polling:");
-            $this->line("  php artisan rag-chunks:test-poll {$result['job_id']}");
 
             return self::SUCCESS;
         } catch (Throwable $e) {

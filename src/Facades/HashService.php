@@ -6,7 +6,8 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static string hash(string $text)
- * 
+ * @method static string hashFile(string $absoluteFilePath)
+ *
  * @see \SimoneBianco\LaravelRagChunks\Services\HashService
  */
 class HashService extends Facade

@@ -2,11 +2,11 @@
 
 namespace SimoneBianco\LaravelRagChunks\Models;
 
-use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
@@ -26,6 +26,7 @@ class Document extends Model
         'alias',
         'hash',
         'file_path',
+        'disk',
         'name_embedding',
         'description_embedding',
         'metadata',
@@ -41,20 +42,6 @@ class Document extends Model
         ];
     }
 
-    /**
-     * @return string
-     * @throws FileNotFoundException
-     */
-    public function getAbsolutePath(): string
-    {
-        $path = Storage::path($this->file_path);
-        if (!file_exists($path)) {
-            throw new FileNotFoundException("Document $this->alias not found at $path");
-        }
-
-        return $path;
-    }
-
     public function chunks(): HasMany
     {
         return $this->hasMany(Chunk::class);
@@ -65,12 +52,28 @@ class Document extends Model
         return $this->belongsTo(Project::class);
     }
 
+    public function purgeChunks(): self
+    {
+        DB::raw('DELETE FROM ' . Chunk::class . ' WHERE document_id = ' . $this->id);
+        return $this;
+    }
+
     public function delete(): ?bool
     {
-        if ($this->file_path && Storage::exists($this->file_path)) {
-            Storage::delete($this->file_path);
+        if ($this->file_path && Storage::disk($this->disk ?? 'local')->exists($this->file_path)) {
+            Storage::disk($this->disk ?? 'local')->delete($this->file_path);
         }
 
         return parent::delete();
+    }
+
+    public function getAbsolutePath(): string
+    {
+        return Storage::disk($this->disk ?? 'local')->path($this->file_path);
+    }
+
+    public function getAbsolutePathAttribute(): string
+    {
+        return $this->getAbsolutePath();
     }
 }

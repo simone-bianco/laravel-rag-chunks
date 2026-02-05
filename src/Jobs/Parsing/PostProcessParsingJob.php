@@ -36,7 +36,12 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
     {
         $this->enrichContext();
 
-        $process = Process::with('document')->findOrFail($this->processId);
+        $this->logger()->debug('Post processing parsing job started');
+
+        $process = Process::with('processable')->findOrFail($this->processId);
+
+        /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
+        $document = $process->processable;
 
         $process->mergeContextAndSave([
             'phase' => ParsingPhase::POST_PROCESSING->value
@@ -47,10 +52,10 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
         }
 
         /** @var PdfParser $parser */
-        $parser = DocumentParserFactory::make($process->document->extension);
+        $parser = DocumentParserFactory::make($document->extension);
 
         try {
-            $postProcessData = $parser->postProcess($process->document->description, $process->context);
+            $postProcessData = $parser->postProcess($document->description, $process->context);
         } catch (PostProcessingException $exception) {
             $process->setError($exception->getMessage(), [
                 ParsingPhase::POST_PROCESSING->value => $exception->toArray()
@@ -60,5 +65,9 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
         }
 
         $process->mergeContextAndSave([$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
+
+        SaveParsingJob::dispatch($document->id, $process->id);
+
+        $this->logger()->debug('Post processing parsing job finished');
     }
 }

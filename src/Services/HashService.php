@@ -2,6 +2,8 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
+use RuntimeException;
+
 class HashService
 {
     public function hash(string $text): string
@@ -12,20 +14,20 @@ class HashService
     /**
      * Calculate SHA256 hash of a file's contents.
      *
-     * @param string $filePath Absolute path to the file
+     * @param string $absoluteFilePath Absolute path to the file
      * @return string The SHA256 hash of the file content
-     * @throws \RuntimeException If the file cannot be read
+     * @throws RuntimeException If the file cannot be read
      */
-    public function hashFile(string $filePath): string
+    public function hashFile(string $absoluteFilePath): string
     {
-        if (!file_exists($filePath)) {
-            throw new \RuntimeException("File not found: {$filePath}");
+        if (!file_exists($absoluteFilePath)) {
+            throw new RuntimeException("File not found: {$absoluteFilePath}");
         }
 
-        $hash = hash_file('sha256', $filePath);
+        $hash = hash_file('sha256', $absoluteFilePath);
 
         if ($hash === false) {
-            throw new \RuntimeException("Failed to calculate hash for file: {$filePath}");
+            throw new RuntimeException("Failed to calculate hash for file: {$absoluteFilePath}");
         }
 
         return $hash;

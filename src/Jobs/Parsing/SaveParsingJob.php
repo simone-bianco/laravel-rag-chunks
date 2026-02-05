@@ -10,16 +10,16 @@ use Throwable;
 
 class SaveParsingJob extends BaseDocumentParsingJob
 {
-    public int $tries = 12;
+    public int $tries = 0;
 
     public function backoff(): array
     {
-        return [5, 10, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600];
+        return [];
     }
 
     protected function getJobName(): string
     {
-        return 'document_post_processing';
+        return 'document_saving';
     }
 
     public function __construct(string $documentId, string $processId)
@@ -35,10 +35,15 @@ class SaveParsingJob extends BaseDocumentParsingJob
     {
         $this->enrichContext();
 
-        $process = Process::with('document')->findOrFail($this->processId);
+        $this->logger()->debug('Saving parsing job started');
+
+        $process = Process::with('processable')->findOrFail($this->processId);
+
+        /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
+        $document = $process->processable;
 
         $process->mergeContextAndSave([
-            'phase' => ParsingPhase::POST_PROCESSING->value
+            'phase' => ParsingPhase::SAVING->value
         ]);
 
         if ($process->context['phase'] !== ParsingPhase::POST_PROCESSING) {
@@ -46,9 +51,13 @@ class SaveParsingJob extends BaseDocumentParsingJob
         }
 
         /** @var PdfParser $parser */
-        $parser = DocumentParserFactory::make($process->document->extension);
+        $parser = DocumentParserFactory::make($document->extension);
+        $postProcessData = $parser->saveDocument($document, $process->context);
 
-        $postProcessData = $parser->postProcess($process->document->description, $process->context);
-        $process->mergeContextAndSave([$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
+        $process->mergeContextAndSave([$postProcessData, ...[
+            'phase' => ParsingPhase::SAVED->value
+        ]]);
+
+        $this->logger()->debug('Saving parsing job finished');
     }
 }

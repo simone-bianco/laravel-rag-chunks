@@ -22,10 +22,10 @@ class EmbeddingFactory
             throw new InvalidEmbeddingDriverException('Default embedding driver not configured in rag_chunks.embedding');
         }
 
-        $config = config("rag_chunks.embedders.{$embeddingDriver->value}");
+        $config = config("rag_chunks.embedders.$embeddingDriver");
 
         $driverClass = match($embeddingDriver) {
-            EmbeddingDriver::OPENAI => OpenaiEmbeddingDriver::class,
+            EmbeddingDriver::OPENAI->value => OpenaiEmbeddingDriver::class,
             default => null,
         };
 

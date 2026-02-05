@@ -23,6 +23,7 @@ class DocumentDTO
         public ?string $hash = null,
         public array $tags = [],
         public array $metadata = [],
+        public string $disk = 'local',
     ) {
     }
 
@@ -37,6 +38,7 @@ class DocumentDTO
             'hash' => $this->hash,
             'tags' => $this->tags,
             'metadata' => $this->metadata,
+            'disk' => $this->disk,
         ];
     }
 }

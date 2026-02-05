@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Broadcasting\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -13,12 +14,14 @@ use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use Throwable;
 
-abstract class BaseDocumentParsingJob implements ShouldQueue, ShouldBeUnique
+abstract class BaseDocumentParsingJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
+
     protected string $documentId;
+
     protected string $processId;
 
     abstract public function backoff(): array;
@@ -39,10 +42,10 @@ abstract class BaseDocumentParsingJob implements ShouldQueue, ShouldBeUnique
     {
         Context::add([
             'laravel_job' => $this->getJobName(),
-            'document_id' => $this->documentId,
-            'process_id' => $this->processId,
+            'document_id' => $this->documentId ?? null,
+            'process_id' => $this->processId ?? null,
             'trial' => $this->attempts(),
-            ...$extra
+            ...$extra,
         ]);
     }
 
@@ -71,16 +74,28 @@ abstract class BaseDocumentParsingJob implements ShouldQueue, ShouldBeUnique
         try {
             $this->enrichContext();
 
-            $process = Process::find($this->processId);
+            // Always log the error first
+            $this->logger()->error("[Job Failed] {$this->getJobName()}", [
+                'document_id' => $this->documentId ?? 'unknown',
+                'process_id' => $this->processId ?? 'unknown',
+                'exception_class' => get_class($exception),
+                'message' => $exception->getMessage(),
+                'trace' => $exception->getTraceAsString(),
+                'attempt' => $this->attempts(),
+            ]);
 
-            if ($process) {
-                $process->setError("FINAL FAILURE. Job aborted.", [
-                    'message' => $exception->getMessage(),
-                    'trace' => $exception->getTraceAsString(),
-                    'final_attempt' => $this->attempts()
-                ]);
-            } else {
-                $this->logger()->error("[Final Failure] Process not found for document {$this->documentId}");
+            if (isset($this->processId)) {
+                $process = Process::find($this->processId);
+
+                if ($process) {
+                    $process->setError('FINAL FAILURE. Job aborted.', [
+                        'message' => $exception->getMessage(),
+                        'trace' => $exception->getTraceAsString(),
+                        'final_attempt' => $this->attempts(),
+                    ]);
+                } else {
+                    $this->logger()->error('[Final Failure] Process not found for document '.($this->documentId ?? 'unknown'));
+                }
             }
         } catch (Throwable $e) {
             $this->logger()->critical("CRITICAL: Failed to log job failure. Original: {$exception->getMessage()}. New: {$e->getMessage()}");

@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('path')->nullable();
             $table->json('metadata')->nullable();
 
-            $chosenEmbedder = config('rag_chunks.embedding', EmbeddingDriver::OPENAI)->value;
+            $chosenEmbedder = config('rag_chunks.embedding', EmbeddingDriver::OPENAI);
             $embeddingSize = config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536);
             $table->vector('name_embedding', $embeddingSize)->nullable();
             $table->vector('description_embedding', $embeddingSize)->nullable();

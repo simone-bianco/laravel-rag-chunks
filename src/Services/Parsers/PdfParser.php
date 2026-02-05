@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
+use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessingAgent;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
@@ -14,7 +15,9 @@ use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
+use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
+use SimoneBianco\LaravelRagChunks\Services\DocumentService;
 use SimoneBianco\LaravelRagChunks\Services\StreamService;
 use SimoneBianco\SimpleStorageClient\Exceptions\ConnectionFailedException;
 use SimoneBianco\SimpleStorageClient\Exceptions\SimpleStorageException;
@@ -39,6 +42,7 @@ class PdfParser implements DocumentParserInterface
         protected DolphinOutputChunkerService $dolphinOutputChunker,
         protected SimpleStorageClient         $simpleStorage,
         protected StreamService               $streamService,
+        protected DocumentService             $documentService
     ) {}
 
     protected function getRelativeTempPath(): string
@@ -176,7 +180,6 @@ class PdfParser implements DocumentParserInterface
 
             $writeRelativePath = "$dirRelativePath/refined_output.jsonl";
             $writeAbsolutePath = $this->storage()->path($writeRelativePath);
-
             $directory = dirname($writeAbsolutePath);
             if (!is_dir($directory)) {
                 mkdir($directory, 0755, true);
@@ -200,6 +203,13 @@ class PdfParser implements DocumentParserInterface
         }
     }
 
+    /**
+     * @param array $items
+     * @param $writeStream
+     * @param EmbeddingDriverInterface $embedder
+     * @return void
+     * @throws Throwable
+     */
     protected function processPostProcessingBuffer(
         array &$items,
         $writeStream,
@@ -224,7 +234,11 @@ class PdfParser implements DocumentParserInterface
 
             $newVectors = [];
             foreach ($textsToEmbed as $text) {
-                $newVectors[] = $embedder->embed($text);
+                $newVectors[] = retry(
+                    config('rag_chunks.embedding_retry.times', 3),
+                    fn() => $embedder->embed($text),
+                    config('rag_chunks.embedding_retry.sleep', 1000)
+                );
             }
 
             $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
@@ -260,7 +274,7 @@ class PdfParser implements DocumentParserInterface
      * @throws PostProcessingException
      * @throws InvalidEmbeddingDriverException
      */
-    public function postProcess(string $documentContext, array $data, int $batchSize = 50): array
+    public function postProcess(string $documentContext, array $data, int $batchSize = 20): array
     {
         $postProcessingData = PostProcessingContextDTO::fromArray($data);
 
@@ -319,7 +333,7 @@ class PdfParser implements DocumentParserInterface
 
                 $buffer[] = [
                     'text' => $item->text,
-                    'figure_path' => $item->figurePath,
+                    'figure_path' => "$postProcessingData->relativeDirPath/$item->figurePath",
                     'text_hash' => HashService::hash($item->text),
                     'tags' => $tags,
                     'tags_hash' => HashService::hash($tags),
@@ -363,5 +377,21 @@ class PdfParser implements DocumentParserInterface
         fclose($writeStream);
 
         return $postProcessingData->toArray();
+    }
+
+    /**
+     * @param Document $document
+     * @param array $data
+     * @return Document
+     * @throws FileNotFoundException
+     */
+    public function saveDocument(Document $document, array $data): Document
+    {
+        $postProcessingData = PostProcessingContextDTO::fromArray($data);
+
+        return $this->documentService->regeneratePostProcessedChunks(
+            $document,
+            $postProcessingData->relativePostProcessedPath
+        );
     }
 }

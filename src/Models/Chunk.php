@@ -21,20 +21,26 @@ class Chunk extends Model
     protected $fillable = [
         'document_id',
         'content',
-        'semantic_tags',
-        'semantic_tags_embedding',
         'hash',
         'embedding',
+        'tags',
+        'tags_embedding',
         'page',
         'order',
+        'is_image',
+        'questions',
+        'questions_embedding',
     ];
 
     protected function casts()
     {
         return [
             'embedding' => VectorArray::class,
-            'semantic_tags_embedding' => VectorArray::class,
-            'semantic_tags' => 'array',
+            'tags_embedding' => VectorArray::class,
+            'questions_embedding' => VectorArray::class,
+            'tags' => 'string',
+            'questions' => 'string',
+            'is_image' => 'boolean',
         ];
     }
 

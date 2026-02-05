@@ -8,7 +8,7 @@ return [
 
     'semantic_weights' => [
         'content' => 0.7,
-        'semantic_tags' => 0.3
+        'tags' => 0.3
     ],
 
     'semantic_tagger' => [
@@ -24,5 +24,10 @@ return [
             'api_key' => env('OPENAI_API_KEY'),
             'embedding_size' => 1536,
         ],
+    ],
+
+    'embedding_retry' => [
+        'times' => 3,
+        'sleep' => 1000,
     ],
 ];

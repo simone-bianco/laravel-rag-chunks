@@ -35,7 +35,7 @@ class PostProcessingAgent extends Agent
                     'type' => 'string',
                 ]
             ],
-            'semantic_tags' => [
+            'tags' => [
                 'type' => 'array',
                 'description' => 'Set of tags that describe better the content of the chunk of text',
                 'items' => [
@@ -43,7 +43,7 @@ class PostProcessingAgent extends Agent
                 ]
             ],
         ],
-        'required' => ['semantic_tags', 'questions'],
+        'required' => ['tags', 'questions'],
     ];
 
     public function withDocumentContext(string $context): self
@@ -95,7 +95,7 @@ INSTRUCTIONS;
     {
         $response = $this->respond($text);
         return new PostProcessingAgentResponseDTO(
-            tags: $response['semantic_tags'] ?? [],
+            tags: $response['tags'] ?? [],
             questions: $response['questions'] ?? []
         );
     }

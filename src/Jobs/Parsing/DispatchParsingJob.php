@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Context;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
@@ -23,10 +24,9 @@ class DispatchParsingJob extends BaseDocumentParsingJob
         return 'dispatch_document_parsing';
     }
 
-    public function __construct(Document $document)
+    public function __construct(string $documentId)
     {
-        $this->documentId = $document->id;
-        $this->processId = $document->startProcess('document_parsing')->id;
+        $this->documentId = $documentId;
     }
 
     /**
@@ -36,26 +36,41 @@ class DispatchParsingJob extends BaseDocumentParsingJob
     {
         $process = null;
         try {
-            $this->enrichContext();
+            $this->logger()->debug('Dispatch parsing job started');
 
-            $process = Process::with('document')->findOrFail($this->processId);
+            $document = Document::findOrFail($this->documentId);
+            $process = $document->startProcess('document_parsing');
+
+            Context::add('process_id', $process->id);
+
+            $this->enrichContext([
+                'process_id' => $process->id,
+            ]);
+
+            $this->logger()->debug('Process created');
 
             $process->mergeContextAndSave([
                 'phase' => ParsingPhase::DISPATCHING->value
             ]);
 
+            /** @var Document $document */
+            $document = $process->processable;
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($process->document->extension);
-            $dispatchData = $parser->dispatchParsing($process->document->getAbsolutePath());
+            $parser = DocumentParserFactory::make($document->extension);
+            $dispatchData = $parser->dispatchParsing($document->getAbsolutePath());
             $process->setProcessing([$dispatchData, ...['phase' => ParsingPhase::DISPATCHED->value]]);
 
+            $this->logger()->debug('Dispatch parsing job finished');
+
             if ($parser->needsPolling()) {
-                PollParsingJob::dispatch($process->document->id, $process->id)->delay(60);
+                PollParsingJob::dispatch($process->id)->delay(60);
+                $this->logger()->debug('Polling parsing job started');
             } else {
-                RefineParsingResultsJob::dispatch($process->document->id, $process->id);
+                RefineParsingResultsJob::dispatch($document->id, $process->id);
+                $this->logger()->debug('Refining parsing job started');
             }
         } catch (ModelNotFoundException $exception) {
-            $this->logger()->warning("Process not found: " . $this->documentId);
+            $this->logger()->warning("Document not found: " . $this->documentId);
             $this->fail($exception);
         } catch (ClientException $e) {
             if ($e->isRetryable()) {
@@ -64,6 +79,13 @@ class DispatchParsingJob extends BaseDocumentParsingJob
 
             $this->fail($e);
         } catch (Throwable $e) {
+            $this->logger()->error("Unexpected error in dispatch job", [
+                'document_id' => $this->documentId,
+                'process_id' => $this->processId,
+                'exception' => get_class($e),
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             $this->fail($e);
         }
     }

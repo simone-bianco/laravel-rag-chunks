@@ -33,6 +33,11 @@ class TestCase extends Orchestra
     public function getEnvironmentSetUp($app)
     {
         $app['config']->set('database.default', 'testing');
+        $app['config']->set('database.connections.testing', [
+            'driver'   => 'sqlite',
+            'database' => ':memory:',
+            'prefix'   => '',
+        ]);
 
         // Setup default encryption key for testing
         $app['config']->set('app.key', 'base64:6Cu/ozj4w0CjZ+h4F1ZO0a4Yy7d5Zc7eX0y0z1a2b3c=');
@@ -51,7 +56,11 @@ class TestCase extends Orchestra
     protected function defineDatabaseMigrations()
     {
         // Load the generic migration for testing purposes
-        $migration = include __DIR__.'/../stubs/migrations/generic_create_chunks_table.php.stub';
+        $migrationProjs = include __DIR__.'/../stubs/migrations/generic/create_projects_table.php.stub';
+        $migrationProjs->up();
+        $migrationDocs = include __DIR__.'/../stubs/migrations/generic/create_documents_table.php.stub';
+        $migrationDocs->up();
+        $migration = include __DIR__.'/../stubs/migrations/generic/create_chunks_table.php.stub';
         $migration->up();
     }
 }

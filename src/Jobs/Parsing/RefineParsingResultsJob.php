@@ -35,14 +35,23 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
     {
         $this->enrichContext();
 
-        $process = Process::with('document')->findOrFail($this->processId);
+        $this->logger()->debug('Refining parsing job started');
+
+        $process = Process::with('processable')->findOrFail($this->processId);
+
+        /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
+        $document = $process->processable;
 
         /** @var PdfParser $parser */
-        $parser = DocumentParserFactory::make($process->document->extension);
+        $parser = DocumentParserFactory::make($document->extension);
 
         $chunkingData = $parser->refineOutputJson($process->context);
         $process->mergeContextAndSave([$chunkingData, ...array_filter([
             'phase' => ParsingPhase::REFINED->value,
         ])]);
+
+        PostProcessParsingJob::dispatch($document->id, $process->id);
+
+        $this->logger()->debug('Refining parsing job finished');
     }
 }

@@ -2,24 +2,40 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
+use Exception;
+use Illuminate\Contracts\Filesystem\FileNotFoundException;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Filesystem\LocalFilesystemAdapter;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Models\Project;
-use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use Throwable;
 
 class DocumentService
 {
+    public function __construct(
+        protected StreamService $streamService,
+        protected null|Filesystem|LocalFilesystemAdapter $storage = null,
+    ) {
+        $this->storage = $storage ?? Storage::disk('local');
+    }
+
+    protected function storage(): Filesystem|LocalFilesystemAdapter
+    {
+        return Storage::disk('local');
+    }
+
     /**
      * @throws Throwable
      */
@@ -37,6 +53,7 @@ class DocumentService
                     'name' => $dto->name,
                     'description' => $dto->description,
                     'metadata' => $dto->metadata,
+                    'disk' => $dto->disk,
                 ]);
 
             $document->project_id = $dto->project_id;
@@ -64,80 +81,79 @@ class DocumentService
         });
     }
 
-    public function regenerateChunks(DocumentDTO $documentData): Document
+    /**
+     * IMPORTANTE: Il file deve contenere TUTTI i campi 1-1 così come devono essere salvati nel DB
+     *
+     * @param Document $document
+     * @param string $relativeJsonlPath
+     * @return Document
+     * @throws FileNotFoundException
+     */
+    public function regeneratePostProcessedChunks(Document $document, string $relativeJsonlPath): Document
     {
-        $document = $this->getOrCreateDocument($documentData);
-        $parser = DocumentParserFactory::make($document->extension);
-
-        foreach ($parser->chunkDocument($document->file_path) as $chunks) {
-            $existingChunks = Chunk::query()
-                ->select(['hash', 'embedding'])
-                ->distinct()
-                ->whereIn('hash', Arr::pluck($chunks, 'hash'), 'hash')
-                ->get()
-                ->keyBy('hash');
-
-            foreach ($chunks as $chunk) {
-
-            }
+        if (!$this->storage()->exists($relativeJsonlPath)) {
+            throw new FileNotFoundException("JSONL file not found at $relativeJsonlPath");
         }
 
-        $rawChunksData = array_map(function ($rawChunk) {
-            return [
-                'content' => $rawChunk,
-                'hash' => HashService::hash($rawChunk),
+        $now = now();
+        $document->purgeChunks();
+        $readStream = $this->storage()->readStream($relativeJsonlPath);
+        $chunksBuffer = [];
+        $figuresBuffer = [];
+        $index = 1;
+        while (($line = fgets($readStream)) !== false) {
+            $data = PostProcessedItemDTO::fromArray(json_decode($line, true));
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new Exception('JSON decode error: ' . json_last_error_msg());
+            }
+
+            $id = Str::uuid()->toString();
+
+            if ($data['is_image']) {
+                $figuresBuffer[$id] = $data->figurePath;
+            }
+
+            $data = [
+                'id' => $id,
+                'document_id' => $document->id,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+                'content' => $data->text,
+                'hash' => $data->textHash,
+                'embedding' => !empty($data->textEmbedding) ? (is_string($data->textEmbedding) ? $data->textEmbedding : json_encode($data->textEmbedding)) : null,
+                'tags' => $data->tags,
+                'tags_embedding' => !empty($data->tagsEmbedding) ? (is_string($data->tagsEmbedding) ? $data->tagsEmbedding : json_encode($data->tagsEmbedding)) : null,
+                'order' => $index++,
+                'is_image' => !!$data->figurePath,
+                'questions' => $data->questions,
+                'questions_embedding' => !empty($data->questionsEmbedding) ? (is_string($data->questionsEmbedding) ? $data->questionsEmbedding : json_encode($data->questionsEmbedding)) : null,
             ];
-        }, $rawChunks);
 
-        /** @var Collection<string, Chunk> $existingChunks */
-        $existingChunks = Chunk::query()
-            ->select(['hash', 'content', 'embedding'])
-            ->distinct()
-            ->whereIn('hash', Arr::pluck($rawChunksData, 'hash'))
-            ->get()
-            ->keyBy('hash');
-
-        $createdChunks = collect();
-        foreach ($rawChunksData as $index => $data) {
-            $hash = $data['hash'];
-
-            if ($existingChunks->has($hash)) {
-                $existingChunk = $existingChunks->get($hash);
-                $chunk = (new Chunk)->fill([
-                    'content' => $existingChunk->content,
-                    'hash' => $existingChunk->hash,
-                    'embedding' => $existingChunk->embedding,
-                ]);
-            } else {
-                $embedding = Embedding::embed($data['content']);
-
-                $chunk = (new Chunk)->fill([
-                    'content' => $data['content'],
-                    'hash' => $hash,
-                    'embedding' => $embedding,
-                ]);
+            $chunksBuffer[] = $data;
+            if (count($chunksBuffer) < 2) {
+                continue;
             }
 
-            $chunk->order = $index + 1;
-            $chunk->page = $index + 1;
-            $createdChunks->push($chunk);
+            DB::transaction(function () use ($chunksBuffer, $figuresBuffer) {
+                Chunk::insert($chunksBuffer);
+
+                Chunk::select(['id'])
+                    ->whereIn('id', Arr::pluck($figuresBuffer, 'id'))
+                    ->get()
+                    ->each(function (Chunk $chunk) use ($figuresBuffer) {
+                        $chunk->attachMediaFromPath($figuresBuffer[$chunk->id]);
+                    });
+            });
+            $chunksBuffer = [];
+            $figuresBuffer = [];
         }
 
-        return Document::query()
-            ->getConnection()
-            ->transaction(function () use ($documentData, $createdChunks) {
-                $document = $this->getOrCreateDocument($documentData);
-                $document->chunks()->delete();
-                $document->chunks()->saveMany($createdChunks->all());
+        if (count($chunksBuffer) >= 2) {
+            Chunk::insert($chunksBuffer);
+        }
 
-                $document->chunks->each(function ($chunk) use ($documentData) {
-                    foreach ($documentData->tags as $type => $tags) {
-                        $chunk->attachTags($tags, $type);
-                    }
-                });
-
-                return $document;
-            });
+        return $document;
     }
 
     public function search(DocumentSearchDataDTO $searchData)
@@ -213,19 +229,17 @@ class DocumentService
     public function insertChunk(Document $document, int $targetOrder, array $data): Chunk
     {
         return DB::transaction(function () use ($document, $targetOrder, $data) {
-            // Shift subsequent chunks
             $document->chunks()
                 ->where('order', '>=', $targetOrder)
                 ->increment('order');
 
-            // Create new chunk
             $chunk = new Chunk();
             $chunk->document_id = $document->id;
             $chunk->fill($data);
             $chunk->order = $targetOrder;
             $chunk->page = $document->chunks()->where('order', '<', $targetOrder)->max('page') ?? 1; // Best guess for page
             $chunk->hash = HashService::hash($data['content']);
-            
+
             if (!isset($data['embedding'])) {
                  $chunk->embedding = Embedding::embed($data['content']);
             }
@@ -234,5 +248,18 @@ class DocumentService
 
             return $chunk;
         });
+    }
+    /**
+     * @param string $absoluteFilePath
+     * @return string
+     * @throws FileNotFoundException
+     */
+    public function calculateFileHash(string $absoluteFilePath): string
+    {
+        try {
+            return HashService::hashFile($absoluteFilePath);
+        } catch (\RuntimeException $e) {
+             throw new FileNotFoundException($e->getMessage());
+        }
     }
 }
