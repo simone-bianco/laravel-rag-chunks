@@ -120,15 +120,8 @@ class PdfParser implements DocumentParserInterface
                 throw new \InvalidArgumentException("Job '$jobId' not found");
             }
 
-            $path = sprintf(
-                '%s%s%s%s%s.zip',
-                $this->getRelativeTempPath(),
-                DIRECTORY_SEPARATOR,
-                $jobId,
-                DIRECTORY_SEPARATOR,
-                $jobId
-            );
-            $targetAbsolutePath = $this->fileService->getAbsolutePath("$path");
+            $path = "{$this->fileService->generateDirPath($jobId)}/$jobId";
+            $targetAbsolutePath = $this->fileService->getAbsolutePath($path);
             $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, !$deleteRemote);
 
             return new RefiningContextDTO($this->extractParsingResult($path, $deleteLocal))->toArray();
@@ -187,7 +180,8 @@ class PdfParser implements DocumentParserInterface
 
             $stream = fopen($writeAbsolutePath, 'w');
 
-            foreach ($this->dolphinOutputChunker->chunkOutputJson($outputJsonRelativePath) as $chunks) {
+            $jsonAbsolutePath = $this->storage()->path($outputJsonRelativePath);
+            foreach ($this->dolphinOutputChunker->chunkOutputJson($jsonAbsolutePath) as $chunks) {
                 /** @var RefinedItemDTO $row */
                 foreach ($chunks as $row) {
                     fwrite($stream, json_encode($row->toArray(), JSON_UNESCAPED_UNICODE) . "\n");

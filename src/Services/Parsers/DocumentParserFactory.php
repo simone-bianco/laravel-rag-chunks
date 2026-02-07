@@ -17,7 +17,7 @@ class DocumentParserFactory
     {
         return match ($extension) {
             DocumentExtension::PDF->value => app(PdfParser::class),
-            DocumentExtension::MARKDOWN->value, DocumentExtension::TXT->value => app(MarkdownParser::class),
+            DocumentExtension::MARKDOWN->value => app(MarkdownParser::class),
             default => throw new ExtensionParsingNotSupportedException("'$extension' parsing not supported for parsing"),
         };
     }

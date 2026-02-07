@@ -25,36 +25,27 @@ class FileService
 
     public function getTempDirPath(): string
     {
-        return '/download/temp';
+        return '/temp';
     }
 
-    protected function createDirectoryIfNotExists(string $relativePath): void
+    public function createDirectoryIfNotExists(string $relativePath): void
     {
         if (! $this->storage->directoryExists($relativePath)) {
             $this->storage->makeDirectory($relativePath);
         }
-
-        $this->createDirectoryIfNotExists($this->getTempDirPath());
     }
 
-    public function generateDirPath(): string
+    public function moveFile(string $sourceAbsolutePath, string $targetRelativePath): void
     {
-        return $this->getTempDirPath() . '/' . now()->format('d-m-Y') . '/' . Str::random(8);
+        $targetAbsolutePath = $this->getAbsolutePath($targetRelativePath);
+
+        rename($sourceAbsolutePath, $targetAbsolutePath);
     }
 
-    public function generateFilePath(?string $relativePath = null, ?string $extension = null): string
+    public function generateDirPath(?string $dirName = null): string
     {
-        if (!$relativePath) {
-            $relativePath = $this->generateDirPath();
-        }
-
-        $relativePath .= Str::random(8);
-
-        if ($extension) {
-            $relativePath .= ".$extension";
-        }
-
-        return $relativePath;
+        $dirName ??= Str::uuid()->toString();
+        return $this->getTempDirPath() . DIRECTORY_SEPARATOR . now()->format('d-m-Y') . DIRECTORY_SEPARATOR . $dirName;
     }
 
     public function getAbsolutePath(string $relativePath): string
