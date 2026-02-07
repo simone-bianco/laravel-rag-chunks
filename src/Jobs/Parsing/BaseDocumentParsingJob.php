@@ -20,7 +20,7 @@ abstract class BaseDocumentParsingJob implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    protected string $documentId;
+    protected ?string $documentId = null;
 
     protected string $processId;
 

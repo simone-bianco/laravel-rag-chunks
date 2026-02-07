@@ -8,7 +8,7 @@ use Throwable;
 
 class TestPollParsingCommand extends Command
 {
-    protected $signature = 'rag-chunks:test-poll 
+    protected $signature = 'rag-chunks:test-poll
                             {job_id : The job_id returned from dispatchParsing}';
 
     protected $description = 'Test the PdfParser::pollParsing service directly';

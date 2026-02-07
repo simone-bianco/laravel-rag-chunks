@@ -4,7 +4,6 @@ namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Context;
-use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -58,7 +57,7 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
             $dispatchData = $parser->dispatchParsing($document->getAbsolutePath());
-            $process->setProcessing([$dispatchData, ...['phase' => ParsingPhase::DISPATCHED->value]]);
+            $process->setProcessing([...$dispatchData, ...['phase' => ParsingPhase::DISPATCHED->value]]);
 
             $this->logger()->debug('Dispatch parsing job finished');
 

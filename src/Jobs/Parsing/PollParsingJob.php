@@ -35,7 +35,6 @@ class PollParsingJob extends BaseDocumentParsingJob
     public function __construct(string $processId)
     {
         $this->processId = $processId;
-        // documentId will be set after process is loaded
     }
 
     /**
@@ -54,8 +53,7 @@ class PollParsingJob extends BaseDocumentParsingJob
             /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
             $document = $process->processable;
             $this->documentId = $document->id;
-            
-            // Update context with document ID
+
             $this->enrichContext();
 
             if ($process->context['phase'] !== ParsingPhase::POLLING->value) {
@@ -73,8 +71,6 @@ class PollParsingJob extends BaseDocumentParsingJob
                 ParserStatus::PROCESSING => $this->handleProcessing($process),
                 ParserStatus::FAILED => $this->handleFailed($process, 'Parser returned FAILED status'),
             };
-
-            $this->logger()->debug('Polling parsing job finished');
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning('Process not found: '.$this->processId);
             $this->fail($exception);
@@ -97,9 +93,11 @@ class PollParsingJob extends BaseDocumentParsingJob
      */
     protected function handleCompleted(Process $process, DocumentParserInterface $parser): void
     {
-        $context = $parser->saveParsingResult($process->data);
-        $process->mergeContextAndSave([$context, ...['phase' => ParsingPhase::SAVED->value]]);
+        $context = $parser->saveParsingResult($process->context);
+        $process->mergeContextAndSave([...$context, ...['phase' => ParsingPhase::SAVED->value]]);
         $this->logger()->info("Polling completed for document {$this->documentId}");
+
+        RefineParsingResultsJob::dispatch($this->documentId, $process->id);
     }
 
     protected function handleProcessing(Process $process): void

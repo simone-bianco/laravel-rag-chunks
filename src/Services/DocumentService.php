@@ -82,12 +82,11 @@ class DocumentService
     }
 
     /**
-     * IMPORTANTE: Il file deve contenere TUTTI i campi 1-1 così come devono essere salvati nel DB
-     *
      * @param Document $document
      * @param string $relativeJsonlPath
      * @return Document
      * @throws FileNotFoundException
+     * @throws Throwable
      */
     public function regeneratePostProcessedChunks(Document $document, string $relativeJsonlPath): Document
     {
@@ -110,8 +109,8 @@ class DocumentService
 
             $id = Str::uuid()->toString();
 
-            if ($data['is_image']) {
-                $figuresBuffer[$id] = $data->figurePath;
+            if ($figurePath = $data->figurePath) {
+                $figuresBuffer[$id] = $figurePath;
             }
 
             $data = [

@@ -64,7 +64,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             return;
         }
 
-        $process->mergeContextAndSave([$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
+        $process->mergeContextAndSave([...$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
 
         SaveParsingJob::dispatch($document->id, $process->id);
 

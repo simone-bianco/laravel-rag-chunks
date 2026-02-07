@@ -46,9 +46,7 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         $parser = DocumentParserFactory::make($document->extension);
 
         $chunkingData = $parser->refineOutputJson($process->context);
-        $process->mergeContextAndSave([$chunkingData, ...array_filter([
-            'phase' => ParsingPhase::REFINED->value,
-        ])]);
+        $process->mergeContextAndSave([...$chunkingData, ...['phase' => ParsingPhase::REFINED->value]]);
 
         PostProcessParsingJob::dispatch($document->id, $process->id);
 

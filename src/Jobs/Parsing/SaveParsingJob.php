@@ -52,11 +52,9 @@ class SaveParsingJob extends BaseDocumentParsingJob
 
         /** @var PdfParser $parser */
         $parser = DocumentParserFactory::make($document->extension);
-        $postProcessData = $parser->saveDocument($document, $process->context);
+        $parser->saveDocument($document, $process->context);
 
-        $process->mergeContextAndSave([$postProcessData, ...[
-            'phase' => ParsingPhase::SAVED->value
-        ]]);
+        $process->mergeContextAndSave(['phase' => ParsingPhase::SAVED->value]);
 
         $this->logger()->debug('Saving parsing job finished');
     }

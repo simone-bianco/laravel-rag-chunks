@@ -384,6 +384,7 @@ class PdfParser implements DocumentParserInterface
      * @param array $data
      * @return Document
      * @throws FileNotFoundException
+     * @throws Throwable
      */
     public function saveDocument(Document $document, array $data): Document
     {
