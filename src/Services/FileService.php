@@ -2,7 +2,6 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
-use Exception;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -35,7 +34,14 @@ class FileService
         }
     }
 
-    public function moveFile(string $sourceAbsolutePath, string $targetRelativePath): void
+    /**
+     * A2R = Absolute to Relative
+     *
+     * @param string $sourceAbsolutePath
+     * @param string $targetRelativePath
+     * @return void
+     */
+    public function moveFileA2R(string $sourceAbsolutePath, string $targetRelativePath): void
     {
         $targetAbsolutePath = $this->getAbsolutePath($targetRelativePath);
 
@@ -48,9 +54,39 @@ class FileService
         return $this->getTempDirPath() . DIRECTORY_SEPARATOR . now()->format('d-m-Y') . DIRECTORY_SEPARATOR . $dirName;
     }
 
+    public function delete(string $relativePath): void
+    {
+        $this->storage->delete($relativePath);
+    }
+
+    public function files(string $relativePath): array
+    {
+        return $this->storage->files($relativePath);
+    }
+
+    public function exists(string $relativePath): bool
+    {
+        return $this->storage->exists($relativePath);
+    }
+
     public function getAbsolutePath(string $relativePath): string
     {
         return $this->storage->path($relativePath);
+    }
+
+    public function put(string $relativeFilePath, string $content): string
+    {
+        return $this->storage->put($relativeFilePath, $content);
+    }
+
+    public function readStream(string $relativePath)
+    {
+        return $this->storage->readStream($relativePath);
+    }
+
+    public function writeStream(string $relativePath, string $mode = 'a+')
+    {
+        return fopen($this->getAbsolutePath($relativePath), $mode);
     }
 
     public function getRelativePath(string $absolutePath): string
@@ -62,6 +98,20 @@ class FileService
         }
 
         return $path;
+    }
+
+    public function closeStreams(...$streams): void
+    {
+        foreach ($streams as $stream) {
+            if (is_resource($stream)){
+                fclose($stream);
+            }
+        }
+    }
+
+    public function writeOnStream($stream, string $data, ?int $length = null): void
+    {
+        fwrite($stream, $data, $length);
     }
 
     /**

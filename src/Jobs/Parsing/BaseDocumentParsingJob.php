@@ -22,7 +22,7 @@ abstract class BaseDocumentParsingJob implements ShouldBeUnique, ShouldQueue
 
     protected ?string $documentId = null;
 
-    protected string $processId;
+    protected ?string $processId = null;
 
     abstract public function backoff(): array;
 

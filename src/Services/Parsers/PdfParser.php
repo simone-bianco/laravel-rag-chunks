@@ -3,27 +3,20 @@
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
-use Illuminate\Support\Str;
-use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessingAgent;
-use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PollingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
-use SimoneBianco\LaravelRagChunks\Facades\HashService;
-use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Services\DocumentService;
+use SimoneBianco\LaravelRagChunks\Services\PostProcessors\PostProcessor;
 use SimoneBianco\LaravelRagChunks\Services\StreamService;
 use SimoneBianco\SimpleStorageClient\Exceptions\ConnectionFailedException;
 use SimoneBianco\SimpleStorageClient\Exceptions\SimpleStorageException;
 use SimoneBianco\SimpleStorageClient\Exceptions\UnauthorizedException;
 use SimoneBianco\SimpleStorageClient\SimpleStorageClient;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use JsonMachine\Exception\InvalidArgumentException;
 use SimoneBianco\DolphinParser\DolphinParserClient;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
@@ -42,7 +35,8 @@ class PdfParser implements DocumentParserInterface
         protected DolphinOutputChunkerService $dolphinOutputChunker,
         protected SimpleStorageClient         $simpleStorage,
         protected StreamService               $streamService,
-        protected DocumentService             $documentService
+        protected DocumentService             $documentService,
+        protected PostProcessor               $postProcessor
     ) {}
 
     protected function getRelativeTempPath(): string
@@ -130,11 +124,6 @@ class PdfParser implements DocumentParserInterface
         }
     }
 
-    protected function storage(): ?Filesystem
-    {
-        return $this->fileService->getStorage();
-    }
-
     /**
      * @param string $zipRelativePath
      * @param bool $deleteLocal
@@ -146,7 +135,7 @@ class PdfParser implements DocumentParserInterface
         $dirRelativePath = $this->fileService->extract($zipRelativePath);
 
         if ($deleteLocal) {
-            $this->storage()->delete($zipRelativePath);
+            $this->fileService->delete($zipRelativePath);
         }
 
         return $dirRelativePath;
@@ -163,99 +152,35 @@ class PdfParser implements DocumentParserInterface
             $dirRelativePath = RefiningContextDTO::fromArray($data)->relativeDirPath;
 
             /** @var string $outputJsonRelativePath */
-            $outputJsonRelativePath = collect($this->storage()->files($dirRelativePath))->first(function ($file) {
+            $outputJsonRelativePath = collect($this->fileService->files($dirRelativePath))->first(function ($file) {
                 return pathinfo($file, PATHINFO_EXTENSION) === 'json';
             });
 
-            if (!$this->storage()->exists($outputJsonRelativePath)) {
+            if (!$this->fileService->exists($outputJsonRelativePath)) {
                 throw new InvalidFileException("$outputJsonRelativePath does not exist");
             }
 
             $writeRelativePath = "$dirRelativePath/refined_output.jsonl";
-            $writeAbsolutePath = $this->storage()->path($writeRelativePath);
-            $directory = dirname($writeAbsolutePath);
-            if (!is_dir($directory)) {
-                mkdir($directory, 0755, true);
-            }
+            $this->fileService->createDirectoryIfNotExists($dirRelativePath);
+            $stream = $this->fileService->writeStream($writeRelativePath, 'w');
 
-            $stream = fopen($writeAbsolutePath, 'w');
-
-            $jsonAbsolutePath = $this->storage()->path($outputJsonRelativePath);
+            $jsonAbsolutePath = $this->fileService->getAbsolutePath($outputJsonRelativePath);
             foreach ($this->dolphinOutputChunker->chunkOutputJson($jsonAbsolutePath) as $chunks) {
                 /** @var RefinedItemDTO $row */
                 foreach ($chunks as $row) {
-                    fwrite($stream, json_encode($row->toArray(), JSON_UNESCAPED_UNICODE) . "\n");
+                    $this->fileService->writeOnStream(
+                        $stream,
+                        json_encode($row->toArray(), JSON_UNESCAPED_UNICODE) . "\n"
+                    );
                 }
             }
-            fclose($stream);
 
-            $this->storage()->delete($outputJsonRelativePath);
+            $this->fileService->closeStreams($stream);
+            $this->fileService->delete($outputJsonRelativePath);
 
             return new PostProcessingContextDTO($dirRelativePath, $writeRelativePath)->toArray();
         } catch (InvalidArgumentException $exception) {
             throw new InvalidFileException(message: $exception->getMessage(), previous: $exception);
-        }
-    }
-
-    /**
-     * @param array $items
-     * @param $writeStream
-     * @param EmbeddingDriverInterface $embedder
-     * @return void
-     * @throws Throwable
-     */
-    protected function processPostProcessingBuffer(
-        array &$items,
-        $writeStream,
-        EmbeddingDriverInterface $embedder
-    ): void {
-        if (empty($items)) return;
-
-        $neededMap = [];
-        foreach ($items as $item) {
-            $neededMap[$item['tags_hash']] = $item['tags'];
-            $neededMap[$item['questions_hash']] = $item['questions'];
-            $neededMap[$item['text_hash']] = $item['text'];
-        }
-
-        $existingEmbeddings = Embedding::whereIn('hash', array_keys($neededMap))
-            ->pluck('embedding', 'hash')
-            ->toArray();
-
-        $missingHashes = array_diff_key($neededMap, $existingEmbeddings);
-        if (!empty($missingHashes)) {
-            $textsToEmbed = array_values($missingHashes);
-
-            $newVectors = [];
-            foreach ($textsToEmbed as $text) {
-                $newVectors[] = retry(
-                    config('rag_chunks.embedding_retry.times', 3),
-                    fn() => $embedder->embed($text),
-                    config('rag_chunks.embedding_retry.sleep', 1000)
-                );
-            }
-
-            $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
-            $existingEmbeddings = $existingEmbeddings + $newEmbeddingsMap;
-        }
-
-        foreach ($items as $key => $item) {
-            $postProcessedItem = new PostProcessedItemDTO(
-                text: $item['text'],
-                figurePath: $item['figure_path'],
-                textHash: $item['text_hash'],
-                textEmbedding: $existingEmbeddings[$item['text_hash']] ?? null,
-                tags: $item['tags'],
-                tagsHash: $item['tags_hash'],
-                tagsEmbedding: $existingEmbeddings[$item['tags_hash']] ?? null,
-                questions: $item['questions'],
-                questionsHash: $item['questions_hash'],
-                questionsEmbedding: $existingEmbeddings[$item['questions_hash']] ?? null
-            );
-
-            fwrite($writeStream, json_encode($postProcessedItem->toArray(), JSON_UNESCAPED_UNICODE) . "\n");
-
-            unset($items[$key]);
         }
     }
 
@@ -272,105 +197,27 @@ class PdfParser implements DocumentParserInterface
     {
         $postProcessingData = PostProcessingContextDTO::fromArray($data);
 
-        if (!$this->storage()->exists($postProcessingData->relativeRefinedPath)) {
+        if (!$this->fileService->exists($postProcessingData->relativeRefinedPath)) {
             throw new InvalidFileException("$postProcessingData->relativeRefinedPath does not exist");
         }
 
         $relativePostProcessedOutputPath = "$postProcessingData->relativeDirPath/post_processed.jsonl";
-        if (!$this->storage()->exists($relativePostProcessedOutputPath)) {
-            $this->storage()->put($relativePostProcessedOutputPath, '');
-        }
-        $postProcessingData->relativePostProcessedPath = $relativePostProcessedOutputPath;
-        $embedder = EmbeddingFactory::make();
-        try {
-            $readStream = $this->storage()->readStream($postProcessingData->relativeRefinedPath);
-
-            $writeStream = fopen($this->storage()->path($relativePostProcessedOutputPath), 'a+');
-            $alreadyProcessed = $this->streamService->countLines($writeStream);
-
-            $previousChunkTags = '';
-            if ($alreadyProcessed > 0) {
-                $this->streamService->goToLine($writeStream, $alreadyProcessed - 1);
-                $lastLine = fgets($writeStream);
-                if ($lastLine) {
-                    $lastItem = json_decode($lastLine, true);
-                    $previousChunkTags = $lastItem['tags'] ?? '';
-                }
-                $this->streamService->goToEnd($writeStream);
-            }
-
-            $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
-
-            $currentInputLine = 0;
-            $buffer = [];
-            while (($line = fgets($readStream)) !== false) {
-                $currentInputLine++;
-
-                if ($currentInputLine <= $alreadyProcessed || trim($line) === '') {
-                    continue;
-                }
-
-                $decoded = json_decode($line, true);
-                if ($decoded === null) {
-                    continue;
-                }
-                $item = RefinedItemDTO::fromArray($decoded);
-                $response = $postProcessingAgent
-                    ->clear()
-                    ->withPreviousChunkTags($previousChunkTags)
-                    ->respondAndGetFormattedResults($item->text);
-
-                $tags = $response->getImplodedTags();
-                $questions = $response->getImplodedQuestions();
-
-                $previousChunkTags = $tags;
-
-                $buffer[] = [
-                    'text' => $item->text,
-                    'figure_path' => "$postProcessingData->relativeDirPath/$item->figurePath",
-                    'text_hash' => HashService::hash($item->text),
-                    'tags' => $tags,
-                    'tags_hash' => HashService::hash($tags),
-                    'questions' => $questions,
-                    'questions_hash' => HashService::hash($questions),
-                ];
-
-                if (count($buffer) >= $batchSize) {
-                    $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                }
-            }
-
-            if (!empty($buffer)) {
-                $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-            }
-        } catch (Throwable $exception) {
-            if (isset($readStream) && is_resource($readStream)) fclose($readStream);
-            if (isset($writeStream) && is_resource($writeStream)) {
-                if (!empty($buffer)) {
-                    try {
-                        $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                    } catch (Throwable $rescueException) {}
-                }
-
-                fclose($writeStream);
-            }
-
-            throw new PostProcessingException(
-                "Error during PDF post-processing: {$exception->getMessage()}",
-                0,
-                $exception,
-                get_class($exception),
-                $postProcessingData->relativeRefinedPath,
-                $currentInputLine ?? 0,
-                $line ?? '',
-                false
-            );
+        if (!$this->fileService->exists($relativePostProcessedOutputPath)) {
+            $this->fileService->put($relativePostProcessedOutputPath, '');
         }
 
-        fclose($readStream);
-        fclose($writeStream);
+        $this->postProcessor->postProcess(
+            $postProcessingData->relativeRefinedPath,
+            $relativePostProcessedOutputPath,
+            $documentContext,
+            $batchSize
+        );
 
-        return $postProcessingData->toArray();
+        return new PostProcessingContextDTO(
+            $postProcessingData->relativeDirPath,
+            $postProcessingData->relativeRefinedPath,
+            $relativePostProcessedOutputPath
+        )->toArray();
     }
 
     /**

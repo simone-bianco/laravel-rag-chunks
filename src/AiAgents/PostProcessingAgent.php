@@ -77,13 +77,13 @@ Your task is to analyze the provided chunk of text and extract a set of highly r
 1. **Format**: All tags must be strictly **LOWERCASE** and formatted as **SLUGS** (slug_case).
    - Correct: `artificial_intelligence`, `laravel_framework`, `user_authentication`
    - Incorrect: `Artificial Intelligence`, `laravel-framework`, `User Authentication`
-2. **Specificity**: Focus on specific entities, key concepts, technologies, or unique topics found in the text. Avoid generic filler words.
+2. **Specificity**: Focus on specific entities, key concepts, technologies, or unique topics found in the text. Avoid generic filler words like 'role play game' or 'game'.
 3. **Retrieval**: Choose tags that would allow a search engine to find this specific chunk easily among many others.
 
 ### QUESTIONS RULES
 1. **Reverse Engineering**: Formulate 1-5 questions that a user would naturally ask where *this specific chunk* provides the best answer.
 2. **Accuracy**: Ensure the questions are directly answerable by the information contained in the text. Do not hallucinate information not present in the chunk.
-3. **Variety**: Aim for a mix of conceptual questions (e.g., "What is X?") and procedural/specific questions (e.g., "How do I configure Y?").
+3. **Variety**: Aim for a mix of conceptual questions (e.g., "What is X?") and procedural/specific questions (e.g., "How do I configure Y?"), but don't repeat same questions.
 4. **Self-Contained**: Questions should be understandable without needing previous conversation context.
 
 $this->documentContext

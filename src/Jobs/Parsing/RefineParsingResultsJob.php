@@ -10,7 +10,7 @@ use Throwable;
 
 class RefineParsingResultsJob extends BaseDocumentParsingJob
 {
-    public int $tries = 0;
+    public int $tries = 1;
 
     public function backoff(): array
     {

@@ -72,19 +72,12 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             $this->logger()->warning("Document not found: " . $this->documentId);
             $this->fail($exception);
         } catch (ClientException $e) {
-            if ($e->isRetryable()) {
-                $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+            if (!$e->isRetryable()) {
+                $this->fail($e);
             }
 
-            $this->fail($e);
+            $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
         } catch (Throwable $e) {
-            $this->logger()->error("Unexpected error in dispatch job", [
-                'document_id' => $this->documentId,
-                'process_id' => $this->processId,
-                'exception' => get_class($e),
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
             $this->fail($e);
         }
     }
