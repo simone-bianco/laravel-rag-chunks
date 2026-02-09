@@ -2,49 +2,104 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
+use Illuminate\Support\Arr;
 use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessingAgentResponseDTO;
+use LarAgent\Core\Contracts\Message as MessageInterface;
+use Throwable;
 
 class PostProcessingAgent extends Agent
 {
-    protected string $previousChunkTags = '';
-
     protected $history = CacheStorage::class;
+    protected array $chunksByKey = [];
 
     public function __construct(
         $key,
+        array $chunks,
+        protected array $allowedTagsByType = [],
         bool $usesUserId = false,
         ?string $group = null,
         protected ?array $config = null,
         protected ?string $documentContext = null
     ) {
+        $this->chunksByKey = Arr::mapWithKeys($chunks, function ($chunk, $index) {
+            return ["chunk_$index" => $chunk];
+        });
         $config = config('rag_chunks.ai_agents.semantic_tagger', []);
         parent::__construct($key, $usesUserId, $group);
         $this->provider = $config['provider'] ?? 'openai';
         $this->model = $config['model'] ?? 'gpt-4.1-nano';
     }
 
-    protected $responseSchema = [
-        'type' => 'object',
-        'properties' => [
-            'questions' => [
+    protected function afterResponse(MessageInterface $message)
+    {
+        dd($message->getMetadata());
+    }
+
+    /**
+     * @return array
+     */
+    /**
+     * @return array
+     */
+    protected function getResponseSchema(): array
+    {
+        $allowedTagsSchema = [];
+        foreach ($this->allowedTagsByType as $type => $tags) {
+            $allowedTagsSchema[$type] = [
                 'type' => 'array',
-                'description' => 'Set of questions that can be used to retrieve the chunk of text',
+                'description' => 'List of tags of type "' . $type . '"',
                 'items' => [
                     'type' => 'string',
-                ]
-            ],
-            'tags' => [
-                'type' => 'array',
-                'description' => 'Set of tags that describe better the content of the chunk of text',
-                'items' => [
-                    'type' => 'string',
-                ]
-            ],
-        ],
-        'required' => ['tags', 'questions'],
-    ];
+                    'enum' => array_values($tags),
+                ],
+            ];
+        }
+
+        $chunksObjects = array_map(function ($chunk) use ($allowedTagsSchema) {
+            return [
+                'type' => 'object',
+                'description' => $chunk,
+                'properties' => [
+                    'questions' => [
+                        'type' => 'array',
+                        'description' => 'Set of questions that can be used to retrieve the chunk of text',
+                        'items' => [
+                            'type' => 'string',
+                        ]
+                    ],
+                    'tags' => [
+                        'type' => 'array',
+                        'description' => 'Set of SEMANTIC tags that describe better the content of the chunk of text',
+                        'items' => [
+                            'type' => 'string',
+                        ]
+                    ],
+                    'allowed_tags' => [
+                        'type' => 'object',
+                        'properties' => $allowedTagsSchema,
+                        'required' => array_keys($allowedTagsSchema),
+                        'additionalProperties' => false,
+                    ],
+                ],
+                'required' => ['tags', 'questions', 'allowed_tags'],
+                'additionalProperties' => false
+            ];
+        }, $this->chunksByKey);
+
+        return [
+            'type' => 'object',
+            'description' => 'All the chunks with tags and questions',
+            'properties' => $chunksObjects,
+            'required' => array_keys($chunksObjects),
+            'additionalProperties' => false
+        ];
+    }
+
+    public function structuredOutput()
+    {
+        return $this->getResponseSchema();
+    }
 
     public function withDocumentContext(string $context): self
     {
@@ -55,11 +110,8 @@ class PostProcessingAgent extends Agent
         return $this;
     }
 
-    public function withPreviousChunkTags(?string $previousChunkTags): self
+    public function withChunks(array $chunks): self
     {
-        if (!empty($previousChunkTags)) {
-            $this->previousChunkTags = "\n### PREVIOUS CHUNK TAGS (take into account when generating new tags, but do not repeat them if they are not relevant to the current chunk)\n$previousChunkTags";
-        }
 
         return $this;
     }
@@ -71,7 +123,12 @@ class PostProcessingAgent extends Agent
 You are an expert optimizer for RAG (Retrieval-Augmented Generation) systems.
 
 ### GOAL
-Your task is to analyze the provided chunk of text and extract a set of highly relevant questions and tags that describe its content.
+Your task is to analyze the provided chunks of text and extract a set of highly relevant questions and tags that describe its content.
+The chunks belong to the same document, so you can get the whole context.
+
+### UNIVERSAL RULES
+1. **Context-Understand**: Giving you more contiguous chunks will allow you to understand better the context, especially for abstract data like tables.
+2. **Same-Order**: The output MUST BE in the same order as the input chunks.
 
 ### TAGGING RULES
 1. **Format**: All tags must be strictly **LOWERCASE** and formatted as **SLUGS** (slug_case).
@@ -84,20 +141,21 @@ Your task is to analyze the provided chunk of text and extract a set of highly r
 1. **Reverse Engineering**: Formulate 1-5 questions that a user would naturally ask where *this specific chunk* provides the best answer.
 2. **Accuracy**: Ensure the questions are directly answerable by the information contained in the text. Do not hallucinate information not present in the chunk.
 3. **Variety**: Aim for a mix of conceptual questions (e.g., "What is X?") and procedural/specific questions (e.g., "How do I configure Y?"), but don't repeat same questions.
-4. **Self-Contained**: Questions should be understandable without needing previous conversation context.
 
 $this->documentContext
-$this->previousChunkTags
 INSTRUCTIONS;
     }
 
-    public function respondAndGetFormattedResults(string $text): PostProcessingAgentResponseDTO
+    /**
+     * @throws Throwable
+     */
+    public function respondAndGetFormattedResults()
     {
-        $response = $this->respond($text);
-        return new PostProcessingAgentResponseDTO(
-            tags: $response['tags'] ?? [],
-            questions: $response['questions'] ?? []
-        );
+        return array_values($this->respond('proceed'));
+//        return new PostProcessingAgentResponseDTO(
+//            tags: $response['tags'] ?? [],
+//            questions: $response['questions'] ?? []
+//        );
     }
 
     public function prompt($message)
