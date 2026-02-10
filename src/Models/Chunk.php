@@ -6,12 +6,22 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Collection;
 use SimoneBianco\LaravelDedupMedia\Traits\HasDedupMedia;
 use SimoneBianco\LaravelRagChunks\Builders\ChunkBuilder;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
+/**
+ * @method static ChunkBuilder query()
+ * @method ChunkBuilder whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch)
+ * @method ChunkBuilder whereAliases(?array $docAliases, ?array $projAliases)
+ * @method ChunkBuilder whereTagFilters(?Collection $tagFilters)
+ * @method ChunkBuilder withHybridRanking(?array $contentVector, ?array $questionsVector, ?array $tagsVector, ?float $weightContent, ?float $weightQuestions, ?float $weightTags)
+ *
+ * @mixin ChunkBuilder
+ */
 class Chunk extends Model
 {
     use HasDedupMedia, HasNearestNeighbors, HasTags, HasUuids;

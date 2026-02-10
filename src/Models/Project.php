@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use SimoneBianco\LaravelRagChunks\Database\Factories\ProjectFactory;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 
 class Project extends Model
@@ -15,16 +16,32 @@ class Project extends Model
 
     protected static function newFactory()
     {
-        return \SimoneBianco\LaravelRagChunks\Database\Factories\ProjectFactory::new();
+        return ProjectFactory::new();
     }
 
-    protected $guarded = [];
-
-    // protected $fillable removed in favor of guarded = []
+    protected $fillable = [
+        'name',
+        'description',
+        'alias',
+        'category',
+        'settings',
+    ];
 
     protected $casts = [
         'settings' => 'array',
     ];
+
+    public function getTagsSlugsKeyedByTypes(): array
+    {
+        return $this->tags()
+            ->select('type', 'slug')
+            ->get()
+            ->groupBy('type')
+            ->mapWithKeys(function ($tags, $key) {
+                return [$key => $tags->pluck('slug')->toArray()];
+            })
+            ->toArray();
+    }
 
     public function documents(): HasMany
     {

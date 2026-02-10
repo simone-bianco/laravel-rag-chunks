@@ -18,6 +18,7 @@ class ProjectService
             $project = new Project();
             $project->fill([
                 'name' => $projectData->name,
+                'description' => $projectData->description,
                 'alias' => $projectData->alias,
                 'settings' => $projectData->settings,
             ]);

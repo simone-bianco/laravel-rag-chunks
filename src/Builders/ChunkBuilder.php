@@ -7,6 +7,19 @@ use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 
 class ChunkBuilder extends Builder
 {
+    public function whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch): self
+    {
+        return $this
+            ->when(!empty($chunksIds), fn($q) => $q->whereIn('id', $chunksIds))
+            ->when(!empty($textSearch), fn($q) => $q->where('content', 'ilike', "%{$textSearch}%"))
+            ->when(!empty($keywordsSearch), function ($q) use ($keywordsSearch) {
+                foreach ($keywordsSearch as $keyword) {
+                    $q->where('content', 'ilike', "%{$keyword}%");
+                }
+                return $q;
+            });
+    }
+
     public function whereAliases(?array $docAliases, ?array $projAliases): self
     {
         return $this
@@ -32,35 +45,76 @@ class ChunkBuilder extends Builder
 
     public function withHybridRanking(
         ?array $contentVector,
+        ?array $questionsVector,
         ?array $tagsVector,
         ?float $weightContent,
+        ?float $weightQuestions,
         ?float $weightTags
     ): self {
-        $weightContent = $weightContent ?? config('rag_chunks.semantic_weights.content', 0.7);
-        $weightTags = $weightTags ?? config('rag_chunks.semantic_weights.tags', 0.3);
+        $weightContent = $weightContent ?? config('rag_chunks.semantic_weights.content', 0.5);
+        $weightQuestions = $weightQuestions ?? config('rag_chunks.semantic_weights.questions', 0.3);
+        $weightTags = $weightTags ?? config('rag_chunks.semantic_weights.tags', 0.2);
 
-        $contentVectorStr = $contentVector ? '[' . implode(',', $contentVector) . ']' : null;
-        $tagsVectorStr    = $tagsVector    ? '[' . implode(',', $tagsVector) . ']'    : null;
+        $contentVectorStr   = $contentVector   ? '[' . implode(',', $contentVector) . ']'   : null;
+        $questionsVectorStr = $questionsVector ? '[' . implode(',', $questionsVector) . ']' : null;
+        $tagsVectorStr      = $tagsVector      ? '[' . implode(',', $tagsVector) . ']'      : null;
 
-        if ($contentVectorStr && $tagsVectorStr) {
-            $scoreSql = "( (1 - (embedding <=> ?)) * {$weightContent} ) + ( (1 - (tags_embedding <=> ?)) * {$weightTags} )";
+        $vectors = array_filter([
+            'content'   => $contentVectorStr,
+            'questions' => $questionsVectorStr,
+            'tags'      => $tagsVectorStr,
+        ]);
 
-            return $this->selectRaw("$scoreSql as combined_score", [$contentVectorStr, $tagsVectorStr])
-                ->selectRaw('1 - (embedding <=> ?) as content_similarity', [$contentVectorStr])
-                ->selectRaw('1 - (tags_embedding <=> ?) as tags_similarity', [$tagsVectorStr])
-                ->orderByRaw("$scoreSql DESC", [$contentVectorStr, $tagsVectorStr]);
+        if (count($vectors) === 0) {
+            return $this;
         }
+
+        // Normalize weights based on which vectors are present
+        $totalWeight = 0;
+        $weights = [];
+        if ($contentVectorStr)   { $weights['content']   = $weightContent;   $totalWeight += $weightContent; }
+        if ($questionsVectorStr) { $weights['questions'] = $weightQuestions; $totalWeight += $weightQuestions; }
+        if ($tagsVectorStr)      { $weights['tags']      = $weightTags;      $totalWeight += $weightTags; }
+
+        // Normalize weights to sum to 1.0
+        if ($totalWeight > 0) {
+            foreach ($weights as $key => $weight) {
+                $weights[$key] = $weight / $totalWeight;
+            }
+        }
+
+        // Build the combined score SQL
+        $scoreParts = [];
+        $bindings = [];
 
         if ($contentVectorStr) {
-            return $this->nearestNeighbors('embedding', $contentVectorStr, 'cosine')
-                ->selectRaw('1 - (embedding <=> ?) as content_similarity', [$contentVectorStr]);
+            $scoreParts[] = "( (1 - (embedding <=> ?)) * {$weights['content']} )";
+            $bindings[] = $contentVectorStr;
         }
-
+        if ($questionsVectorStr) {
+            $scoreParts[] = "( (1 - (questions_embedding <=> ?)) * {$weights['questions']} )";
+            $bindings[] = $questionsVectorStr;
+        }
         if ($tagsVectorStr) {
-            return $this->nearestNeighbors('tags_embedding', $tagsVectorStr, 'cosine')
-                ->selectRaw('1 - (tags_embedding <=> ?) as tags_similarity', [$tagsVectorStr]);
+            $scoreParts[] = "( (1 - (tags_embedding <=> ?)) * {$weights['tags']} )";
+            $bindings[] = $tagsVectorStr;
         }
 
-        return $this;
+        $scoreSql = implode(' + ', $scoreParts);
+
+        $query = $this->selectRaw("($scoreSql) as combined_score", $bindings);
+
+        // Add individual similarity scores
+        if ($contentVectorStr) {
+            $query->selectRaw('1 - (embedding <=> ?) as content_similarity', [$contentVectorStr]);
+        }
+        if ($questionsVectorStr) {
+            $query->selectRaw('1 - (questions_embedding <=> ?) as questions_similarity', [$questionsVectorStr]);
+        }
+        if ($tagsVectorStr) {
+            $query->selectRaw('1 - (tags_embedding <=> ?) as tags_similarity', [$tagsVectorStr]);
+        }
+
+        return $query->orderByRaw("($scoreSql) DESC", $bindings);
     }
 }

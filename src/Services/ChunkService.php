@@ -13,15 +13,31 @@ class ChunkService
     public function search(ChunkSearchDataDTO $searchData): LengthAwarePaginator
     {
         $contentVector = null;
+        $questionsVector = null;
         $tagsVector = null;
 
-        if (!empty($searchData->search)) {
-            $contentVector = Embedding::embed($searchData->search);
+        // Embed textSearch for content similarity
+        if (! empty($searchData->textSearch)) {
+            $contentVector = Embedding::embed($searchData->textSearch);
         }
 
-        if (!empty($searchData->semanticTagsSearch)) {
-            if ($searchData->semanticTagsSearch === $searchData->search && $contentVector !== null) {
+        // Embed questionsSearch for questions similarity
+        if (! empty($searchData->questionsSearch)) {
+            // Reuse contentVector if same text
+            if ($searchData->questionsSearch === $searchData->textSearch && $contentVector !== null) {
+                $questionsVector = $contentVector;
+            } else {
+                $questionsVector = Embedding::embed($searchData->questionsSearch);
+            }
+        }
+
+        // Embed semanticTagsSearch for tags similarity
+        if (! empty($searchData->semanticTagsSearch)) {
+            // Reuse vectors if same text
+            if ($searchData->semanticTagsSearch === $searchData->textSearch && $contentVector !== null) {
                 $tagsVector = $contentVector;
+            } elseif ($searchData->semanticTagsSearch === $searchData->questionsSearch && $questionsVector !== null) {
+                $tagsVector = $questionsVector;
             } else {
                 $tagsVector = Embedding::embed($searchData->semanticTagsSearch);
             }
@@ -34,13 +50,15 @@ class ChunkService
                 $query->where('enabled', true);
             })
             ->withNeighborSnippets()
-            ->whereBasicFilters($searchData->chunksIds, $searchData->textSearch)
+            ->whereBasicFilters($searchData->chunksIds, $searchData->textSearch, $searchData->keywordsSearch)
             ->whereAliases($searchData->documentsAliases, $searchData->projectsAliases)
             ->whereTagFilters($searchData->tagFilters)
             ->withHybridRanking(
                 contentVector: $contentVector,
+                questionsVector: $questionsVector,
                 tagsVector: $tagsVector,
                 weightContent: $searchData->weightContent,
+                weightQuestions: $searchData->weightQuestions,
                 weightTags: $searchData->weightSemanticTags
             )
             ->paginate(
