@@ -52,7 +52,7 @@ class MarkdownParser implements DocumentParserInterface
             throw new InvalidFileException("File at '$absolutePath' is not an md file");
         }
 
-        $relativeDirPath = $this->fileService->generateDirPath();
+        $relativeDirPath = $this->fileService->generateTempDirPath();
         $this->fileService->createDirectoryIfNotExists($relativeDirPath);
 
         $filename = pathinfo($absolutePath, PATHINFO_BASENAME);

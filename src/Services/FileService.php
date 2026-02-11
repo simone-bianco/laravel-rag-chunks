@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
@@ -24,7 +25,12 @@ class FileService
 
     public function getTempDirPath(): string
     {
-        return '/temp';
+        return DIRECTORY_SEPARATOR . 'temp';
+    }
+
+    public function getDownloadDirPath(): string
+    {
+        return DIRECTORY_SEPARATOR . 'download';
     }
 
     public function createDirectoryIfNotExists(string $relativePath): void
@@ -48,10 +54,15 @@ class FileService
         rename($sourceAbsolutePath, $targetAbsolutePath);
     }
 
-    public function generateDirPath(?string $dirName = null): string
+    public function generateTempDirPath(?string $dirName = null): string
     {
         $dirName ??= Str::uuid()->toString();
         return $this->getTempDirPath() . DIRECTORY_SEPARATOR . now()->format('d-m-Y') . DIRECTORY_SEPARATOR . $dirName;
+    }
+
+    public function generateDownloadDirPath(): string
+    {
+        return $this->getDownloadDirPath() . DIRECTORY_SEPARATOR . now()->format('d-m-Y');
     }
 
     public function delete(string $relativePath): void
@@ -143,6 +154,37 @@ class FileService
         }
 
         return $relativeDestinationPath;
+    }
+
+    protected function addPrefix(string $filename): string
+    {
+        return now()->timestamp . '_' . Str::random(6) . '.' . $filename;
+    }
+
+    /**
+     * @param UploadedFile $file
+     * @param string|null $relativePath
+     * @return string
+     * @throws InvalidFileException
+     */
+    public function saveFile(UploadedFile $file, ?string $relativePath = null): string
+    {
+        $relativePath ??= sprintf(
+            '%s%s%s',
+            $this->generateDownloadDirPath(),
+            DIRECTORY_SEPARATOR,
+            $this->addPrefix($file->getClientOriginalName())
+        );
+
+        $this->createDirectoryIfNotExists(dirname($relativePath));
+
+        $saved = $this->storage->put($relativePath, file_get_contents($file->path()));
+
+        if (!$saved) {
+            throw new InvalidFileException('File saving failed');
+        }
+
+        return $relativePath;
     }
 
     /**

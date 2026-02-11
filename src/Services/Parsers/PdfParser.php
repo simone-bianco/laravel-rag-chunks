@@ -114,7 +114,7 @@ class PdfParser implements DocumentParserInterface
                 throw new \InvalidArgumentException("Job '$jobId' not found");
             }
 
-            $path = "{$this->fileService->generateDirPath($jobId)}/$jobId";
+            $path = "{$this->fileService->generateTempDirPath($jobId)}/$jobId";
             $targetAbsolutePath = $this->fileService->getAbsolutePath($path);
             $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, !$deleteRemote);
 

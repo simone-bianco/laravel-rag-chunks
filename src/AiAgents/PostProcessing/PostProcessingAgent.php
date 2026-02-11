@@ -4,13 +4,11 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
 use Exception;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Cache;
 use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing\Contracts\AgentBuilderStrategy;
-use SimoneBianco\LaravelRagChunks\Facades\HashService;
 
 class PostProcessingAgent extends Agent
 {
@@ -108,11 +106,11 @@ INSTRUCTIONS;
         $this->changeProvider($this->config['provider']);
         $this->model = $this->config['model'];
 
-        $cacheKey = HashService::hash(json_encode($this->getResponseSchema()).json_encode([
-            $this->provider, $this->model, $this->chunksInSchema ? 'true' : 'false'
-            ]).$this->instructions);
+//        $cacheKey = HashService::hash(json_encode($this->getResponseSchema()).json_encode([
+//            $this->provider, $this->model, $this->chunksInSchema ? 'true' : 'false'
+//            ]).$this->instructions);
 
-        return Cache::remember($cacheKey, 300, function () {
+//        return Cache::remember($cacheKey, 300, function () {
             $response = parent::respond($this->builderStrategy->buildPrompt($this->chunksByKey));
 
             $keys = array_keys($this->chunksByKey);
@@ -130,7 +128,7 @@ INSTRUCTIONS;
             }
 
             return $chunksData;
-        });
+//        });
     }
 
     public function prompt($message)
