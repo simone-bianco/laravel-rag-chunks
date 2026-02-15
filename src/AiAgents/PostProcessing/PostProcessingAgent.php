@@ -23,14 +23,9 @@ class PostProcessingAgent extends Agent
 
     public function __construct(
         string $key,
-        array $chunks,
         array $injectConfig = []
     ) {
         parent::__construct($key);
-
-        $this->chunksByKey = Arr::mapWithKeys($chunks, function ($chunk, $index) {
-            return ["chunk_$index" => $chunk];
-        });
 
         $config = config('rag_chunks.agents.postprocessor', []);
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
@@ -39,6 +34,15 @@ class PostProcessingAgent extends Agent
 
         $this->builderStrategy = $this->chunksInSchema
             ? new ChunksInDescriptionBuilder() : new ChunksInPromptBuilder();
+    }
+
+    public function withChunks(array $chunks): self
+    {
+        $this->chunksByKey = Arr::mapWithKeys($chunks, function ($chunk, $index) {
+            return ["chunk_$index" => $chunk];
+        });
+
+        return $this;
     }
 
     /**

@@ -11,10 +11,10 @@ class PostProcessedItemDTO implements Arrayable
         public ?string $figurePath = null,
         public ?string $textHash = null,
         public ?array $textEmbedding = null,
-        public ?string $tags = null,
+        public ?array $tags = null,
         public ?string $tagsHash = null,
         public ?array $tagsEmbedding = null,
-        public ?string $questions = null,
+        public ?array $questions = null,
         public ?string $questionsHash = null,
         public ?array $questionsEmbedding = null,
     ) {}

@@ -14,13 +14,13 @@ return new class extends Migration
             $table->integer('page')->nullable();
             $table->integer('order')->nullable()->index();
             $table->boolean('is_image')->default(false);
-            $table->text('tags')->nullable(); // Changed to text
+            $table->json('tags')->nullable();
             $table->json('keywords')->nullable();
             $table->text('content');
             $table->string('hash')->index();
             $table->json('embedding')->nullable(); // Fallback for standard SQL
             $table->json('questions_embedding')->nullable();
-            $table->text('questions')->nullable(); // Changed to text
+            $table->json('questions')->nullable();
             $table->timestamps();
         });
     }

@@ -121,11 +121,11 @@ class DocumentService
                 'content' => $data->text,
                 'hash' => $data->textHash,
                 'embedding' => !empty($data->textEmbedding) ? (is_string($data->textEmbedding) ? $data->textEmbedding : json_encode($data->textEmbedding)) : null,
-                'tags' => $data->tags,
+                'tags' => !empty($data->tags) ? json_encode($data->tags, JSON_UNESCAPED_UNICODE) : null,
                 'tags_embedding' => !empty($data->tagsEmbedding) ? (is_string($data->tagsEmbedding) ? $data->tagsEmbedding : json_encode($data->tagsEmbedding)) : null,
                 'order' => $index++,
                 'is_image' => !!$data->figurePath,
-                'questions' => $data->questions,
+                'questions' => !empty($data->questions) ? json_encode($data->questions, JSON_UNESCAPED_UNICODE) : null,
                 'questions_embedding' => !empty($data->questionsEmbedding) ? (is_string($data->questionsEmbedding) ? $data->questionsEmbedding : json_encode($data->questionsEmbedding)) : null,
             ];
 

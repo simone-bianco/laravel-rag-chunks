@@ -30,6 +30,8 @@ class Document extends Model
         'name_embedding',
         'description_embedding',
         'metadata',
+        'is_chunks_dirty',
+        'is_description_dirty',
     ];
 
     protected function casts()
@@ -39,6 +41,8 @@ class Document extends Model
             'metadata' => 'array',
             'description_embedding' => VectorArray::class,
             'name_embedding' => VectorArray::class,
+            'is_chunks_dirty' => 'boolean',
+            'is_description_dirty' => 'boolean',
         ];
     }
 

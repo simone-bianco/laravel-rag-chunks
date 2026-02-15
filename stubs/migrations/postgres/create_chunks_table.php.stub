@@ -15,9 +15,8 @@ return new class extends Migration
             $table->integer('order')->nullable()->index();
             $table->boolean('is_image')->default(false);
             $table->text('content');
-            $table->text('tags')->nullable();
-            $table->jsonb('keywords')->nullable();
-            $table->text('questions')->nullable();
+            $table->jsonb('tags')->nullable();
+            $table->jsonb('questions')->nullable();
             $table->string('hash')->index();
             $chosenEmbedder = config('rag_chunks.embedding', \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI)->value;
             $table->vector('embedding', config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536));

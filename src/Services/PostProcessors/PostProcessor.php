@@ -3,7 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Services\PostProcessors;
 
 use Illuminate\Support\Str;
-use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessingAgent;
+use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing\PostProcessingAgent;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
@@ -39,8 +39,8 @@ class PostProcessor
 
         $neededMap = [];
         foreach ($items as $item) {
-            $neededMap[$item['tags_hash']] = $item['tags'];
-            $neededMap[$item['questions_hash']] = $item['questions'];
+            $neededMap[$item['tags_hash']] = implode(',', $item['tags']);
+            $neededMap[$item['questions_hash']] = implode('?', $item['questions']);
             $neededMap[$item['text_hash']] = $item['text'];
         }
 
@@ -142,19 +142,16 @@ class PostProcessor
                     ->withPreviousChunkTags($previousChunkTags)
                     ->respondAndGetFormattedResults($item->text);
 
-                $tags = $response->getImplodedTags();
-                $questions = $response->getImplodedQuestions();
-
-                $previousChunkTags = $tags;
+                $previousChunkTags = $response->getImplodedTags();
 
                 $buffer[] = [
                     'text' => $item->text,
                     'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/$item->figurePath" : null,
                     'text_hash' => HashService::hash($item->text),
-                    'tags' => $tags,
-                    'tags_hash' => HashService::hash($tags),
-                    'questions' => $questions,
-                    'questions_hash' => HashService::hash($questions),
+                    'tags' => $response->tags,
+                    'tags_hash' => HashService::hash(implode(',', $response->tags)),
+                    'questions' => $response->questions,
+                    'questions_hash' => HashService::hash(implode('?', $response->questions)),
                 ];
 
                 if (count($buffer) >= $batchSize) {

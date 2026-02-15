@@ -40,6 +40,9 @@ class Chunk extends Model
         'is_image',
         'questions',
         'questions_embedding',
+        'is_content_dirty',
+        'is_questions_dirty',
+        'is_tags_dirty',
     ];
 
     protected function casts()
@@ -48,9 +51,12 @@ class Chunk extends Model
             'embedding' => VectorArray::class,
             'tags_embedding' => VectorArray::class,
             'questions_embedding' => VectorArray::class,
-            'tags' => 'string',
-            'questions' => 'string',
+            'tags' => 'array',
+            'questions' => 'array',
             'is_image' => 'boolean',
+            'is_content_dirty' => 'boolean',
+            'is_questions_dirty' => 'boolean',
+            'is_tags_dirty' => 'boolean',
         ];
     }
 
