@@ -39,8 +39,12 @@ class PostProcessor
 
         $neededMap = [];
         foreach ($items as $item) {
-            $neededMap[$item['tags_hash']] = implode(',', $item['tags']);
-            $neededMap[$item['questions_hash']] = implode('?', $item['questions']);
+            // Assicuriamoci che i dati esistano prima di fare implode/hash
+            $tagsStr = isset($item['tags']) ? implode(',', $item['tags']) : '';
+            $questionsStr = isset($item['questions']) ? implode('?', $item['questions']) : '';
+
+            $neededMap[$item['tags_hash']] = $tagsStr;
+            $neededMap[$item['questions_hash']] = $questionsStr;
             $neededMap[$item['text_hash']] = $item['text'];
         }
 
@@ -54,6 +58,12 @@ class PostProcessor
 
             $newVectors = [];
             foreach ($textsToEmbed as $text) {
+                // Evitiamo di embeddare stringhe vuote se l'agent non ha tornato nulla
+                if (empty($text)) {
+                    $newVectors[] = null;
+                    continue;
+                }
+
                 $newVectors[] = retry(
                     config('rag_chunks.embedding_retry.times', 3),
                     fn() => $embedder->embed($text),
@@ -62,6 +72,8 @@ class PostProcessor
             }
 
             $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
+            // Filtriamo eventuali null
+            $newEmbeddingsMap = array_filter($newEmbeddingsMap);
             $existingEmbeddings = $existingEmbeddings + $newEmbeddingsMap;
         }
 
@@ -89,6 +101,54 @@ class PostProcessor
     }
 
     /**
+     * Helper per processare il batch con l'agent e preparare l'array per il buffer
+     */
+    protected function runAgentAndPrepareBuffer(
+        array $pendingItems,
+        string $relativeDirPath,
+        string $documentContext
+    ): array {
+        if (empty($pendingItems)) {
+            return [];
+        }
+
+        // Estrai solo i testi per l'agent
+        $chunkTexts = array_map(fn(RefinedItemDTO $item) => $item->text, $pendingItems);
+
+        // Istanzia e chiama l'agent
+        $postProcessingAgent = new PostProcessingAgent(Str::random());
+        $agentResponse = $postProcessingAgent
+            ->withDocumentContext($documentContext)
+            ->withChunks($chunkTexts)
+            ->respond();
+
+        $buffer = [];
+
+        // Ricostruisci il buffer unendo i dati originali con la risposta dell'agent
+        foreach ($pendingItems as $index => $item) {
+            /** @var RefinedItemDTO $item */
+
+            // Recupera la risposta specifica per questo chunk (usando l'indice array)
+            $aiData = $agentResponse[$index] ?? ['tags' => [], 'questions' => []];
+
+            $tags = $aiData['tags'] ?? [];
+            $questions = $aiData['questions'] ?? [];
+
+            $buffer[] = [
+                'text' => $item->text,
+                'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/$item->figurePath" : null,
+                'text_hash' => HashService::hash($item->text),
+                'tags' => $tags,
+                'tags_hash' => HashService::hash(implode(',', $tags)),
+                'questions' => $questions,
+                'questions_hash' => HashService::hash(implode('?', $questions)),
+            ];
+        }
+
+        return $buffer;
+    }
+
+    /**
      * @param string $relativeSourcePath
      * @param string $relativeOutputPath
      * @param string $documentContext
@@ -104,30 +164,29 @@ class PostProcessor
         int $batchSize = 20
     ): void {
         $embedder = EmbeddingFactory::make();
+
+        // Variabili per gestione errori
+        $currentInputLine = 0;
+        $lastProcessedLineContent = '';
+
         try {
             $relativeDirPath = pathinfo($relativeSourcePath, PATHINFO_DIRNAME);
             $readStream = $this->fileService->readStream($relativeSourcePath);
             $writeStream = $this->fileService->writeStream($relativeOutputPath);
-            $alreadyProcessed = $this->streamService->countLines($writeStream);
 
-            $previousChunkTags = '';
+            // Calcola dove riprendere
+            $alreadyProcessed = $this->streamService->countLines($writeStream);
             if ($alreadyProcessed > 0) {
-                $this->streamService->goToLine($writeStream, $alreadyProcessed - 1);
-                $lastLine = fgets($writeStream);
-                if ($lastLine) {
-                    $lastItem = json_decode($lastLine, true);
-                    $previousChunkTags = $lastItem['tags'] ?? '';
-                }
                 $this->streamService->goToEnd($writeStream);
             }
 
-            $postProcessingAgent = new PostProcessingAgent(Str::random())->withDocumentContext($documentContext);
+            $pendingBatch = []; // Conterrà oggetti RefinedItemDTO
 
-            $currentInputLine = 0;
-            $buffer = [];
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
+                $lastProcessedLineContent = $line;
 
+                // Salta righe già processate o vuote
                 if ($currentInputLine <= $alreadyProcessed || trim($line) === '') {
                     continue;
                 }
@@ -136,41 +195,40 @@ class PostProcessor
                 if ($decoded === null) {
                     continue;
                 }
-                $item = RefinedItemDTO::fromArray($decoded);
-                $response = $postProcessingAgent
-                    ->clear()
-                    ->withPreviousChunkTags($previousChunkTags)
-                    ->respondAndGetFormattedResults($item->text);
 
-                $previousChunkTags = $response->getImplodedTags();
+                // Aggiungi al batch corrente
+                $pendingBatch[] = RefinedItemDTO::fromArray($decoded);
 
-                $buffer[] = [
-                    'text' => $item->text,
-                    'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/$item->figurePath" : null,
-                    'text_hash' => HashService::hash($item->text),
-                    'tags' => $response->tags,
-                    'tags_hash' => HashService::hash(implode(',', $response->tags)),
-                    'questions' => $response->questions,
-                    'questions_hash' => HashService::hash(implode('?', $response->questions)),
-                ];
-
-                if (count($buffer) >= $batchSize) {
+                // Se il batch è pieno, processalo
+                if (count($pendingBatch) >= $batchSize) {
+                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext);
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                    $pendingBatch = []; // Reset batch
                 }
             }
 
-            if (!empty($buffer)) {
+            // Processa eventuali elementi rimasti nel batch
+            if (!empty($pendingBatch)) {
+                $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext);
                 $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
             }
-        } catch (Throwable $exception) {
-            if (isset($writeStream)) {
-                if (!empty($buffer)) {
-                    try {
-                        $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                    } catch (Throwable $rescueException) {}
-                }
 
-                $this->fileService->closeStreams($readStream ?? null, $writeStream);
+        } catch (Throwable $exception) {
+            // Tentativo di salvataggio del buffer in memoria in caso di crash
+            if (isset($writeStream) && isset($embedder) && !empty($pendingBatch)) {
+                try {
+                    // Proviamo a processare quello che è rimasto, se possibile
+                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath ?? '', $documentContext);
+                    $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                } catch (Throwable $rescueException) {
+                    // Ignoriamo errori nel rescue per non oscurare l'errore originale
+                }
+            }
+
+            if (isset($readStream)) {
+                $this->fileService->closeStreams($readStream, $writeStream ?? null);
+            } else if (isset($writeStream)) {
+                $this->fileService->closeStreams(null, $writeStream);
             }
 
             throw new PostProcessingException(
@@ -180,7 +238,7 @@ class PostProcessor
                 get_class($exception),
                 $relativeSourcePath,
                 $currentInputLine ?? 0,
-                $line ?? '',
+                $lastProcessedLineContent ?? '',
                 false
             );
         }
