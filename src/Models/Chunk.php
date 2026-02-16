@@ -70,6 +70,14 @@ class Chunk extends Model
         return $this->belongsTo(Document::class);
     }
 
+    /**
+     * Store chunk media on the public disk so images are accessible from the frontend.
+     */
+    public function getMediaDisk(): ?string
+    {
+        return 'public';
+    }
+
     public function scopeWithNeighborSnippets(Builder $query, int $chars = 200): Builder
     {
         $prevBase = self::from('chunks as neighbors')

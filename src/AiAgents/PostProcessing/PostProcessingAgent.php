@@ -16,7 +16,7 @@ class PostProcessingAgent extends Agent
     protected $toolCacheTtl = 60;
     protected array $chunksByKey = [];
     protected $mcpServers = [];
-    protected string $documentContext;
+    protected string $documentContext = '';
     protected bool $chunksInSchema = true;
     protected AgentBuilderStrategy $builderStrategy;
     protected array $config = [];
@@ -65,7 +65,7 @@ class PostProcessingAgent extends Agent
         return $this->getResponseSchema();
     }
 
-    public function withDocumentContext(string $context): self
+    public function withDocumentContext(?string $context): self
     {
         if (!empty($context)) {
             $this->documentContext = "\n### DOCUMENT CONTEXT\n$context";

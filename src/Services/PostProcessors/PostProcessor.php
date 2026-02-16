@@ -93,7 +93,7 @@ class PostProcessor
     protected function runAgentAndPrepareBuffer(
         array $pendingItems,
         string $relativeDirPath,
-        string $documentContext
+        ?string $documentContext
     ): array {
         if (empty($pendingItems)) {
             return [];
@@ -138,7 +138,7 @@ class PostProcessor
     /**
      * @param string $relativeSourcePath
      * @param string $relativeOutputPath
-     * @param string $documentContext
+     * @param string|null $documentContext
      * @param int $batchSize
      * @return void
      * @throws InvalidEmbeddingDriverException
@@ -147,7 +147,7 @@ class PostProcessor
     public function postProcess(
         string $relativeSourcePath,
         string $relativeOutputPath,
-        string $documentContext = '',
+        ?string $documentContext = '',
         int $batchSize = 20
     ): void {
         $embedder = EmbeddingFactory::make();

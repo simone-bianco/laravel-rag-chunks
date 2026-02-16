@@ -41,6 +41,6 @@ class EmbeddingFactory
             throw new InvalidEmbeddingDriverException("Embedding driver class '{$driverClass}' for driver '{$embeddingDriver->value}' not found.");
         }
 
-        return app($driverClass);
+        return app($driverClass, ['configKey' => $embeddingDriver]);
     }
 }

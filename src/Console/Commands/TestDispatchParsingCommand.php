@@ -41,9 +41,9 @@ class TestDispatchParsingCommand extends Command
             $document->save();
 
             $this->info('Calling dispatchParsing...');
-//            $result = $this->pdfParser->dispatchParsing($absoluteFilePath);
 
-            $result = DispatchParsingJob::dispatch($document->id);
+            $process = $document->startProcess('document_parsing');
+            $result = DispatchParsingJob::dispatch($process->id);
 
             $this->info('SUCCESS!');
 

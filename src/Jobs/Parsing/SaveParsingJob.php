@@ -10,7 +10,7 @@ use Throwable;
 
 class SaveParsingJob extends BaseDocumentParsingJob
 {
-    public int $tries = 0;
+    public int $tries = 1;
 
     public function backoff(): array
     {
@@ -46,15 +46,11 @@ class SaveParsingJob extends BaseDocumentParsingJob
             'phase' => ParsingPhase::SAVING->value
         ]);
 
-        if ($process->context['phase'] !== ParsingPhase::POST_PROCESSING) {
-            $process->mergeContextAndSave(['phase' => ParsingPhase::POST_PROCESSING->value]);
-        }
-
         /** @var PdfParser $parser */
         $parser = DocumentParserFactory::make($document->extension);
         $parser->saveDocument($document, $process->context);
 
-        $process->mergeContextAndSave(['phase' => ParsingPhase::SAVED->value]);
+        $process->setComplete(['phase' => ParsingPhase::COMPLETED->value]);
 
         $this->logger()->debug('Saving parsing job finished');
     }

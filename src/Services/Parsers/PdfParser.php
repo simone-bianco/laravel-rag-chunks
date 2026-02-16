@@ -153,7 +153,7 @@ class PdfParser implements DocumentParserInterface
 
             /** @var string $outputJsonRelativePath */
             $outputJsonRelativePath = collect($this->fileService->files($dirRelativePath))->first(function ($file) {
-                return pathinfo($file, PATHINFO_EXTENSION) === 'json';
+                return basename($file) === 'output.json';
             });
 
             if (!$this->fileService->exists($outputJsonRelativePath)) {
@@ -193,7 +193,7 @@ class PdfParser implements DocumentParserInterface
      * @throws PostProcessingException
      * @throws InvalidEmbeddingDriverException
      */
-    public function postProcess(string $documentContext, array $data, int $batchSize = 20): array
+    public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array
     {
         $postProcessingData = PostProcessingContextDTO::fromArray($data);
 

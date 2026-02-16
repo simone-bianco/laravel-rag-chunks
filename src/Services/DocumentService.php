@@ -112,29 +112,50 @@ class DocumentService
             ];
 
             $chunksBuffer[] = $data;
-            if (count($chunksBuffer) < 2) {
+            if (count($chunksBuffer) < 10) {
                 continue;
             }
 
             DB::transaction(function () use ($chunksBuffer, $figuresBuffer) {
                 Chunk::insert($chunksBuffer);
 
-                Chunk::select(['id'])
-                    ->whereIn('id', Arr::pluck($figuresBuffer, 'id'))
-                    ->get()
-                    ->each(function (Chunk $chunk) use ($figuresBuffer) {
-                        $chunk->attachMediaFromPath($figuresBuffer[$chunk->id]);
-                    });
+                if (!empty($figuresBuffer)) {
+                    $this->attachFiguresToChunks($figuresBuffer);
+                }
             });
             $chunksBuffer = [];
             $figuresBuffer = [];
         }
 
-        if (count($chunksBuffer) >= 2) {
-            Chunk::insert($chunksBuffer);
+        if (!empty($chunksBuffer)) {
+            DB::transaction(function () use ($chunksBuffer, $figuresBuffer) {
+                Chunk::insert($chunksBuffer);
+
+                if (!empty($figuresBuffer)) {
+                    $this->attachFiguresToChunks($figuresBuffer);
+                }
+            });
         }
 
         return $document;
+    }
+
+    /**
+     * Attach figure images to their chunks, resolving relative paths to absolute.
+     *
+     * @param array<string, string> $figuresBuffer Map of chunk ID => relative figure path
+     */
+    protected function attachFiguresToChunks(array $figuresBuffer): void
+    {
+        Chunk::select(['id'])
+            ->whereIn('id', array_keys($figuresBuffer))
+            ->get()
+            ->each(function (Chunk $chunk) use ($figuresBuffer) {
+                $absolutePath = $this->fileService->getAbsolutePath($figuresBuffer[$chunk->id]);
+                if (file_exists($absolutePath)) {
+                    $chunk->attachMediaFromPath($absolutePath);
+                }
+            });
     }
 
     public function search(DocumentSearchDataDTO $searchData)

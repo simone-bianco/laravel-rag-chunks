@@ -57,7 +57,7 @@ interface DocumentParserInterface
      * @throws PostProcessingException
      * @throws InvalidEmbeddingDriverException
      */
-    public function postProcess(string $documentContext, array $data, int $batchSize = 20): array;
+    public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array;
 
     /**
      * @param Document $document

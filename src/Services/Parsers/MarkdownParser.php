@@ -95,7 +95,7 @@ class MarkdownParser implements DocumentParserInterface
         )->toArray();
     }
 
-    public function postProcess(string $documentContext, array $data, int $batchSize = 20): array
+    public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array
     {
         $context = PostProcessingContextDTO::fromArray($data);
 
