@@ -12,10 +12,15 @@ use ZanySoft\Zip\Facades\Zip;
 
 class FileService
 {
+    public function getDisk(): string
+    {
+        return 'local';
+    }
+
     public function __construct(
         protected ?Filesystem $storage = null,
     ) {
-        $this->storage ??= Storage::disk('local');
+        $this->storage ??= Storage::disk($this->getDisk());
     }
 
     public function getStorage(): ?Filesystem
@@ -158,7 +163,7 @@ class FileService
 
     protected function addPrefix(string $filename): string
     {
-        return now()->timestamp . '_' . Str::random(6) . '.' . $filename;
+        return now()->timestamp . '_' . Str::random(6) . '-' . $filename;
     }
 
     /**
@@ -179,6 +184,33 @@ class FileService
         $this->createDirectoryIfNotExists(dirname($relativePath));
 
         $saved = $this->storage->put($relativePath, file_get_contents($file->path()));
+
+        if (!$saved) {
+            throw new InvalidFileException('File saving failed');
+        }
+
+        return $relativePath;
+    }
+
+    /**
+     * @param string $absoluteSourcePath
+     * @param string|null $relativePath
+     * @return string
+     * @throws InvalidFileException
+     */
+    public function saveFileByAbsolutePath(string $absoluteSourcePath, ?string $relativePath = null): string
+    {
+        $relativePath ??= sprintf(
+            '%s%s%s.%s',
+            $this->generateDownloadDirPath(),
+            DIRECTORY_SEPARATOR,
+            $this->addPrefix(pathinfo($absoluteSourcePath, PATHINFO_FILENAME)),
+            pathinfo($absoluteSourcePath, PATHINFO_EXTENSION)
+        );
+
+        $this->createDirectoryIfNotExists(dirname($relativePath));
+
+        $saved = $this->storage->put($relativePath, file_get_contents($absoluteSourcePath));
 
         if (!$saved) {
             throw new InvalidFileException('File saving failed');

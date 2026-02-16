@@ -6,12 +6,11 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
-use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\EmbeddingFailedException;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidCredentialsException;
 use Throwable;
 
-class BaseEmbeddingDriver implements EmbeddingDriverInterface
+class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
 {
     public function __construct(
         protected string $configKey,
@@ -65,5 +64,21 @@ class BaseEmbeddingDriver implements EmbeddingDriverInterface
 
             throw new EmbeddingFailedException("Error during embedding: {$throwable->getMessage()}");
         }
+    }
+
+    /**
+     * @param array $texts
+     * @return array
+     * @throws EmbeddingFailedException
+     */
+    public function multiEmbed(array $texts): array
+    {
+        $embeds = [];
+
+        foreach ($texts as $text) {
+            $embeds[] = $this->embed($text);
+        }
+
+        return $embeds;
     }
 }

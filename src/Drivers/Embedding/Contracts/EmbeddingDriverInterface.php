@@ -9,4 +9,10 @@ interface EmbeddingDriverInterface
      * @return array
      */
     public function embed(string $text): array;
+
+    /**
+     * @param array $texts
+     * @return array
+     */
+    public function multiEmbed(array $texts): array;
 }

@@ -4,17 +4,14 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Exception;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
-use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Filesystem\LocalFilesystemAdapter;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use SimoneBianco\LaravelRagChunks\DTOs\DocumentDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
+use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
@@ -26,59 +23,44 @@ class DocumentService
 {
     public function __construct(
         protected StreamService $streamService,
-        protected null|Filesystem|LocalFilesystemAdapter $storage = null,
-    ) {
-        $this->storage = $storage ?? Storage::disk('local');
-    }
+        protected FileService $fileService
+    ) {}
 
-    protected function storage(): Filesystem|LocalFilesystemAdapter
+    /**
+     * @param Project $project
+     * @param string $absolutePath
+     * @param array $extraData
+     * @return Document
+     * @throws FileNotFoundException
+     * @throws InvalidFileException
+     */
+    public function createByAbsolutePath(Project $project, string $absolutePath, array $extraData = []): Document
     {
-        return Storage::disk('local');
+        $relativePath = $this->fileService->saveFileByAbsolutePath($absolutePath);
+
+        return $this->createByPath($project, $relativePath, $extraData);
     }
 
     /**
-     * @throws Throwable
+     * @param Project $project
+     * @param string $relativePath
+     * @param array $extraData
+     * @return Document|\Illuminate\Database\Eloquent\Model
+     * @throws FileNotFoundException
      */
-    public function getOrCreateDocument(DocumentDTO $dto): Document
+    public function createByPath(Project $project, string $relativePath, array $extraData = []): Document
     {
-        return DB::transaction(function () use ($dto) {
-            /** @var Document $document */
-            $document = Document::query()
-                ->firstOrCreate([
-                    'alias' => $dto->alias ?? Project::where('id', $dto->project_id)->firstOrFail()->alias . '-' . Str::uuid()->toString(),
-                ], [
-                    'project_id' => $dto->project_id,
-                    'file_path' => $dto->filePath,
-                    'hash' => $dto->hash ?? HashService::hash($dto->text),
-                    'name' => $dto->name,
-                    'description' => $dto->description,
-                    'metadata' => $dto->metadata,
-                    'disk' => $dto->disk,
-                ]);
+        $documentName = pathinfo($relativePath, PATHINFO_FILENAME);
 
-            $document->project_id = $dto->project_id;
-            $document->name = $dto->name ?? $document->name;
-            $document->description = $dto->description ?? $document->description;
-            if ($document->isDirty('name') || $document->wasRecentlyCreated) {
-                $document->name_embedding = $document->name ? Embedding::embed($document->name) : null;
-            }
-            if ($document->isDirty('description') || $document->wasRecentlyCreated) {
-                $document->description_embedding = $document->description ? Embedding::embed($document->description) : null;
-            }
-            $document->metadata = $dto->metadata;
-
-            if ($document->isDirty()) {
-                $document->save();
-            }
-
-            $document->tags()->detach();
-
-            foreach ($dto->tags as $type => $tags) {
-                $document->attachTags($tags, $type);
-            }
-
-            return $document;
-        });
+        return $project->documents()->create([
+            'name' => pathinfo($relativePath, PATHINFO_FILENAME),
+            'extension' => pathinfo($relativePath, PATHINFO_EXTENSION),
+            'alias' => now()->timestamp . '-' . strtolower(Str::slug($documentName)),
+            'disk' => $this->fileService->getDisk(),
+            'hash' => $this->calculateFileHash($this->fileService->getAbsolutePath($relativePath)),
+            'file_path' => $relativePath,
+            ...$extraData
+        ]);
     }
 
     /**
@@ -90,13 +72,13 @@ class DocumentService
      */
     public function regeneratePostProcessedChunks(Document $document, string $relativeJsonlPath): Document
     {
-        if (!$this->storage()->exists($relativeJsonlPath)) {
+        if (!$this->fileService->exists($relativeJsonlPath)) {
             throw new FileNotFoundException("JSONL file not found at $relativeJsonlPath");
         }
 
         $now = now();
         $document->purgeChunks();
-        $readStream = $this->storage()->readStream($relativeJsonlPath);
+        $readStream = $this->fileService->readStream($relativeJsonlPath);
         $chunksBuffer = [];
         $figuresBuffer = [];
         $index = 1;

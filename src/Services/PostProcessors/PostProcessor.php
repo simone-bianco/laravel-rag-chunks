@@ -56,20 +56,7 @@ class PostProcessor
         if (!empty($missingHashes)) {
             $textsToEmbed = array_values($missingHashes);
 
-            $newVectors = [];
-            foreach ($textsToEmbed as $text) {
-                // Evitiamo di embeddare stringhe vuote se l'agent non ha tornato nulla
-                if (empty($text)) {
-                    $newVectors[] = null;
-                    continue;
-                }
-
-                $newVectors[] = retry(
-                    config('rag_chunks.embedding_retry.times', 3),
-                    fn() => $embedder->embed($text),
-                    config('rag_chunks.embedding_retry.sleep', 1000)
-                );
-            }
+            $newVectors = $embedder->multiEmbed($textsToEmbed);
 
             $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
             // Filtriamo eventuali null

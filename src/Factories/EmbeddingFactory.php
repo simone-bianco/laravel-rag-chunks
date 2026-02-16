@@ -2,7 +2,8 @@
 
 namespace SimoneBianco\LaravelRagChunks\Factories;
 
-use SimoneBianco\LaravelRagChunks\Drivers\Embedding\BaseEmbeddingDriver;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\MultiembedderDriver;
+use SimoneBianco\LaravelRagChunks\Drivers\Embedding\OpenaiEmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
@@ -25,7 +26,8 @@ class EmbeddingFactory
         $config = config("rag_chunks.embedders.$embeddingDriver");
 
         $driverClass = match($embeddingDriver) {
-            EmbeddingDriver::OPENAI->value => BaseEmbeddingDriver::class,
+            EmbeddingDriver::OPENAI->value => OpenaiEmbeddingDriver::class,
+            EmbeddingDriver::MULTIEMBEDDER->value => MultiembedderDriver::class,
             default => null,
         };
 
