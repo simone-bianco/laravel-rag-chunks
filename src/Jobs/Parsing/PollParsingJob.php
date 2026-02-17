@@ -97,7 +97,7 @@ class PollParsingJob extends BaseDocumentParsingJob
         $process->mergeContextAndSave([...$context, ...['phase' => ParsingPhase::REFINING->value]]);
         $this->logger()->info("Polling completed for document {$this->documentId}");
 
-        RefineParsingResultsJob::dispatch($this->documentId, $process->id);
+        RefineParsingResultsJob::dispatch($process->id);
     }
 
     protected function handleProcessing(Process $process): void

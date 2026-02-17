@@ -43,9 +43,9 @@ class ChunkService
             }
         }
 
-        return Chunk::query()
+        $paginator = Chunk::query()
             ->select('*')
-            ->with('document')
+            ->with(['document', 'dedupMedia'])
             ->whereHas('document', function (Builder $query) {
                 $query->where('enabled', true);
             })
@@ -67,5 +67,18 @@ class ChunkService
                 'page',
                 $searchData->page
             );
+
+        $paginator->through(function (Chunk $chunk) use ($searchData) {
+            $chunk->image_url = $chunk->getFirstMedia()?->getUrl();
+            $chunk->makeHidden(['dedup_media']);
+
+            if (! $searchData->includeEmbeddings) {
+                $chunk->makeHidden(['embedding', 'questions_embedding', 'tags_embedding']);
+            }
+
+            return $chunk;
+        });
+
+        return $paginator;
     }
 }

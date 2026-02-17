@@ -185,13 +185,13 @@ class PdfParser implements DocumentParserInterface
     }
 
     /**
-     * @param string $documentContext
+     * @param string|null $documentContext
      * @param array $data
      * @param int $batchSize
      * @return array
+     * @throws InvalidEmbeddingDriverException
      * @throws InvalidFileException
      * @throws PostProcessingException
-     * @throws InvalidEmbeddingDriverException
      */
     public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array
     {
@@ -231,6 +231,7 @@ class PdfParser implements DocumentParserInterface
     {
         $postProcessingData = PostProcessingContextDTO::fromArray($data);
 
+        $document->enabled = true;
         return $this->documentService->regeneratePostProcessedChunks(
             $document,
             $postProcessingData->relativePostProcessedPath

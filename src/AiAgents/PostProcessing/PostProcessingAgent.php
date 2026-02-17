@@ -92,16 +92,16 @@ The chunks belong to the same document, so you can get the whole context.
 
 ### TAGGING RULES
 1. **Format**: All tags must be strictly **LOWERCASE** and formatted as **SLUGS** (slug_case).
-   - Correct: `artificial_intelligence`, `laravel_framework`, `user_authentication`
-   - Incorrect: `Artificial Intelligence`, `laravel-framework`, `User Authentication`
-2. **Specificity**: Focus on specific entities, key concepts, technologies, or unique topics found in the text. Avoid generic filler words like 'role play game' or 'game'.
-3. **Retrieval**: Choose tags that would allow a search engine to find this specific chunk easily among many others.
-4. **Wider-Context**: Chunks in the batch are sequential, so that you can have a broader understanding of the context.
+2. **Entity & Action**: Tag both the *subject* (e.g., `aboleth`) AND the *action/event/state* described (e.g., `death`, `lair_actions`, `poisoned`).
+3. **Synonyms**: If a text uses a verb like "dies", include the noun tag `death` to aid semantic matching.
+4. **Retrieval Focus**: Choose tags that answer: "Under what specific keywords should this text appear in a search result?".
+5. **No Generics**: Avoid filler words like 'game', 'chapter', 'introduction'. Be specific.
 
 ### QUESTIONS RULES
 1. **Reverse Engineering**: Formulate 1-5 questions that a user would naturally ask where *this specific chunk* provides the best answer.
-2. **Accuracy**: Ensure the questions are directly answerable by the information contained in the text. Do not hallucinate information not present in the chunk.
-3. **Variety**: Aim for a mix of conceptual questions (e.g., "What is X?") and procedural/specific questions (e.g., "How do I configure Y?"), but don't repeat same questions.
+2. **Conditionals**: If the text describes a condition (e.g., "If the creature dies..."), generate a question regarding that condition (e.g., "What happens if the creature dies?").
+3. **Accuracy**: Ensure the questions are directly answerable by the information contained in the text.
+4. **Variety**: Mix conceptual questions ("What is X?") with procedural/conditional questions ("What happens when X?", "How does Y work?").
 INSTRUCTIONS;
     }
 
@@ -115,23 +115,23 @@ INSTRUCTIONS;
 //            ]).$this->instructions);
 
 //        return Cache::remember($cacheKey, 300, function () {
-            $response = parent::respond($this->builderStrategy->buildPrompt($this->chunksByKey));
+        $response = parent::respond($this->builderStrategy->buildPrompt($this->chunksByKey));
 
-            $keys = array_keys($this->chunksByKey);
-            $range = range(0, count($this->chunksByKey) - 1);
-            $indexedChunksKeys = array_combine($keys, $range);
+        $keys = array_keys($this->chunksByKey);
+        $range = range(0, count($this->chunksByKey) - 1);
+        $indexedChunksKeys = array_combine($keys, $range);
 
-            $responseKeys = array_keys($response);
-            if (count(array_intersect($keys, $responseKeys)) !== count($responseKeys)) {
-                throw new Exception("Array keys in PostProcessingAgent response do not match");
-            }
+        $responseKeys = array_keys($response);
+        if (count(array_intersect($keys, $responseKeys)) !== count($responseKeys)) {
+            throw new Exception("Array keys in PostProcessingAgent response do not match");
+        }
 
-            $chunksData = [];
-            foreach ($response as $key => $data) {
-                $chunksData[$indexedChunksKeys[$key]] = $data;
-            }
+        $chunksData = [];
+        foreach ($response as $key => $data) {
+            $chunksData[$indexedChunksKeys[$key]] = $data;
+        }
 
-            return $chunksData;
+        return $chunksData;
 //        });
     }
 

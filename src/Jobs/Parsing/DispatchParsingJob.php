@@ -50,6 +50,7 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             ]);
 
             $document = $process->processable;
+            $this->documentId = $document->id;
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
             $dispatchData = $parser->dispatchParsing($document->getAbsolutePath());
@@ -62,7 +63,7 @@ class DispatchParsingJob extends BaseDocumentParsingJob
                 $process->setProcessing([...$dispatchData, ...['phase' => ParsingPhase::POLLING->value]]);
                 $this->logger()->debug('Polling parsing job started');
             } else {
-                RefineParsingResultsJob::dispatch($document->id, $process->id);
+                RefineParsingResultsJob::dispatch($process->id);
                 $process->setProcessing([...$dispatchData, ...['phase' => ParsingPhase::REFINING->value]]);
                 $this->logger()->debug('Refining parsing job started');
             }

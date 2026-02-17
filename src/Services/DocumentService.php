@@ -5,9 +5,9 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 use Exception;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
@@ -251,6 +251,7 @@ class DocumentService
             return $chunk;
         });
     }
+
     /**
      * @param string $absoluteFilePath
      * @return string
@@ -260,7 +261,7 @@ class DocumentService
     {
         try {
             return HashService::hashFile($absoluteFilePath);
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
              throw new FileNotFoundException($e->getMessage());
         }
     }

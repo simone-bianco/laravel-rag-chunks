@@ -22,9 +22,8 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         return 'document_refining';
     }
 
-    public function __construct(string $documentId, string $processId)
+    public function __construct(string $processId)
     {
-        $this->documentId = $documentId;
         $this->processId = $processId;
     }
 
@@ -41,6 +40,7 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
 
         /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
         $document = $process->processable;
+        $this->documentId = $document->id;
 
         /** @var PdfParser $parser */
         $parser = DocumentParserFactory::make($document->extension);
@@ -48,7 +48,7 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         $chunkingData = $parser->refineOutputJson($process->context);
         $process->mergeContextAndSave([...$chunkingData, ...['phase' => ParsingPhase::REFINED->value]]);
 
-        PostProcessParsingJob::dispatch($document->id, $process->id);
+        PostProcessParsingJob::dispatch($process->id);
 
         $this->logger()->debug('Refining parsing job finished');
     }

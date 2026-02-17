@@ -22,9 +22,8 @@ class SaveParsingJob extends BaseDocumentParsingJob
         return 'document_saving';
     }
 
-    public function __construct(string $documentId, string $processId)
+    public function __construct(string $processId)
     {
-        $this->documentId = $documentId;
         $this->processId = $processId;
     }
 
@@ -41,6 +40,7 @@ class SaveParsingJob extends BaseDocumentParsingJob
 
         /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
         $document = $process->processable;
+        $this->documentId = $document->id;
 
         $process->mergeContextAndSave([
             'phase' => ParsingPhase::SAVING->value

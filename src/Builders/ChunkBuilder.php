@@ -11,7 +11,6 @@ class ChunkBuilder extends Builder
     {
         return $this
             ->when(!empty($chunksIds), fn($q) => $q->whereIn('id', $chunksIds))
-            ->when(!empty($textSearch), fn($q) => $q->where('content', 'ilike', "%{$textSearch}%"))
             ->when(!empty($keywordsSearch), function ($q) use ($keywordsSearch) {
                 foreach ($keywordsSearch as $keyword) {
                     $q->where('content', 'ilike', "%{$keyword}%");
