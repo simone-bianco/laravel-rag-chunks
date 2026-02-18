@@ -12,12 +12,16 @@ use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
 class DolphinOutputChunkerService
 {
     public function __construct(
-        protected int $maxChunkSize = 500,
-        protected int $generatorChunkSize = 50,
-        protected int $hardSplitThreshold = 1000,
-        protected int $minChunkTolerance = 50
-    ) {}
+        protected int $targetChunkSize = 500,     // Sweet spot
+        protected int $minChunkSize = 300,        // Minimo assoluto
+        protected int $maxChunkSize = 1000,       // Massimo assoluto (Hard Limit)
+        protected int $generatorChunkSize = 50    // Numero di elementi per yield
+    ) {
+    }
 
+    /**
+     * @throws RuntimeException
+     */
     public function chunkOutputJson(string $absolutePath): Generator
     {
         $stream = fopen($absolutePath, 'r');
@@ -34,18 +38,18 @@ class DolphinOutputChunkerService
             $headerStack = [];
 
             foreach ($this->yieldFlattenedElements($elementsStream) as $element) {
+                // 1. Pulizia & Estrazione
                 $rawText = isset($element['text']) ? (string) $element['text'] : '';
                 $text = $this->cleanAndFormatText($rawText);
-
                 $label = $element['label'] ?? 'text';
 
-                // Skip vuoto (eccetto figure)
+                // Skip vuoto (tranne figure)
                 $isFigure = str_contains($label, 'fig');
                 if ($text === '' && !$isFigure) {
                     continue;
                 }
 
-                // Header Context
+                // Gestione Contesto Headers (non triggera flush, serve solo per arricchire)
                 $isSection = str_contains($label, 'sec');
                 if ($isSection) {
                     $level = 1;
@@ -55,19 +59,20 @@ class DolphinOutputChunkerService
                     $this->updateHeaderContext($headerStack, $level, $text);
                 }
 
-                // --- LOGICA DI FLUSSO ---
-
-                // A. FIGURE
+                // --- GESTIONE SPECIALE: FIGURE ---
                 if ($isFigure) {
+                    // Le figure sono oggetti a sé stanti. Se abbiamo testo nel buffer,
+                    // dobbiamo decidere cosa farne.
                     if ($bufferText !== '') {
-                        $this->addToAccumulator($accumulator, $bufferText);
+                        // Se è troppo piccolo (<300), le figure purtroppo rompono l'accumulo.
+                        // Ma per non perdere dati, lo salviamo comunque.
+                        $this->addChunk($accumulator, $bufferText);
                         $bufferText = '';
-                        if (count($accumulator) >= $this->generatorChunkSize) {
-                            yield $accumulator;
-                            $accumulator = [];
-                        }
                     }
+
                     $this->handleFigure($accumulator, $rawText, $headerStack);
+
+                    // Controllo yield dopo inserimento figura
                     if (count($accumulator) >= $this->generatorChunkSize) {
                         yield $accumulator;
                         $accumulator = [];
@@ -75,43 +80,47 @@ class DolphinOutputChunkerService
                     continue;
                 }
 
-                // B. SEZIONI (FIX APPLICATA QUI)
-                if ($isSection) {
-                    // Se arriva un nuovo titolo, flushiamo il buffer SOLO SE il buffer
-                    // contiene abbastanza testo. Se contiene solo un altro titoletto ("DEVA"),
-                    // lo teniamo in canna per unirlo a questo.
-                    if ($bufferText !== '' && strlen($bufferText) >= $this->minChunkTolerance) {
-                        $this->addToAccumulator($accumulator, $bufferText);
-                        $bufferText = '';
-                        if (count($accumulator) >= $this->generatorChunkSize) {
-                            yield $accumulator;
-                            $accumulator = [];
-                        }
+                // --- COSTRUZIONE BUFFER ---
+
+                // Determina separatore
+                $separator = " "; // Default: unisci con spazio
+                if ($bufferText !== '') {
+                    $lastChar = substr(trim($bufferText), -1);
+                    // Se finisce con punto, due punti, pipe (tabella) o titolo -> Newline
+                    if (in_array($lastChar, ['.', '!', '?', ':', '|'])) {
+                        $separator = "\n\n";
                     }
-                    // Se il buffer era < 50 char (es. "DEVA"), non facciamo nulla.
-                    // Il codice andrà avanti e appenderà il nuovo titolo ("Medium celestial...")
-                    // al buffer esistente ("DEVA").
+                    // Se l'elemento corrente è una tabella -> Newline prima
+                    if ($label === 'tab') {
+                        $separator = "\n\n";
+                    }
                 }
 
-                // Prepara il contenuto
-                $contentToAdd = $text;
+                // Arricchisci tabelle con contesto
                 if ($label === 'tab') {
-                    $contextString = $this->formatContext($headerStack);
-                    if (!empty($contextString)) {
-                        $contentToAdd = "**Context:** " . $contextString . "\n\n" . $text;
+                    $context = $this->formatContext($headerStack);
+                    if ($context) {
+                        $text = '**Context:** ' . Str::limit($context, 80) . "\n\n" . $text;
                     }
                 }
 
-                // C. HARD SPLIT
-                if (strlen($contentToAdd) > $this->hardSplitThreshold) {
-                    $combinedText = ($bufferText === '') ? $contentToAdd : $bufferText . "\n\n" . $contentToAdd;
+                // Aggiungi al buffer
+                $bufferText .= ($bufferText === '' ? '' : $separator) . $text;
+
+                // --- LOGICA DI TAGLIO (CORE) ---
+
+                $currentLen = strlen($bufferText);
+
+                // 1. Se siamo sotto il minimo, CONTINUA e basta.
+                if ($currentLen < $this->minChunkSize) {
+                    continue;
+                }
+
+                // 2. Se siamo sopra il massimo, TAGLIO FORZATO.
+                if ($currentLen >= $this->maxChunkSize) {
+                    $this->processLargeBuffer($accumulator, $bufferText);
                     $bufferText = '';
 
-                    $chunks = $this->splitLargeText($combinedText, $this->maxChunkSize);
-                    foreach ($chunks as $chunk) {
-                        $this->addToAccumulator($accumulator, $chunk);
-                    }
-
                     if (count($accumulator) >= $this->generatorChunkSize) {
                         yield $accumulator;
                         $accumulator = [];
@@ -119,28 +128,37 @@ class DolphinOutputChunkerService
                     continue;
                 }
 
-                // D. MERGE NORMALE
-                $separator = ($bufferText === '') ? '' : "\n\n";
-                $projectedSize = strlen($bufferText) + strlen($separator) + strlen($contentToAdd);
+                // 3. Se siamo nello "Sweet Spot", cerchiamo un buon punto di rottura.
+                if ($currentLen >= $this->targetChunkSize) {
+                    // Se l'elemento corrente era una sezione o una tabella, o finiva con un punto,
+                    // è un ottimo momento per flushare e creare un chunk pulito.
+                    $isGoodBreakPoint = $isSection
+                        || $label === 'tab'
+                        || preg_match('/[.?!:|]$/', trim($text));
 
-                if ($projectedSize <= $this->maxChunkSize) {
-                    $bufferText .= $separator . $contentToAdd;
-                } else {
-                    if ($bufferText !== '') {
-                        $this->addToAccumulator($accumulator, $bufferText);
+                    if ($isGoodBreakPoint) {
+                        $this->addChunk($accumulator, $bufferText);
+                        $bufferText = '';
+
                         if (count($accumulator) >= $this->generatorChunkSize) {
                             yield $accumulator;
                             $accumulator = [];
                         }
                     }
-                    $bufferText = $contentToAdd;
                 }
             }
 
+            // Flush finale del testo rimasto nel buffer
             if ($bufferText !== '') {
-                $this->addToAccumulator($accumulator, $bufferText);
+                // Se è rimasto un rimasuglio piccolo, proviamo ad attaccarlo all'ultimo
+                if (strlen($bufferText) < $this->minChunkSize && !empty($accumulator)) {
+                    $this->mergeWithLast($accumulator, $bufferText);
+                } else {
+                    $this->processLargeBuffer($accumulator, $bufferText);
+                }
             }
 
+            // Yield finale di ciò che è rimasto nell'accumulatore
             if (!empty($accumulator)) {
                 yield $accumulator;
             }
@@ -152,124 +170,205 @@ class DolphinOutputChunkerService
         }
     }
 
-    // --- HELPER METHODS (Invariati) ---
-    private function cleanAndFormatText(string $text): string
+    /**
+     * Gestisce un buffer che potrebbe essere > 1000 caratteri.
+     * Lo spezza forzatamente in chunk validi (300-1000).
+     */
+    private function processLargeBuffer(array &$accumulator, string $text): void
     {
-        if (trim($text) === '') return '';
-        if (!str_contains($text, '<')) return trim($text);
-
-        $text = str_ireplace(['</td>', '</th>'], ' | ', $text);
-        $text = str_ireplace(['</tr>', '<br>', '<br/>', '<br />'], "\n", $text);
-        $text = strip_tags($text);
-
-        $lines = explode("\n", $text);
-        $cleanLines = [];
-        foreach ($lines as $line) {
-            $trimmed = trim($line);
-            if ($trimmed !== '') {
-                $cleaned = preg_replace('/\s+/', ' ', $trimmed);
-                $cleaned = rtrim($cleaned, '| ');
-                $cleanLines[] = $cleaned;
-            }
-        }
-        return implode("\n", $cleanLines);
-    }
-
-    protected function addToAccumulator(array &$accumulator, string $text, ?string $figurePath = null): void
-    {
-        $trimmedText = trim($text);
-        if ($trimmedText === '' && $figurePath === null) return;
-
-        if ($figurePath !== null) {
-            $accumulator[] = new RefinedItemDTO(text: $trimmedText, figurePath: $figurePath);
+        // Se è nei limiti, salva e via
+        if (strlen($text) <= $this->maxChunkSize) {
+            $this->addChunk($accumulator, $text);
             return;
         }
 
-        if (strlen($trimmedText) < $this->minChunkTolerance && !empty($accumulator)) {
-            $lastIndex = count($accumulator) - 1;
-            $lastItem = $accumulator[$lastIndex];
-            if ($lastItem->figurePath === null) {
-                $newText = $lastItem->text . "\n\n" . $trimmedText;
-                $accumulator[$lastIndex] = new RefinedItemDTO(text: $newText, figurePath: null);
-                return;
-            }
+        // Se è gigante, spezza
+        $chunks = $this->splitTextConstraints($text);
+        foreach ($chunks as $chunk) {
+            $this->addChunk($accumulator, $chunk);
         }
-
-        $accumulator[] = new RefinedItemDTO(text: $trimmedText, figurePath: null);
     }
 
-    private function handleFigure(array &$accumulator, string $rawText, array $headerStack): void
+    /**
+     * Algoritmo di split che rispetta rigorosamente Min e Max size.
+     */
+    private function splitTextConstraints(string $text): array
     {
-        $imgDescription = Str::between($rawText, '![', ']');
-        $imgPath = Str::between($rawText, '](', ')');
-        if (empty($imgPath)) return;
-
-        $cleanDescription = $this->cleanAndFormatText($imgDescription);
-        $enrichedDescription = $cleanDescription;
-        $contextString = $this->formatContext($headerStack);
-
-        if (!empty($contextString)) {
-            $descToUse = !empty($cleanDescription) ? $cleanDescription : "Image output";
-            $enrichedDescription = "**Context:** " . $contextString . "\n\n" . $descToUse;
-        }
-        $this->addToAccumulator($accumulator, $enrichedDescription, $imgPath);
-    }
-
-    private function splitLargeText(string $text, int $chunkSize): array
-    {
-        $lines = explode("\n", $text);
         $chunks = [];
+        // Proviamo a spezzare prima per newlines (paragrafi)
+        $blocks = explode("\n\n", $text);
+
         $currentChunk = '';
 
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line === '') continue;
+        foreach ($blocks as $block) {
+            // Se il blocco singolo è già enorme (> Max), dobbiamo spezzarlo col wordwrap
+            if (strlen($block) > $this->maxChunkSize) {
+                // Flusha quello che c'era prima
+                if ($currentChunk !== '') {
+                    $chunks[] = $currentChunk;
+                    $currentChunk = '';
+                }
 
-            if (strlen($line) > $chunkSize) {
-                $fullText = ($currentChunk === '' ? '' : $currentChunk . "\n\n") . $line;
-                $currentChunk = '';
-                $subChunks = explode("\n", wordwrap($fullText, $chunkSize, "\n", true));
+                // Taglio brutale ma sicuro a blocchi di targetChunkSize
+                $subChunks = explode("\n", wordwrap($block, $this->targetChunkSize, "\n", true));
+
+                // Riaggreghiamo i subchunks per rispettare il minSize
+                $subBuffer = '';
                 foreach ($subChunks as $sub) {
-                    $sub = trim($sub);
-                    if ($sub !== '') $chunks[] = $sub;
+                    if (strlen($subBuffer) + strlen($sub) > $this->maxChunkSize) {
+                        $chunks[] = $subBuffer;
+                        $subBuffer = $sub;
+                    } else {
+                        $subBuffer .= ($subBuffer ? "\n" : '') . $sub;
+                    }
                 }
+                if ($subBuffer) {
+                    // Il rimasuglio lo trattiamo come currentChunk per il prossimo giro
+                    $currentChunk = $subBuffer;
+                }
+                continue;
+            }
+
+            // Logica normale di accumulo
+            $sep = ($currentChunk === '') ? '' : "\n\n";
+            if (strlen($currentChunk) + strlen($sep) + strlen($block) > $this->maxChunkSize) {
+                // Se aggiungendo questo blocco superiamo il MAX, flushiamo il corrente
+                if ($currentChunk !== '') {
+                    $chunks[] = $currentChunk;
+                }
+                $currentChunk = $block;
             } else {
-                if (strlen($currentChunk) + strlen($line) + 2 > $chunkSize) {
-                    $chunks[] = trim($currentChunk);
-                    $currentChunk = $line;
-                } else {
-                    $currentChunk .= ($currentChunk === '' ? '' : "\n\n") . $line;
-                }
+                // Altrimenti accumula
+                $currentChunk .= $sep . $block;
             }
         }
-        if ($currentChunk !== '') $chunks[] = trim($currentChunk);
-        return $this->refineSplitChunks($chunks);
+
+        if ($currentChunk !== '') {
+            $chunks[] = $currentChunk;
+        }
+
+        // Refine pass: Se ci sono chunk < MinSize, uniscili
+        return $this->refineChunks($chunks);
     }
 
-    private function refineSplitChunks(array $chunks): array
+    private function refineChunks(array $chunks): array
     {
-        if (count($chunks) < 2) return $chunks;
+        if (count($chunks) < 2) {
+            return $chunks;
+        }
+
         $refined = [];
         $buffer = array_shift($chunks);
+
         foreach ($chunks as $chunk) {
-            if (strlen($chunk) < $this->minChunkTolerance) {
-                $buffer .= "\n" . $chunk;
+            if (strlen($buffer) < $this->minChunkSize) {
+                $buffer .= "\n\n" . $chunk;
             } else {
                 $refined[] = $buffer;
                 $buffer = $chunk;
             }
         }
-        $refined[] = $buffer;
+
+        // Controllo finale sull'ultimo pezzo
+        if (strlen($buffer) < $this->minChunkSize && !empty($refined)) {
+            $lastIdx = count($refined) - 1;
+            $refined[$lastIdx] .= "\n\n" . $buffer;
+        } else {
+            $refined[] = $buffer;
+        }
+
         return $refined;
+    }
+
+    private function addChunk(array &$accumulator, string $text): void
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return;
+        }
+        $accumulator[] = new RefinedItemDTO(text: $text, figurePath: null);
+    }
+
+    private function mergeWithLast(array &$accumulator, string $text): void
+    {
+        $lastIdx = count($accumulator) - 1;
+
+        if ($lastIdx >= 0 && $accumulator[$lastIdx]->figurePath === null) {
+            $prev = $accumulator[$lastIdx]->text;
+            $accumulator[$lastIdx] = new RefinedItemDTO(
+                text: $prev . "\n\n" . trim($text),
+                figurePath: null
+            );
+        } else {
+            $this->addChunk($accumulator, $text);
+        }
+    }
+
+    // --- CLEANERS & HELPERS ---
+
+    private function cleanAndFormatText(string $text): string
+    {
+        if (trim($text) === '') {
+            return '';
+        }
+
+        if (!str_contains($text, '<')) {
+            return trim($text);
+        }
+
+        $text = str_ireplace(['</td>', '</th>'], ' | ', $text);
+        $text = str_ireplace(['</tr>', '<br>', '<br/>'], "\n", $text);
+        $text = strip_tags($text);
+
+        $lines = explode("\n", $text);
+        $cleanLines = [];
+
+        foreach ($lines as $line) {
+            $t = trim($line);
+            if ($t !== '') {
+                $t = preg_replace('/\s+/', ' ', $t);
+                $cleanLines[] = rtrim($t, '| ');
+            }
+        }
+
+        return implode("\n", $cleanLines);
+    }
+
+    private function handleFigure(array &$accumulator, string $rawText, array $headerStack): void
+    {
+        $desc = Str::between($rawText, '![', ']');
+        $path = Str::between($rawText, '](', ')');
+
+        if (!$path) {
+            return;
+        }
+
+        $cleanDesc = $this->cleanAndFormatText($desc);
+        $context = $this->formatContext($headerStack);
+
+        $final = $cleanDesc ?: "Image output";
+
+        if ($context) {
+            $final = "**Context:** $context\n\n" . $final;
+        }
+
+        $accumulator[] = new RefinedItemDTO(text: $final, figurePath: $path);
     }
 
     private function updateHeaderContext(array &$stack, int $level, string $text): void
     {
         $text = trim($text);
-        if ($text === '') return;
+        if (!$text) {
+            return;
+        }
+
         $stack[$level] = $text;
-        foreach (array_keys($stack) as $key) {
-            if ($key > $level) unset($stack[$key]);
+
+        // Rimuove i livelli più profondi se si torna a un livello superiore
+        foreach (array_keys($stack) as $k) {
+            if ($k > $level) {
+                unset($stack[$k]);
+            }
         }
         ksort($stack);
     }
@@ -281,15 +380,17 @@ class DolphinOutputChunkerService
 
     protected function createElementsStream($stream): Items
     {
-        return Items::fromStream($stream, ['pointer' => '/pages', 'decoder' => new ExtJsonDecoder(true)]);
+        return Items::fromStream(
+            $stream,
+            ['pointer' => '/pages', 'decoder' => new ExtJsonDecoder(true)]
+        );
     }
 
     protected function yieldFlattenedElements(Items $pages): Generator
     {
-        foreach ($pages as $page) {
-            $elements = $page['elements'] ?? [];
-            foreach ($elements as $element) {
-                yield $element;
+        foreach ($pages as $p) {
+            foreach ($p['elements'] ?? [] as $e) {
+                yield $e;
             }
         }
     }

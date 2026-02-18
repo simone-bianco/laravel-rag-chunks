@@ -114,7 +114,8 @@ class PdfParser implements DocumentParserInterface
                 throw new \InvalidArgumentException("Job '$jobId' not found");
             }
 
-            $path = "{$this->fileService->generateTempDirPath($jobId)}/$jobId";
+            $now = now()->timestamp;
+            $path = "{$this->fileService->generateTempDirPath($jobId)}/$now-$jobId";
             $targetAbsolutePath = $this->fileService->getAbsolutePath($path);
             $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, !$deleteRemote);
 
@@ -176,7 +177,7 @@ class PdfParser implements DocumentParserInterface
             }
 
             $this->fileService->closeStreams($stream);
-            $this->fileService->delete($outputJsonRelativePath);
+//            $this->fileService->delete($outputJsonRelativePath);
 
             return new PostProcessingContextDTO($dirRelativePath, $writeRelativePath)->toArray();
         } catch (InvalidArgumentException $exception) {

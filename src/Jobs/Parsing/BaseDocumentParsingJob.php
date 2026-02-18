@@ -62,9 +62,7 @@ abstract class BaseDocumentParsingJob implements ShouldBeUnique, ShouldQueue
             'trace' => $exception->getTraceAsString(),
         ]);
 
-        if ($process) {
-            $this->logger()->warning("Temporary failure for {$this->getJobName()}, retry... ($currentTrial/$totalTries)", $context);
-        }
+        $this->logger()->warning("Temporary failure for {$this->getJobName()}, retry... ($currentTrial/$totalTries)", $context);
 
         throw $exception;
     }
@@ -74,7 +72,6 @@ abstract class BaseDocumentParsingJob implements ShouldBeUnique, ShouldQueue
         try {
             $this->enrichContext();
 
-            // Always log the error first
             $this->logger()->error("[Job Failed] {$this->getJobName()}", [
                 'document_id' => $this->documentId ?? 'unknown',
                 'process_id' => $this->processId ?? 'unknown',

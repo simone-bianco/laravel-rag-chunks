@@ -27,8 +27,13 @@ class ChunksInDescriptionBuilder implements AgentBuilderStrategy
                             'type' => 'string',
                         ]
                     ],
+                    'delete' => [
+                        'type' => 'enum',
+                        'description' => 'yes if this chunks contains only rubbish (meaningless set of alphanumeric characters with no meaning for the context), no otherwise',
+                        'enum' => ['yes', 'no']
+                    ]
                 ],
-                'required' => ['tags', 'questions'],
+                'required' => ['tags', 'questions', 'delete'],
                 'additionalProperties' => false
             ];
         }, $chunksByKey);

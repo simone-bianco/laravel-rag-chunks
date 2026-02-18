@@ -20,6 +20,11 @@ class PostProcessingException extends Exception
         parent::__construct($message, $code, $previous);
     }
 
+    public function isRetryable(): bool
+    {
+        return $this->retryable === true;
+    }
+
     public function toArray(): array
     {
         return [

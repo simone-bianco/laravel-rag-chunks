@@ -56,10 +56,9 @@ class PostProcessor
         if (!empty($missingHashes)) {
             $textsToEmbed = array_values($missingHashes);
 
-            $newVectors = $embedder->multiEmbed($textsToEmbed);
+            $newVectors = Embedding::multiEmbed($textsToEmbed);
 
             $newEmbeddingsMap = array_combine(array_keys($missingHashes), $newVectors);
-            // Filtriamo eventuali null
             $newEmbeddingsMap = array_filter($newEmbeddingsMap);
             $existingEmbeddings = $existingEmbeddings + $newEmbeddingsMap;
         }
@@ -113,8 +112,11 @@ class PostProcessor
 
         // Ricostruisci il buffer unendo i dati originali con la risposta dell'agent
         foreach ($pendingItems as $index => $item) {
-            /** @var RefinedItemDTO $item */
+            if ($agentResponse[$index]['delete'] === 'yes') {
+                continue;
+            }
 
+            /** @var RefinedItemDTO $item */
             // Recupera la risposta specifica per questo chunk (usando l'indice array)
             $aiData = $agentResponse[$index] ?? ['tags' => [], 'questions' => []];
 
@@ -148,7 +150,7 @@ class PostProcessor
         string $relativeSourcePath,
         string $relativeOutputPath,
         ?string $documentContext = '',
-        int $batchSize = 20
+        int $batchSize = 10
     ): void {
         $embedder = EmbeddingFactory::make();
 
@@ -218,6 +220,13 @@ class PostProcessor
                 $this->fileService->closeStreams(null, $writeStream);
             }
 
+            $prev = $exception->getPrevious();
+            $isRetryable = $prev instanceof \GuzzleHttp\Exception\ConnectException
+                || $prev instanceof \GuzzleHttp\Exception\ServerException
+                || str_contains($exception->getMessage(), 'timed out')
+                || str_contains($exception->getMessage(), 'Connection refused')
+                || str_contains($exception->getMessage(), 'cURL error');
+
             throw new PostProcessingException(
                 "Error during post-processing: {$exception->getMessage()}",
                 0,
@@ -226,7 +235,7 @@ class PostProcessor
                 $relativeSourcePath,
                 $currentInputLine ?? 0,
                 $lastProcessedLineContent ?? '',
-                false
+                $isRetryable
             );
         }
 

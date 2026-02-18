@@ -7,12 +7,37 @@ use SimoneBianco\LaravelProcesses\Enums\ProcessStatus;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\DispatchParsingJob;
+use SimoneBianco\LaravelRagChunks\Jobs\Parsing\PollParsingJob;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\PostProcessParsingJob;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\RefineParsingResultsJob;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\SaveParsingJob;
 
 class ProcessService
 {
+    public function forcePostprocessing(Process $process): Process
+    {
+        $process->setProcessing(['phase' => ParsingPhase::POST_PROCESSING]);
+        PostProcessParsingJob::dispatch($process->id);
+
+        return $process;
+    }
+
+    public function forceRefining(Process $process): Process
+    {
+        $process->setProcessing(['phase' => ParsingPhase::REFINING]);
+        RefineParsingResultsJob::dispatch($process->id);
+
+        return $process;
+    }
+
+    public function forcePolling(Process $process): Process
+    {
+        $process->setProcessing(['phase' => ParsingPhase::POLLING]);
+        PollParsingJob::dispatch($process->id);
+
+        return $process;
+    }
+
     public function resumeParsingProcess(Process $process): Process
     {
         if ($process->status === ProcessStatus::COMPLETE) {

@@ -61,7 +61,7 @@ class FileService
 
     public function generateTempDirPath(?string $dirName = null): string
     {
-        $dirName ??= Str::uuid()->toString();
+        $dirName ??= now()->timestamp . '-' . Str::uuid()->toString();
         return $this->getTempDirPath() . DIRECTORY_SEPARATOR . now()->format('d-m-Y') . DIRECTORY_SEPARATOR . $dirName;
     }
 

@@ -15,11 +15,11 @@ use Throwable;
 
 class PollParsingJob extends BaseDocumentParsingJob
 {
-    public int $tries = 12;
+    public int $tries = 19;
 
     public function backoff(): array
     {
-        return [5, 10, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600];
+        return [5, 10, 15, 30, 60, 60, 60, 60, 60, 60, 60, 60, 120, 180, 360, 720, 1440, 2880, 3600];
     }
 
     protected function getJobName(): string
@@ -68,7 +68,7 @@ class PollParsingJob extends BaseDocumentParsingJob
 
             match ($status) {
                 ParserStatus::COMPLETED => $this->handleCompleted($process, $parser),
-                ParserStatus::PROCESSING => $this->handleProcessing($process),
+                ParserStatus::PROCESSING => $this->handleProcessing(),
                 ParserStatus::FAILED => $this->handleFailed($process, 'Parser returned FAILED status'),
             };
         } catch (ModelNotFoundException $exception) {
@@ -100,7 +100,7 @@ class PollParsingJob extends BaseDocumentParsingJob
         RefineParsingResultsJob::dispatch($process->id);
     }
 
-    protected function handleProcessing(Process $process): void
+    protected function handleProcessing(): void
     {
         $currentTrial = $this->attempts();
         $totalTries = $this->tries;

@@ -27,6 +27,11 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         $this->processId = $processId;
     }
 
+    public function uniqueId(): string
+    {
+        return $this->processId;
+    }
+
     /**
      * @throws Throwable
      */
@@ -41,6 +46,7 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
         $document = $process->processable;
         $this->documentId = $document->id;
+        $this->enrichContext();
 
         /** @var PdfParser $parser */
         $parser = DocumentParserFactory::make($document->extension);

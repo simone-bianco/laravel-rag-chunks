@@ -27,31 +27,41 @@ class SaveParsingJob extends BaseDocumentParsingJob
         $this->processId = $processId;
     }
 
+    public function uniqueId(): string
+    {
+        return $this->processId;
+    }
+
     /**
      * @throws Throwable
      */
     public function handle(): void
     {
-        $this->enrichContext();
+        try {
+            $this->enrichContext();
 
-        $this->logger()->debug('Saving parsing job started');
+            $this->logger()->debug('Saving parsing job started');
 
-        $process = Process::with('processable')->findOrFail($this->processId);
+            $process = Process::with('processable')->findOrFail($this->processId);
 
-        /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
-        $document = $process->processable;
-        $this->documentId = $document->id;
+            /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
+            $document = $process->processable;
+            $this->documentId = $document->id;
+            $this->enrichContext();
 
-        $process->mergeContextAndSave([
-            'phase' => ParsingPhase::SAVING->value
-        ]);
+            $process->mergeContextAndSave([
+                'phase' => ParsingPhase::SAVING->value
+            ]);
 
-        /** @var PdfParser $parser */
-        $parser = DocumentParserFactory::make($document->extension);
-        $parser->saveDocument($document, $process->context);
+            /** @var PdfParser $parser */
+            $parser = DocumentParserFactory::make($document->extension);
+            $parser->saveDocument($document, $process->context);
 
-        $process->setComplete(['phase' => ParsingPhase::COMPLETED->value]);
+            $process->setComplete(['phase' => ParsingPhase::COMPLETED->value]);
 
-        $this->logger()->debug('Saving parsing job finished');
+            $this->logger()->debug('Saving parsing job finished');
+        } catch (Throwable $exception) {
+            $this->fail($exception);
+        }
     }
 }

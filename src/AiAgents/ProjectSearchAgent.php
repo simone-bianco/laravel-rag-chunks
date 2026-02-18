@@ -76,8 +76,8 @@ Call `search_chunks` carefully mapping the user's intent to the tool parameters:
    - Leave NULL in the first attempt unless looking for a unique ID or code.
    - Use only if results are too broad.
 
-**Navigation**
-If a retrieved chunk seems to be the middle of a topic (e.g., "continued from previous page"), use `get_previous_chunk` or `get_next_chunk` with its ID to fetch context.
+**CRITICAL: Navigation**
+If a retrieved chunk seems to be the middle of a topic or a TABLE (e.g., "continued from previous page" or there is the continuation of a table), use `get_previous_chunk` or `get_next_chunk` with its ID to fetch the full context of that piece of information.
 INSTRUCTIONS;
     }
 

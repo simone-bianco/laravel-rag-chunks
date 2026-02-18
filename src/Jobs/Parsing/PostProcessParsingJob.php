@@ -31,6 +31,11 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
         $this->processId = $processId;
     }
 
+    public function uniqueId(): string
+    {
+        return $this->processId;
+    }
+
     /**
      * @throws Throwable
      */
@@ -47,6 +52,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             /** @var Document $document */
             $document = $process->processable;
             $this->documentId = $document->id;
+            $this->enrichContext();
 
             $process->mergeContextAndSave([
                 'phase' => ParsingPhase::POST_PROCESSING->value
@@ -62,6 +68,9 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             try {
                 $postProcessData = $parser->postProcess($document->description, $process->context);
             } catch (PostProcessingException $exception) {
+                if ($exception->isRetryable()) {
+                    throw $exception; // outer catch handles retry via handleTemporaryFailure
+                }
                 $process->setError($exception->getMessage(), [
                     ParsingPhase::POST_PROCESSING->value => $exception->toArray()
                 ]);
@@ -74,18 +83,21 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             SaveParsingJob::dispatch($process->id);
 
             $this->logger()->debug('Post processing parsing job finished');
-
-            $process = null;
         } catch (ModelNotFoundException $exception) {
             $this->logger()->warning('Process not found: '.$this->processId);
             $this->fail($exception);
-        } catch (ClientException $e) {
+        } catch (PostProcessingException $e) {
             if ($e->isRetryable()) {
-                $this->handleTemporaryFailure($e, $process, ['response' => $e->getResponse()]);
+                $this->handleTemporaryFailure($e, $process);
             }
 
             $this->fail($e);
         } catch (Throwable $e) {
+            $this->logger()->error("Unexpected exception in {$this->getJobName()}", [
+                'exception_class' => get_class($e),
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             $this->fail($e);
         }
     }
