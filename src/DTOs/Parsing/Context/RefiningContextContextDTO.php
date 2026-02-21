@@ -3,14 +3,18 @@
 namespace SimoneBianco\LaravelRagChunks\DTOs\Parsing\Markdown;
 
 use InvalidArgumentException;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\BaseContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\ParsingContextDTO;
 
-class RefiningContextDTO extends BaseContextDTO
+class RefiningContextContextDTO extends ParsingContextDTO
 {
     public function __construct(
         public string $relativeDirPath,
         public string $relativeFilePath,
-    ) {}
+        bool $computeEmbeddings = true,
+        bool $postProcess = true,
+    ) {
+        parent::__construct($computeEmbeddings, $postProcess);
+    }
 
     public function toArray(): array
     {

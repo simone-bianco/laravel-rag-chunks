@@ -11,4 +11,7 @@ enum DocumentExtension: string
     case PDF = 'pdf';
     case MARKDOWN = 'md';
     case TXT = 'txt';
+    case JSON = 'json';
+    case JSONL = 'jsonl';
+    case WORD = 'docx';
 }

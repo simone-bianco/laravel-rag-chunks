@@ -39,7 +39,6 @@ class DispatchParsingJob extends BaseDocumentParsingJob
         $process = null;
         try {
             $this->logger()->debug('Dispatch parsing job started');
-            $this->logger()->debug('333AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
 
             /** @var Process $process */
             $process = Process::findOrFail($this->processId);
@@ -54,7 +53,8 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             $this->documentId = $document->id;
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
-            $dispatchData = $parser->dispatchParsing($document->getAbsolutePath());
+            $dispatchContext = $parser->dispatchParsing($document->getAbsolutePath());
+            $dispatchData = $dispatchContext->toArray();
             $process->mergeContextAndSave([...$dispatchData, ...['phase' => ParsingPhase::DISPATCHED->value]]);
 
             $this->logger()->debug('Dispatch parsing job finished');

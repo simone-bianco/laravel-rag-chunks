@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers\Contracts;
 
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\ParsingContextDTO;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
@@ -13,58 +14,44 @@ use Throwable;
 
 interface DocumentParserInterface
 {
-    /**
-     * @return bool
-     */
     public function needsPolling(): bool;
 
     /**
-     * @param string $absolutePath
-     * @return array
-     * @throws ClientException
+     * Reconstruct the appropriate DTO from the raw process context array.
      */
-    public function dispatchParsing(string $absolutePath): array;
+    public function contextFromArray(array $data): ParsingContextDTO;
 
     /**
-     * @param array $data
-     * @return ParserStatus
      * @throws ClientException
      */
-    public function pollParsing(array $data): ParserStatus;
+    public function dispatchParsing(string $absolutePath): ParsingContextDTO;
 
     /**
-     * @param array $data
-     * @param bool $deleteLocal
-     * @param bool $deleteRemote
-     * @return array
      * @throws ClientException
      */
-    public function saveParsingResult(array $data, bool $deleteLocal = true, bool $deleteRemote = false): array;
+    public function pollParsing(ParsingContextDTO $context): ParserStatus;
 
     /**
-     * @param array $data
-     * @return array
+     * @throws ClientException
      * @throws InvalidFileException
      */
-    public function refineOutputJson(array $data): array;
+    public function saveParsingResult(ParsingContextDTO $context, bool $deleteLocal = true, bool $deleteRemote = false): ParsingContextDTO;
 
     /**
-     * @param string $documentContext
-     * @param array $data
-     * @param int $batchSize
-     * @return array
+     * @throws InvalidFileException
+     */
+    public function refineOutputJson(ParsingContextDTO $context): ParsingContextDTO;
+
+    /**
      * @throws InvalidFileException
      * @throws PostProcessingException
      * @throws InvalidEmbeddingDriverException
      */
-    public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array;
+    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 20): ParsingContextDTO;
 
     /**
-     * @param Document $document
-     * @param array $data
-     * @return Document
      * @throws FileNotFoundException
      * @throws Throwable
      */
-    public function saveDocument(Document $document, array $data): Document;
+    public function saveDocument(Document $document, ParsingContextDTO $context): Document;
 }

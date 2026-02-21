@@ -64,7 +64,7 @@ class PollParsingJob extends BaseDocumentParsingJob
 
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
-            $status = $parser->pollParsing($process->context);
+            $status = $parser->pollParsing($parser->contextFromArray($process->context));
 
             match ($status) {
                 ParserStatus::COMPLETED => $this->handleCompleted($process, $parser),
@@ -93,8 +93,8 @@ class PollParsingJob extends BaseDocumentParsingJob
      */
     protected function handleCompleted(Process $process, DocumentParserInterface $parser): void
     {
-        $context = $parser->saveParsingResult($process->context);
-        $process->mergeContextAndSave([...$context, ...['phase' => ParsingPhase::REFINING->value]]);
+        $updatedContext = $parser->saveParsingResult($parser->contextFromArray($process->context));
+        $process->mergeContextAndSave([...$updatedContext->toArray(), ...['phase' => ParsingPhase::REFINING->value]]);
         $this->logger()->info("Polling completed for document {$this->documentId}");
 
         RefineParsingResultsJob::dispatch($process->id);

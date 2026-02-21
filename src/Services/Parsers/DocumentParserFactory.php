@@ -16,8 +16,12 @@ class DocumentParserFactory
     public static function make(string $extension): DocumentParserInterface
     {
         return match ($extension) {
-            DocumentExtension::PDF->value => app(PdfParser::class),
+            DocumentExtension::PDF->value      => app(PdfParser::class),
             DocumentExtension::MARKDOWN->value => app(MarkdownParser::class),
+            DocumentExtension::JSON->value     => app(JsonParser::class),
+            DocumentExtension::JSONL->value    => app(JsonlParser::class),
+            DocumentExtension::WORD->value     => app(WordParser::class),
+            DocumentExtension::TXT->value      => app(TxtParser::class),
             default => throw new ExtensionParsingNotSupportedException("'$extension' parsing not supported for parsing"),
         };
     }

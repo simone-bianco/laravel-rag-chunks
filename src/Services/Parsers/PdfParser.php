@@ -3,9 +3,8 @@
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PollingContextDTO;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PostProcessingContextDTO;
-use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\RefiningContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\ParsingContextDTO;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PdfParsingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
@@ -49,12 +48,15 @@ class PdfParser implements DocumentParserInterface
         return true;
     }
 
+    public function contextFromArray(array $data): ParsingContextDTO
+    {
+        return PdfParsingContextDTO::fromArray($data);
+    }
+
     /**
-     * @param string $absolutePath
-     * @return array
      * @throws ClientException
      */
-    public function dispatchParsing(string $absolutePath): array
+    public function dispatchParsing(string $absolutePath): ParsingContextDTO
     {
         try {
             $response = $this->dolphinParser->parseFileAsync($absolutePath);
@@ -62,19 +64,15 @@ class PdfParser implements DocumentParserInterface
             throw ClientException::makeFromException($exception);
         }
 
-        return new PollingContextDTO($response->jobId)->toArray();
+        return new PdfParsingContextDTO(jobId: $response->jobId);
     }
 
     /**
-     * @param array $data
-     * @return ParserStatus
      * @throws ClientException
      */
-    public function pollParsing(array $data): ParserStatus
+    public function pollParsing(ParsingContextDTO $context): ParserStatus
     {
         try {
-            $context = PollingContextDTO::fromArray($data);
-
             $response = $this->dolphinParser->status($context->jobId);
         } catch (Throwable $exception) {
             throw ClientException::makeFromException($exception);
@@ -98,16 +96,12 @@ class PdfParser implements DocumentParserInterface
     }
 
     /**
-     * @param array $data
-     * @param bool $deleteLocal
-     * @param bool $deleteRemote
-     * @return array
      * @throws ClientException
      * @throws InvalidFileException
      */
-    public function saveParsingResult(array $data, bool $deleteLocal = true, bool $deleteRemote = false): array
+    public function saveParsingResult(ParsingContextDTO $context, bool $deleteLocal = true, bool $deleteRemote = false): ParsingContextDTO
     {
-        $jobId = PollingContextDTO::fromArray($data)->jobId;
+        $jobId = $context->jobId;
 
         try {
             if (!$jobId || !$this->simpleStorage->exists($jobId)) {
@@ -119,16 +113,15 @@ class PdfParser implements DocumentParserInterface
             $targetAbsolutePath = $this->fileService->getAbsolutePath($path);
             $this->simpleStorage->downloadTo($jobId, $targetAbsolutePath, !$deleteRemote);
 
-            return new RefiningContextDTO($this->extractParsingResult($path, $deleteLocal))->toArray();
+            $context->relativeDirPath = $this->extractParsingResult($path, $deleteLocal);
+
+            return $context;
         } catch (SimpleStorageException|ConnectionFailedException|UnauthorizedException $exception) {
             throw ClientException::makeFromException($exception);
         }
     }
 
     /**
-     * @param string $zipRelativePath
-     * @param bool $deleteLocal
-     * @return string Returns the relative path to the directory containing the parsed result
      * @throws InvalidFileException
      */
     public function extractParsingResult(string $zipRelativePath, bool $deleteLocal = true): string
@@ -143,14 +136,14 @@ class PdfParser implements DocumentParserInterface
     }
 
     /**
-     * @param array $data
-     * @return array
+     * @param PdfParsingContextDTO $context
+     * @return PdfParsingContextDTO
      * @throws InvalidFileException
      */
-    public function refineOutputJson(array $data): array
+    public function refineOutputJson(ParsingContextDTO $context): ParsingContextDTO
     {
         try {
-            $dirRelativePath = RefiningContextDTO::fromArray($data)->relativeDirPath;
+            $dirRelativePath = $context->relativeDirPath;
 
             /** @var string $outputJsonRelativePath */
             $outputJsonRelativePath = collect($this->fileService->files($dirRelativePath))->first(function ($file) {
@@ -179,63 +172,52 @@ class PdfParser implements DocumentParserInterface
             $this->fileService->closeStreams($stream);
 //            $this->fileService->delete($outputJsonRelativePath);
 
-            return new PostProcessingContextDTO($dirRelativePath, $writeRelativePath)->toArray();
+            $context->relativeRefinedPath = $writeRelativePath;
+
+            return $context;
         } catch (InvalidArgumentException $exception) {
             throw new InvalidFileException(message: $exception->getMessage(), previous: $exception);
         }
     }
 
     /**
-     * @param string|null $documentContext
-     * @param array $data
-     * @param int $batchSize
-     * @return array
      * @throws InvalidEmbeddingDriverException
      * @throws InvalidFileException
      * @throws PostProcessingException
      */
-    public function postProcess(?string $documentContext, array $data, int $batchSize = 20): array
+    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 20): ParsingContextDTO
     {
-        $postProcessingData = PostProcessingContextDTO::fromArray($data);
-
-        if (!$this->fileService->exists($postProcessingData->relativeRefinedPath)) {
-            throw new InvalidFileException("$postProcessingData->relativeRefinedPath does not exist");
+        if (!$this->fileService->exists($context->relativeRefinedPath)) {
+            throw new InvalidFileException("$context->relativeRefinedPath does not exist");
         }
 
-        $relativePostProcessedOutputPath = "$postProcessingData->relativeDirPath/post_processed.jsonl";
+        $relativePostProcessedOutputPath = "$context->relativeDirPath/post_processed.jsonl";
         if (!$this->fileService->exists($relativePostProcessedOutputPath)) {
             $this->fileService->put($relativePostProcessedOutputPath, '');
         }
 
         $this->postProcessor->postProcess(
-            $postProcessingData->relativeRefinedPath,
+            $context->relativeRefinedPath,
             $relativePostProcessedOutputPath,
             $documentContext,
             $batchSize
         );
 
-        return new PostProcessingContextDTO(
-            $postProcessingData->relativeDirPath,
-            $postProcessingData->relativeRefinedPath,
-            $relativePostProcessedOutputPath
-        )->toArray();
+        $context->relativePostProcessedPath = $relativePostProcessedOutputPath;
+
+        return $context;
     }
 
     /**
-     * @param Document $document
-     * @param array $data
-     * @return Document
      * @throws FileNotFoundException
      * @throws Throwable
      */
-    public function saveDocument(Document $document, array $data): Document
+    public function saveDocument(Document $document, ParsingContextDTO $context): Document
     {
-        $postProcessingData = PostProcessingContextDTO::fromArray($data);
-
         $document->enabled = true;
         return $this->documentService->regeneratePostProcessedChunks(
             $document,
-            $postProcessingData->relativePostProcessedPath
+            $context->relativePostProcessedPath
         );
     }
 }

@@ -66,7 +66,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             $parser = DocumentParserFactory::make($document->extension);
 
             try {
-                $postProcessData = $parser->postProcess($document->description, $process->context);
+                $postProcessedContext = $parser->postProcess($document->description, $parser->contextFromArray($process->context));
             } catch (PostProcessingException $exception) {
                 if ($exception->isRetryable()) {
                     throw $exception; // outer catch handles retry via handleTemporaryFailure
@@ -78,7 +78,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
                 return;
             }
 
-            $process->mergeContextAndSave([...$postProcessData, ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
+            $process->mergeContextAndSave([...$postProcessedContext->toArray(), ...['phase' => ParsingPhase::POST_PROCESSED->value]]);
 
             SaveParsingJob::dispatch($process->id);
 

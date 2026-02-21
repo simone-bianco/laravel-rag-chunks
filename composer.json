@@ -18,7 +18,8 @@
       "tpetry/laravel-postgresql-enhanced": "^3.5",
       "simone-bianco/laravel-processes": "*",
       "halaxa/json-machine": "*",
-      "simone-bianco/laravel-dedup-media": "*"
+      "simone-bianco/laravel-dedup-media": "*",
+      "phpoffice/phpword": "^1.3"
   },
   "require-dev": {
       "phpunit/phpunit": "^12.3",

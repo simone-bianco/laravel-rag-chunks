@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Console\Commands;
 
 use Illuminate\Console\Command;
+use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PdfParsingContextDTO;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
@@ -28,7 +29,7 @@ class TestPollParsingCommand extends Command
 
         try {
             $this->info('Calling pollParsing...');
-            $status = $this->pdfParser->pollParsing(['job_id' => $jobId]);
+            $status = $this->pdfParser->pollParsing(new PdfParsingContextDTO(jobId: $jobId));
 
             $this->info('SUCCESS!');
             $this->newLine();
