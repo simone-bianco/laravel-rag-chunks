@@ -3,7 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use SimoneBianco\LaravelProcesses\Models\Process;
-use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;

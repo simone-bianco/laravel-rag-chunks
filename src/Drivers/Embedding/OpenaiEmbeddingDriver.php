@@ -6,8 +6,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
-use SimoneBianco\LaravelRagChunks\Exceptions\EmbeddingFailedException;
-use SimoneBianco\LaravelRagChunks\Exceptions\InvalidCredentialsException;
+use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use Throwable;
 
 class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
@@ -29,13 +28,13 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
     }
 
     /**
-     * @throws EmbeddingFailedException
+     * @throws ClientException
      */
     public function embed(string $text): array
     {
         try {
             if (empty($this->apiKey)) {
-                throw new InvalidCredentialsException('OPENAI_API_KEY not set in config.');
+                throw new ClientException('OPENAI_API_KEY not set in config.', 401, null, null, [], false);
             }
 
             $response = Http::withToken($this->apiKey)
@@ -45,15 +44,30 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
                 ]);
 
             if ($response->failed()) {
-                throw new EmbeddingFailedException('OpenAI Embedding Error: '.$response->body());
+                throw new ClientException(
+                    'OpenAI Embedding Error: ' . $response->body(),
+                    $response->status(),
+                    null,
+                    null,
+                    $response->json() ?? ['raw_body' => $response->body()],
+                );
             }
 
             $embedding = $response->json('data.0.embedding');
             if (empty($embedding)) {
-                throw new EmbeddingFailedException('Embedding is empty');
+                throw new ClientException('Embedding is empty', 422, null, null, [], false);
             }
 
-            return $response->json('data.0.embedding');
+            return $embedding;
+        } catch (ClientException $e) {
+            $this->logger()->error("Error during embedding: {$e->getMessage()}", [
+                'driver' => $this->configKey,
+                'text' => $text,
+                'model' => $this->model,
+                ...$e->context(),
+            ]);
+
+            throw $e;
         } catch (Throwable $throwable) {
             $this->logger()->error("Error during embedding: {$throwable->getMessage()}", [
                 'driver' => $this->configKey,
@@ -62,14 +76,14 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
                 'trace' => $throwable->getTrace(),
             ]);
 
-            throw new EmbeddingFailedException("Error during embedding: {$throwable->getMessage()}");
+            throw ClientException::makeFromException($throwable);
         }
     }
 
     /**
      * @param array $texts
      * @return array
-     * @throws EmbeddingFailedException
+     * @throws ClientException
      */
     public function multiEmbed(array $texts): array
     {

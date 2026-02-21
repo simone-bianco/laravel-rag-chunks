@@ -5,7 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 use Exception;
 use SimoneBianco\LaravelProcesses\Enums\ProcessStatus;
 use SimoneBianco\LaravelProcesses\Models\Process;
-use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\DispatchParsingJob;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\PollParsingJob;
 use SimoneBianco\LaravelRagChunks\Jobs\Parsing\PostProcessParsingJob;

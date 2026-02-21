@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Context;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\ParserStatus;
-use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\Contracts\DocumentParserInterface;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;

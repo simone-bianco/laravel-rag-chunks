@@ -5,8 +5,10 @@ namespace SimoneBianco\LaravelRagChunks\Models;
 use App\Observers\TagObserver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
-use SimoneBianco\LaravelRagChunks\Enums\ProcessType;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ProcessType;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 class Tag extends \SimoneBianco\LaravelSimpleTags\Tag
@@ -23,17 +25,24 @@ class Tag extends \SimoneBianco\LaravelSimpleTags\Tag
         'description_embedding',
     ];
 
+    protected static function booted(): void
+    {
+        parent::booted();
+        static::observe(TagObserver::class);
+    }
+
+    public function getTaggableCountAttribute(): int
+    {
+        return DB::table('taggables')
+            ->where('tag_id', $this->id)
+            ->count();
+    }
+
     protected function casts(): array
     {
         return [
             'description_embedding' => VectorArray::class,
         ];
-    }
-
-    protected static function booted(): void
-    {
-        parent::booted();
-        static::observe(TagObserver::class);
     }
 
     public function scopeForProject(Builder $query, string $projectId): Builder

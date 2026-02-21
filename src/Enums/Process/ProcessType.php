@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\Enums;
+namespace SimoneBianco\LaravelRagChunks\Enums\Process;
 
 enum ProcessType: string
 {

@@ -4,7 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use SimoneBianco\LaravelProcesses\Models\Process;
-use SimoneBianco\LaravelRagChunks\Enums\ParsingPhase;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
 use SimoneBianco\LaravelRagChunks\Models\Document;
