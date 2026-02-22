@@ -43,6 +43,7 @@ class MultiembedderDriver implements EmbeddingDriverInterface
             $url = $this->resolveUrl(self::EMBED_ENDPOINT);
 
             $response = Http::withToken($this->apiKey)
+                ->timeout(20)
                 ->post($url, [
                     'model' => $this->model,
                     'text' => $text,
