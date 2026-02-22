@@ -8,7 +8,6 @@ class ProjectDTO
         public string $name,
         public string $description,
         public string $alias,
-        public string $tagsBlueprintAlias,
         public array $settings = []
     ) {}
 }

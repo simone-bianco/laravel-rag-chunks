@@ -33,16 +33,16 @@ class ProjectService
             ]);
             $project->save();
 
-            $tagsBlueprint = TagsBlueprint::query()
-                ->select('id', 'tags_by_type')
-                ->where('alias', $projectData->tagsBlueprintAlias)
-                ->firstOrFail();
-
-            $tagsByType = $tagsBlueprint->tags_by_type;
-
-            foreach ($tagsByType as $type => $tags) {
-                $project->attachTags($tags, $type);
-            }
+//            $tagsBlueprint = TagsBlueprint::query()
+//                ->select('id', 'tags_by_type')
+//                ->where('alias', $projectData->tagsBlueprintAlias)
+//                ->firstOrFail();
+//
+//            $tagsByType = $tagsBlueprint->tags_by_type;
+//
+//            foreach ($tagsByType as $type => $tags) {
+//                $project->attachTags($tags, $type);
+//            }
 
             DB::commit();
 
@@ -66,7 +66,7 @@ class ProjectService
      */
     public function dispatchTagsEmbed(Project $project): Collection
     {
-        $allTags = Tag::where('project_id', $project->id)->get();
+        $allTags = Tag::whereHas('tagType', fn ($q) => $q->where('project_id', $project->id)->where('ai_search', true))->get();
         $tagIds = $allTags->pluck('id')->map(fn ($id) => (string) $id)->toArray();
         [$tagsWithActiveProcess, $tagsWithErrorProcess] = Process::where('processable_type', Tag::class)
             ->whereIn('processable_id', $tagIds)

@@ -4,7 +4,6 @@ namespace SimoneBianco\LaravelRagChunks\Models;
 
 use App\Observers\TagObserver;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
@@ -18,9 +17,8 @@ class Tag extends \SimoneBianco\LaravelSimpleTags\Tag
     protected $fillable = [
         'name',
         'slug',
-        'type',
+        'tag_type_id',
         'order_column',
-        'project_id',
         'description',
         'description_embedding',
     ];
@@ -47,12 +45,7 @@ class Tag extends \SimoneBianco\LaravelSimpleTags\Tag
 
     public function scopeForProject(Builder $query, string $projectId): Builder
     {
-        return $query->where('project_id', $projectId);
-    }
-
-    public function project(): BelongsTo
-    {
-        return $this->belongsTo(Project::class);
+        return $query->whereHas('tagType', fn ($q) => $q->where('project_id', $projectId));
     }
 
     public function isEmbedding(): bool
