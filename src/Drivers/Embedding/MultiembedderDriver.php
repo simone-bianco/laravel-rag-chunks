@@ -19,10 +19,12 @@ class MultiembedderDriver implements EmbeddingDriverInterface
         protected ?string $baseUrl = null,
         protected ?string $apiKey = null,
         protected ?string $model = null,
+        protected ?int $timeout = null,
     ) {
         $this->baseUrl ??= config("rag_chunks.embedders.$configKey.base_url");
         $this->apiKey ??= config("rag_chunks.embedders.$configKey.api_key");
         $this->model ??= config("rag_chunks.embedders.$configKey.model");
+        $this->timeout ??= (int) config("rag_chunks.embedders.$configKey.timeout", 300);
     }
 
     protected function logger(): LoggerInterface
@@ -102,6 +104,7 @@ class MultiembedderDriver implements EmbeddingDriverInterface
             $url = $this->resolveUrl(self::BATCH_EMBED_ENDPOINT);
 
             $response = Http::withToken($this->apiKey)
+                ->timeout($this->timeout)
                 ->post($url, [
                     'model' => $this->model,
                     'texts' => $texts,

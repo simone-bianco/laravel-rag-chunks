@@ -98,35 +98,42 @@ class PostProcessor
             return [];
         }
 
-        // Estrai solo i testi per l'agent
-        $chunkTexts = array_map(fn(RefinedItemDTO $item) => $item->text, $pendingItems);
+        // ORA PASSIAMO ALL'AI SIA IL TESTO CHE IL FIGURE PATH, così sa che immagine ha!
+        $chunksPayload = array_map(function ($item) use ($relativeDirPath) {
+            return [
+                'text' => $item->text,
+                // Pre-assembliamo il path qui, in modo che l'AI debba solo restituirlo testualmente
+                'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/{$item->figurePath}" : null,
+            ];
+        }, $pendingItems);
 
         // Istanzia e chiama l'agent
         $postProcessingAgent = new PostProcessingAgent(Str::random());
         $agentResponse = $postProcessingAgent
             ->withDocumentContext($documentContext)
-            ->withChunks($chunkTexts)
+            ->withChunks($chunksPayload)
             ->respond();
 
         $buffer = [];
 
-        // Ricostruisci il buffer unendo i dati originali con la risposta dell'agent
-        foreach ($pendingItems as $index => $item) {
-            if ($agentResponse[$index]['delete'] === 'yes') {
+        // Ricostruisci il buffer iterando sulla risposta dell'AI
+        foreach ($agentResponse as $aiData) {
+            $content = $aiData['content'] ?? '';
+
+            if (empty($content)) {
                 continue;
             }
-
-            /** @var RefinedItemDTO $item */
-            // Recupera la risposta specifica per questo chunk (usando l'indice array)
-            $aiData = $agentResponse[$index] ?? ['tags' => [], 'questions' => []];
 
             $tags = $aiData['tags'] ?? [];
             $questions = $aiData['questions'] ?? [];
 
+            // Recuperiamo il figure_path che l'AI ha deciso di associare a questo chunk dinamico
+            $figurePath = !empty($aiData['figure_path']) ? $aiData['figure_path'] : null;
+
             $buffer[] = [
-                'text' => $item->text,
-                'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/$item->figurePath" : null,
-                'text_hash' => HashService::hash($item->text),
+                'text' => $content,
+                'figure_path' => $figurePath,
+                'text_hash' => HashService::hash($content),
                 'tags' => $tags,
                 'tags_hash' => HashService::hash(implode(',', $tags)),
                 'questions' => $questions,
@@ -221,7 +228,8 @@ class PostProcessor
             }
 
             $prev = $exception->getPrevious();
-            $isRetryable = $prev instanceof \GuzzleHttp\Exception\ConnectException
+            $isRetryable = ($exception instanceof \RuntimeException && $prev instanceof \TypeError)
+                || $prev instanceof \GuzzleHttp\Exception\ConnectException
                 || $prev instanceof \GuzzleHttp\Exception\ServerException
                 || str_contains($exception->getMessage(), 'timed out')
                 || str_contains($exception->getMessage(), 'Connection refused')

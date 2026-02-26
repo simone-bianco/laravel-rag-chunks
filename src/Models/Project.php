@@ -34,9 +34,9 @@ class Project extends Model
     public function getTagsSlugsKeyedByTypes(): array
     {
         return $this->tags()
-            ->select('type', 'slug')
+            ->select('tag_type_id', 'slug')
             ->get()
-            ->groupBy('type')
+            ->groupBy('tag_type_id')
             ->mapWithKeys(function ($tags, $key) {
                 return [$key => $tags->pluck('slug')->toArray()];
             })

@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 
 class Relation extends Model
@@ -20,4 +21,14 @@ class Relation extends Model
     protected $casts = [
         'type' => RelationType::class,
     ];
+
+    public function from_entity(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    public function to_entity(): MorphTo
+    {
+        return $this->morphTo();
+    }
 }

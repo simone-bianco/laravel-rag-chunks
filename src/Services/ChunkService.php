@@ -5,6 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 
@@ -45,7 +46,14 @@ class ChunkService
 
         $paginator = Chunk::query()
             ->select('*')
-            ->with(['document', 'dedupMedia'])
+            ->with([
+                'document',
+                'dedupMedia',
+                'outgoingRelations.to_entity',
+                'incomingRelations' => function ($q) {
+                    $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
+                },
+            ])
             ->whereHas('document', function (Builder $query) {
                 $query->where('enabled', true);
             })

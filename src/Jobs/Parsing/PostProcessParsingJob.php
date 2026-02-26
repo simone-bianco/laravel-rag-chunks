@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
@@ -12,9 +13,10 @@ use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class PostProcessParsingJob extends BaseDocumentParsingJob
+class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUniqueUntilProcessing
 {
     public int $tries = 12;
+    public int $timeout = 7200;
 
     public function backoff(): array
     {
@@ -66,7 +68,11 @@ class PostProcessParsingJob extends BaseDocumentParsingJob
             $parser = DocumentParserFactory::make($document->extension);
 
             try {
-                $postProcessedContext = $parser->postProcess($document->description, $parser->contextFromArray($process->context));
+                $postProcessedContext = $parser->postProcess(
+                    $document->description,
+                    $parser->contextFromArray($process->context),
+                    config('rag_chunks.agents.postprocessor.batch_size', 10)
+                );
             } catch (PostProcessingException $exception) {
                 if ($exception->isRetryable()) {
                     throw $exception; // outer catch handles retry via handleTemporaryFailure

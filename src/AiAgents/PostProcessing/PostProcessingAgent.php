@@ -2,60 +2,85 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
-use Exception;
-use Illuminate\Support\Arr;
 use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
-use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing\Contracts\AgentBuilderStrategy;
+use RuntimeException;
+use TypeError;
 
 class PostProcessingAgent extends Agent
 {
     protected $history = CacheStorage::class;
-    protected $toolCacheTtl = 60;
-    protected array $chunksByKey = [];
+    protected array $chunks = [];
     protected $mcpServers = [];
     protected string $documentContext = '';
-    protected bool $chunksInSchema = true;
-    protected AgentBuilderStrategy $builderStrategy;
     protected array $config = [];
+    protected int $preferredChunkLength = 600;
 
-    public function __construct(
-        string $key,
-        array $injectConfig = []
-    ) {
+    public function __construct(string $key, array $injectConfig = [])
+    {
         parent::__construct($key);
 
         $config = config('rag_chunks.agents.postprocessor', []);
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
-        $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-4.1-nano';
-        $this->chunksInSchema = $injectConfig['chunks_in_schema'] ?? $config['chunks_in_schema'] ?? true;
-
-        $this->builderStrategy = $this->chunksInSchema
-            ? new ChunksInDescriptionBuilder() : new ChunksInPromptBuilder();
+        $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-4o';
+        $this->preferredChunkLength = $injectConfig['preferred_chunk_length'] ?? $config['preferred_chunk_length'] ?? 600;
     }
 
     public function withChunks(array $chunks): self
     {
-        $this->chunksByKey = Arr::mapWithKeys($chunks, function ($chunk, $index) {
-            return ["chunk_$index" => $chunk];
-        });
-
+        $this->chunks = $chunks;
         return $this;
     }
 
-    /**
-     * @return array
-     */
+    public function withPreferredChunkLength(int $length): self
+    {
+        $this->preferredChunkLength = $length;
+        return $this;
+    }
+
     protected function getResponseSchema(): array
     {
-        $properties = $this->builderStrategy->buildSchemaProperties($this->chunksByKey);
         return [
             'type' => 'object',
-            'description' => 'All the chunks with tags and questions',
-            'properties' => $properties,
-            'required' => array_keys($properties),
+            'description' => 'List of dynamically sized, ordered chunks with questions and tags',
+            'properties' => [
+                'chunks' => [
+                    'type' => 'array',
+                    'description' => 'Dynamically processed chunks, forming highly cohesive atomic semantic units.',
+                    'items' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'content' => [
+                                'type' => 'string',
+                                'description' => 'The raw, unsummarized text of the chunk. You MUST strictly preserve all newlines (\n), tabs, formatting, numerical data, and stat blocks. NEVER summarize. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field. May include a brief injected context at the very beginning if the data is highly abstract.'
+                            ],
+                            'tags' => [
+                                'type' => 'array',
+                                'description' => 'List of 5 to 10 semantic tags for RAG retrieval. CRITICAL: The main subject/entity of the chunk MUST be included as a tag (e.g., "aboleth"). Must be strictly LOWERCASE and SLUG_CASE (e.g., "aboleth", "lair_actions"). Tag both the subject and the action/event. Do not generate fewer than 5 tags.',
+                                'items' => [
+                                    'type' => 'string'
+                                ]
+                            ],
+                            'questions' => [
+                                'type' => 'array',
+                                'description' => 'List of 3 to 5 reverse-engineered questions that this specific chunk answers perfectly. CRITICAL: Every single question MUST explicitly include the subject or entity name of the chunk (e.g., write "What is the Armor Class of an Aboleth?", NEVER write "What is its Armor Class?"). Do not generate fewer than 3 questions.',
+                                'items' => [
+                                    'type' => 'string'
+                                ]
+                            ],
+                            'figure_path' => [
+                                'type' => 'string',
+                                'description' => 'The path to the figure/image. Return an empty string "" if there is no relevant figure.'
+                            ],
+                        ],
+                        'required' => ['content', 'tags', 'questions', 'figure_path'],
+                        'additionalProperties' => false
+                    ]
+                ],
+            ],
+            'required' => ['chunks'],
             'additionalProperties' => false
         ];
     }
@@ -70,7 +95,6 @@ class PostProcessingAgent extends Agent
         if (!empty($context)) {
             $this->documentContext = "\n### DOCUMENT CONTEXT\n$context";
         }
-
         return $this;
     }
 
@@ -78,30 +102,26 @@ class PostProcessingAgent extends Agent
     {
         return <<<INSTRUCTIONS
 ### PERSONA
-You are an expert optimizer for RAG (Retrieval-Augmented Generation) systems.
+You are an expert optimizer and dynamic chunker for RAG systems.
 
 $this->documentContext
 
-### GOAL
-Your task is to analyze the provided chunks of text and extract a set of highly relevant questions and tags that describe its content.
-The chunks belong to the same document, so you can get the whole context.
+### GOAL & DYNAMIC CHUNKING
+Analyze the provided raw chunks. Clean, merge, or split them to form highly cohesive, atomic semantic units.
+- You MUST NOT output a 1:1 mapping of input to output.
+- Separate distinct topics (e.g., isolate a lore description from a stat block).
+- Target Size: ~$this->preferredChunkLength characters (SOFT limit). Semantic integrity (keeping a stat block together) ALWAYS overrides size.
 
-### UNIVERSAL RULES
-1. **Context-Understand**: Giving you more contiguous chunks will allow you to understand better the context, especially for abstract data like tables.
-2. **Same-Order**: The output MUST BE in the same order as the input chunks.
+### CRITICAL CONTENT RULES
+1. **ZERO SUMMARIZATION**: Preserve all sentences, numerical data, stats, and symbols EXACTLY as written.
+2. **PRESERVE FORMATTING**: Do NOT remove newlines (`\n`), tabs, or spacing from stat blocks, tables, or item descriptions. The rigid structure must remain intact.
+3. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
+4. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
+5. **MINIMUM METADATA**: You MUST generate at least 5 tags and at least 3 questions per output chunk. Do not be lazy.
+6. **Context Injection**: For highly abstract data (e.g., an isolated stat table), prepend a brief clarifying context to the `content`.
 
-### TAGGING RULES
-1. **Format**: All tags must be strictly **LOWERCASE** and formatted as **SLUGS** (slug_case).
-2. **Entity & Action**: Tag both the *subject* (e.g., `aboleth`) AND the *action/event/state* described (e.g., `death`, `lair_actions`, `poisoned`).
-3. **Synonyms**: If a text uses a verb like "dies", include the noun tag `death` to aid semantic matching.
-4. **Retrieval Focus**: Choose tags that answer: "Under what specific keywords should this text appear in a search result?".
-5. **No Generics**: Avoid filler words like 'game', 'chapter', 'introduction'. Be specific.
-
-### QUESTIONS RULES
-1. **Reverse Engineering**: Formulate 1-5 questions that a user would naturally ask where *this specific chunk* provides the best answer.
-2. **Conditionals**: If the text describes a condition (e.g., "If the creature dies..."), generate a question regarding that condition (e.g., "What happens if the creature dies?").
-3. **Accuracy**: Ensure the questions are directly answerable by the information contained in the text.
-4. **Variety**: Mix conceptual questions ("What is X?") with procedural/conditional questions ("What happens when X?", "How does Y work?").
+### FIGURE RULES
+Preserve `figure_path` if present. If merging chunks with different figures, keep the most relevant or split the chunks to preserve both. Return "" if no figure.
 INSTRUCTIONS;
     }
 
@@ -110,29 +130,13 @@ INSTRUCTIONS;
         $this->changeProvider($this->config['provider']);
         $this->model = $this->config['model'];
 
-//        $cacheKey = HashService::hash(json_encode($this->getResponseSchema()).json_encode([
-//            $this->provider, $this->model, $this->chunksInSchema ? 'true' : 'false'
-//            ]).$this->instructions);
-
-//        return Cache::remember($cacheKey, 300, function () {
-        $response = parent::respond($this->builderStrategy->buildPrompt($this->chunksByKey));
-
-        $keys = array_keys($this->chunksByKey);
-        $range = range(0, count($this->chunksByKey) - 1);
-        $indexedChunksKeys = array_combine($keys, $range);
-
-        $responseKeys = array_keys($response);
-        if (count(array_intersect($keys, $responseKeys)) !== count($responseKeys)) {
-            throw new Exception("Array keys in PostProcessingAgent response do not match");
+        try {
+            $response = parent::respond("Raw Input Chunks to Process:\n\n" . json_encode($this->chunks));
+        } catch (TypeError $e) {
+            throw new RuntimeException('AI provider returned null content (transient error or refusal): ' . $e->getMessage(), 0, $e);
         }
 
-        $chunksData = [];
-        foreach ($response as $key => $data) {
-            $chunksData[$indexedChunksKeys[$key]] = $data;
-        }
-
-        return $chunksData;
-//        });
+        return $response['chunks'] ?? [];
     }
 
     public function prompt($message)

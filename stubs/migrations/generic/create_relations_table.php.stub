@@ -1,0 +1,34 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('relations', function (Blueprint $table) {
+            $table->id();
+            $table->morphs('from_entity');
+            $table->morphs('to_entity');
+            $table->string('type');
+            $table->string('name')->nullable();
+            $table->text('description')->nullable();
+            $table->timestamps();
+
+            $table->unique([
+                'from_entity_id',
+                'from_entity_type',
+                'to_entity_id',
+                'to_entity_type',
+                'type'
+            ], 'unique_rag_relation');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('relations');
+    }
+};

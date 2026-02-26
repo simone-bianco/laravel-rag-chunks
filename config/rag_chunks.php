@@ -30,6 +30,7 @@ return [
             'api_key' => env('MULTI_EMBEDDER_API_KEY'),
             'base_url' => env('MULTI_EMBEDDER_BASE_URL', 'http://localhost:5000/api'),
             'embedding_size' => 1024,
+            'timeout' => env('MULTI_EMBEDDER_TIMEOUT', 300),
         ],
     ],
 

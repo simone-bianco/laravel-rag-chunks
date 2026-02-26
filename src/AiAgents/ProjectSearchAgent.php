@@ -9,6 +9,7 @@ use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetNextChunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetPreviousChunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ConnectChunks;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class ProjectSearchAgent extends Agent
@@ -29,17 +30,15 @@ class ProjectSearchAgent extends Agent
     public function __construct($key, string $projectAlias, bool $usesUserId = false, ?string $group = null)
     {
         $this->project = Project::query()
-            ->with([
-                'tags' => function ($query) {
-                    $query->select(['type', 'slug']);
-                }
-            ])
             ->select(['alias', 'name', 'description'])
             ->where('alias', $projectAlias)
             ->firstOrFail();
+
         $this->withTool(new SearchChunks($this->project));
         $this->withTool(new GetPreviousChunk());
         $this->withTool(new GetNextChunk());
+        $this->withTool(new ConnectChunks());
+
         parent::__construct($key, $usesUserId, $group);
 
         $this->logger()->debug('[Agent] ProjectSearchAgent initialized', ['project' => $this->project->alias]);
@@ -78,6 +77,20 @@ Call `search_chunks` carefully mapping the user's intent to the tool parameters:
 
 **CRITICAL: Navigation**
 If a retrieved chunk seems to be the middle of a topic or a TABLE (e.g., "continued from previous page" or there is the continuation of a table), use `get_previous_chunk` or `get_next_chunk` with its ID to fetch the full context of that piece of information.
+
+**CRITICAL: Knowledge Graph Enhancement (Connect Chunks)**
+You have the ability to link two distinct chunks together using `connect_chunks`.
+**STRICT RULES FOR CONNECTION:**
+1. **Connect ONLY upon "struggle":** Use this tool IF AND ONLY IF you had to perform multiple separate searches or combine non-intuitive, scattered information across different documents to answer the user's prompt.
+2. **Do NOT connect obvious or sequential chunks:** If Chunk B naturally follows Chunk A or they were found easily in the same initial search, DO NOT connect them.
+3. **Contextual Relevance:** Only connect chunks that are strictly related to the current user's active search context. Never connect chunks randomly outside the current topic.
+4. **Future Optimization:** The goal is to create a semantic bridge. Ask yourself: "Will future agents benefit from finding Chunk B immediately when looking at Chunk A for this specific topic?" If yes, connect them.
+5. **Directionality:** Use `unidirectional` if Chunk A explains/leads to Chunk B but not necessarily vice versa. Use `bidirectional` if they are mutually relevant to the core concept.
+
+**CRITICAL: OUTPUT FORMATTING**
+1. **ZERO FLUFF:** You are STRICTLY FORBIDDEN from using conversational fillers, introductory phrases (e.g., "Based on the text...", "Dal testo trovato...", "According to the search..."), or concluding remarks.
+2. **NO FOLLOW-UPS:** NEVER ask the user if they need more information, if they want to proceed, or offer further assistance (e.g., "Vuoi che cerchi altro?", "Posso aiutarti ancora?").
+3. **DIRECT ANSWER ONLY:** Provide ONLY the raw, direct, and factual answer to the user's prompt based on the retrieved data. Get straight to the point.
 INSTRUCTIONS;
     }
 
