@@ -83,7 +83,7 @@ class DocumentService
         $figuresBuffer = [];
         $index = 1;
         while (($line = fgets($readStream)) !== false) {
-            $line = str_replace("\u{0000}", '', $line);
+            $line = str_replace(["\u{0000}", '\\u0000'], '', $line);
             $data = PostProcessedItemDTO::fromArray(json_decode($line, true));
 
             if (json_last_error() !== JSON_ERROR_NONE) {

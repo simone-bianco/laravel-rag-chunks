@@ -16,6 +16,12 @@ use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 /**
  * @method static ChunkBuilder query()
+ * @method ChunkBuilder whereDocumentId(?string $documentId)
+ * @method ChunkBuilder whereContentLength(?int $min, ?int $max)
+ * @method ChunkBuilder whereDirty(?bool $dirty)
+ * @method ChunkBuilder whereHasEmbedding(?bool $has)
+ * @method ChunkBuilder whereChunkTags(?array $tagGroups)
+ * @method ChunkBuilder whereKeywordSearch(?string $text, bool $caseSensitive = false)
  * @method ChunkBuilder whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch)
  * @method ChunkBuilder whereAliases(?array $docAliases, ?array $projAliases)
  * @method ChunkBuilder whereTagFilters(?Collection $tagFilters)

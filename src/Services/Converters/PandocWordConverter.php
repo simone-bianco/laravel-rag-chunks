@@ -24,7 +24,7 @@ use RuntimeException;
 class PandocWordConverter implements WordConverterInterface
 {
     /**
-     * Runs pandoc to convert the .docx to a .md file, then deletes the original .docx.
+     * Runs pandoc to convert the .docx to a .md file. The original .docx is kept on disk.
      *
      * @param string $absoluteDocxPath  Absolute path to the source .docx.
      * @param string $absoluteTargetDir Absolute path of the output directory.
@@ -55,8 +55,6 @@ class PandocWordConverter implements WordConverterInterface
         if (!file_exists($outputPath)) {
             throw new RuntimeException("Pandoc succeeded but output file not found at: $outputPath");
         }
-
-        unlink($absoluteDocxPath);
 
         return $outputPath;
     }

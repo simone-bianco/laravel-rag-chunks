@@ -18,7 +18,7 @@ class NaiveWordConverter implements WordConverterInterface
 
     /**
      * Extracts all text from the .docx via phpoffice, writes it as a .txt file
-     * in the same target directory, then deletes the original .docx.
+     * in the same target directory. The original .docx is kept on disk.
      *
      * @param string $absoluteDocxPath  Absolute path to the source .docx.
      * @param string $absoluteTargetDir Absolute path of the output directory.
@@ -35,8 +35,6 @@ class NaiveWordConverter implements WordConverterInterface
         if (file_put_contents($outputPath, $text) === false) {
             throw new RuntimeException("Failed to write converted text to: $outputPath");
         }
-
-        unlink($absoluteDocxPath);
 
         return $outputPath;
     }

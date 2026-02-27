@@ -24,7 +24,7 @@ use SimoneBianco\LaravelRagChunks\Services\PostProcessors\PostProcessor;
  * - NONE   → NaiveWordConverter (phpoffice → .txt → TxtChunkerService)
  * - PANDOC → PandocWordConverter (pandoc CLI → .md → MarkdownChunkerService)
  *
- * The original .docx is deleted after successful conversion.
+ * The original .docx is kept on disk after conversion.
  */
 class WordParser extends AbstractLocalFileParser
 {
@@ -78,7 +78,7 @@ class WordParser extends AbstractLocalFileParser
      *
      * Steps:
      * 1. Pick converter (NaiveWordConverter → .txt, PandocWordConverter → .md).
-     * 2. Convert and delete the original .docx.
+     * 2. Convert the original .docx (kept on disk).
      * 3. Pick chunker based on converted file extension (txt → TxtChunkerService, md → MarkdownChunkerService).
      * 4. Stream chunks into refined_output.jsonl.
      * 5. Update context with the new relativeFilePath (converted file) and relativeRefinedPath.

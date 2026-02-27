@@ -3,7 +3,11 @@
 namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
+use SimoneBianco\LaravelRagChunks\DTOs\ChunkFilterDataDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
@@ -88,5 +92,128 @@ class ChunkService
         });
 
         return $paginator;
+    }
+
+    public function filter(ChunkFilterDataDTO $filterData): LengthAwarePaginator
+    {
+        $contentVector   = null;
+        $tagsVector      = null;
+        $questionsVector = null;
+
+        if (! empty($filterData->semanticText)) {
+            $contentVector = Embedding::embed($filterData->semanticText);
+        }
+        if (! empty($filterData->semanticTags)) {
+            $tagsVector = Embedding::embed($filterData->semanticTags);
+        }
+        if (! empty($filterData->semanticQuestions)) {
+            $questionsVector = Embedding::embed($filterData->semanticQuestions);
+        }
+
+        $hasSemanticSearch = $contentVector !== null || $tagsVector !== null || $questionsVector !== null;
+
+        $query = Chunk::query()
+            ->select('*')
+            ->with([
+                'dedupMedia',
+                'outgoingRelations.to_entity',
+                'incomingRelations' => function ($q) {
+                    $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
+                },
+            ])
+            ->whereDocumentId($filterData->documentId)
+            ->whereKeywordSearch($filterData->text, $filterData->caseSensitive)
+            ->whereContentLength($filterData->charMin, $filterData->charMax)
+            ->whereDirty($filterData->isDirty)
+            ->whereHasEmbedding($filterData->hasEmbedding)
+            ->whereChunkTags($filterData->chunkTagGroups);
+
+        if ($hasSemanticSearch) {
+            $query->withHybridRanking(
+                contentVector: $contentVector,
+                questionsVector: $questionsVector,
+                tagsVector: $tagsVector,
+                weightContent: null,
+                weightQuestions: null,
+                weightTags: null,
+            );
+        } else {
+            $query->orderBy('order');
+        }
+
+        $paginator = $query->paginate(
+                $filterData->perPage,
+                ['*'],
+                'page',
+                $filterData->page,
+            );
+
+        $this->transformForFrontend($paginator->getCollection());
+
+        return $paginator;
+    }
+
+    /**
+     * Transform a collection of chunks for frontend consumption:
+     * adds image_url, hides embeddings, serializes relations.
+     */
+    public function transformForFrontend(Collection $chunks): Collection
+    {
+        return $chunks->transform(function (Chunk $chunk) {
+            $chunk->image_url = $chunk->getFirstMedia()?->getUrl();
+            unset($chunk->embedding, $chunk->tags_embedding, $chunk->questions_embedding);
+
+            $relations = [];
+
+            foreach ($chunk->outgoingRelations ?? [] as $relation) {
+                $entity = $relation->to_entity;
+                if ($entity) {
+                    $relations[] = [
+                        'id'          => $relation->id,
+                        'type'        => $relation->type->value,
+                        'name'        => $relation->name,
+                        'description' => $relation->description,
+                        'direction'   => 'outgoing',
+                        'entity'      => $this->serializeRelationEntity($entity),
+                    ];
+                }
+            }
+
+            foreach ($chunk->incomingRelations ?? [] as $relation) {
+                $entity = $relation->from_entity;
+                if ($entity) {
+                    $relations[] = [
+                        'id'          => $relation->id,
+                        'type'        => $relation->type->value,
+                        'name'        => $relation->name,
+                        'description' => $relation->description,
+                        'direction'   => 'incoming',
+                        'entity'      => $this->serializeRelationEntity($entity),
+                    ];
+                }
+            }
+
+            $chunk->relations = $relations;
+
+            return $chunk;
+        });
+    }
+
+    private function serializeRelationEntity(Model $entity): array
+    {
+        $type = strtolower(class_basename($entity));
+
+        $label = match ($type) {
+            'chunk'    => 'Chunk #' . $entity->order,
+            'document' => $entity->name,
+            default    => ucfirst($type) . ' #' . $entity->getKey(),
+        };
+
+        return [
+            'type'            => $type,
+            'id'              => $entity->getKey(),
+            'label'           => $label,
+            'content_preview' => $type === 'chunk' ? Str::limit($entity->content, 80) : null,
+        ];
     }
 }

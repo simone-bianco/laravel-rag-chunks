@@ -7,6 +7,63 @@ use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 
 class ChunkBuilder extends Builder
 {
+    public function whereDocumentId(?string $documentId): self
+    {
+        return $this->when($documentId, fn ($q) => $q->where('document_id', $documentId));
+    }
+
+    public function whereContentLength(?int $min = null, ?int $max = null): self
+    {
+        return $this
+            ->when($min !== null && $min > 0, fn ($q) => $q->whereRaw('LENGTH(content) >= ?', [$min]))
+            ->when($max !== null && $max > 0, fn ($q) => $q->whereRaw('LENGTH(content) <= ?', [$max]));
+    }
+
+    public function whereDirty(?bool $dirty): self
+    {
+        return $this->when($dirty, fn ($q) => $q->where(function ($q) {
+            $q->where('is_content_dirty', true)
+                ->orWhere('is_tags_dirty', true)
+                ->orWhere('is_questions_dirty', true);
+        }));
+    }
+
+    public function whereHasEmbedding(?bool $has): self
+    {
+        if ($has === null) {
+            return $this;
+        }
+
+        return $has
+            ? $this->whereNotNull('embedding')
+            : $this->whereNull('embedding');
+    }
+
+    /**
+     * Filter by chunk-level tags (not document tags).
+     *
+     * @param  array<string, int[]>|null  $tagGroups  tagTypeAlias => selectedTagIds
+     */
+    public function whereChunkTags(?array $tagGroups): self
+    {
+        return $this->when(!empty($tagGroups), function ($q) use ($tagGroups) {
+            foreach ($tagGroups as $tagIds) {
+                if (!empty($tagIds)) {
+                    $q->whereHas('tags', fn ($tq) => $tq->whereIn('id', $tagIds));
+                }
+            }
+            return $q;
+        });
+    }
+
+    public function whereKeywordSearch(?string $text, bool $caseSensitive = false): self
+    {
+        return $this->when(!empty($text), function ($q) use ($text, $caseSensitive) {
+            $operator = $caseSensitive ? 'LIKE' : 'ILIKE';
+            $q->whereRaw("content {$operator} ?", ['%' . $text . '%']);
+        });
+    }
+
     public function whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch): self
     {
         return $this
