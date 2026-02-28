@@ -69,6 +69,21 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
 
             $postprocessorOptions = $process->context['postprocessor'] ?? [];
 
+            if (!empty($postprocessorOptions['assign_tags'])) {
+                $tagTypeModel = config('tags.tag_type_model', \SimoneBianco\LaravelSimpleTags\TagType::class);
+                $tagsByType = $tagTypeModel::where('project_id', $document->project_id)
+                    ->where('ai_assign', true)
+                    ->with(['tags' => fn ($q) => $q->select('id', 'tag_type_id', 'name', 'slug')])
+                    ->get()
+                    ->filter(fn ($type) => $type->tags->isNotEmpty())
+                    ->mapWithKeys(fn ($type) => [$type->alias => $type->tags->pluck('name')->toArray()])
+                    ->toArray();
+
+                if (!empty($tagsByType)) {
+                    $postprocessorOptions['tags_by_type'] = $tagsByType;
+                }
+            }
+
             try {
                 $postProcessedContext = $parser->postProcess(
                     $document->description,

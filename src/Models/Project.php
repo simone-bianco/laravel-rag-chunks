@@ -7,12 +7,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
 use SimoneBianco\LaravelRagChunks\Database\Factories\ProjectFactory;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 
 class Project extends Model
 {
-    use HasFactory, HasTags, HasUuids;
+    use HasFactory, HasProcesses, HasTags, HasUuids;
 
     protected static function newFactory()
     {

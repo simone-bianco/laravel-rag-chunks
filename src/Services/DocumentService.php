@@ -81,6 +81,7 @@ class DocumentService
         $readStream = $this->fileService->readStream($relativeJsonlPath);
         $chunksBuffer = [];
         $figuresBuffer = [];
+        $deterministicTagsBuffer = []; // chunkId => {typeAlias => [slugs]}
         $index = 1;
         while (($line = fgets($readStream)) !== false) {
             $line = str_replace(["\u{0000}", '\\u0000'], '', $line);
@@ -94,6 +95,10 @@ class DocumentService
 
             if ($figurePath = $data->figurePath) {
                 $figuresBuffer[$id] = $figurePath;
+            }
+
+            if (!empty($data->deterministicTags)) {
+                $deterministicTagsBuffer[$id] = $data->deterministicTags;
             }
 
             $data = [
@@ -124,8 +129,14 @@ class DocumentService
                     $this->attachFiguresToChunks($figuresBuffer);
                 }
             });
+
+            if (!empty($deterministicTagsBuffer)) {
+                $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
+            }
+
             $chunksBuffer = [];
             $figuresBuffer = [];
+            $deterministicTagsBuffer = [];
         }
 
         if (!empty($chunksBuffer)) {
@@ -136,9 +147,85 @@ class DocumentService
                     $this->attachFiguresToChunks($figuresBuffer);
                 }
             });
+
+            if (!empty($deterministicTagsBuffer)) {
+                $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
+            }
         }
 
         return $document;
+    }
+
+    /**
+     * Attach deterministic tags (from AI assignment) to their chunks via the taggables table.
+     *
+     * @param Document $document
+     * @param array<string, array<string, string[]>> $tagMap  chunkId => {typeAlias => [slugs]}
+     */
+    protected function attachDeterministicTagsToChunks(Document $document, array $tagMap): void
+    {
+        $tagTypeModel = config('tags.tag_type_model', \SimoneBianco\LaravelSimpleTags\TagType::class);
+        $tagModel = config('tags.tag_model', \SimoneBianco\LaravelSimpleTags\Tag::class);
+
+        $aliases = array_unique(array_merge(...array_map(fn ($t) => array_keys($t), array_values($tagMap))));
+
+        $typeAliasToId = $tagTypeModel::where('project_id', $document->project_id)
+            ->whereIn('alias', $aliases)
+            ->pluck('id', 'alias')
+            ->toArray();
+
+        if (empty($typeAliasToId)) {
+            return;
+        }
+
+        // Collect all slugs needed per type
+        $slugsByTypeId = [];
+        foreach ($tagMap as $deterministicTags) {
+            foreach ($deterministicTags as $alias => $slugs) {
+                $typeId = $typeAliasToId[$alias] ?? null;
+                if ($typeId) {
+                    $slugsByTypeId[$typeId] = array_unique(array_merge($slugsByTypeId[$typeId] ?? [], $slugs));
+                }
+            }
+        }
+
+        // Load tag id maps per type
+        $tagIdMap = []; // {typeId => {slug => tagId}}
+        foreach ($slugsByTypeId as $typeId => $slugs) {
+            $tagIdMap[$typeId] = $tagModel::where('tag_type_id', $typeId)
+                ->whereIn('slug', $slugs)
+                ->pluck('id', 'slug')
+                ->toArray();
+        }
+
+        // Build taggables rows
+        $taggableRows = [];
+        $taggableTable = config('tags.taggable.table_name', 'taggables');
+        $morphName = config('tags.taggable.morph_name', 'taggable');
+        $morphType = (new Chunk)->getMorphClass();
+
+        foreach ($tagMap as $chunkId => $deterministicTags) {
+            foreach ($deterministicTags as $alias => $slugs) {
+                $typeId = $typeAliasToId[$alias] ?? null;
+                if (!$typeId) {
+                    continue;
+                }
+                foreach ($slugs as $slug) {
+                    $tagId = $tagIdMap[$typeId][$slug] ?? null;
+                    if ($tagId) {
+                        $taggableRows[] = [
+                            'tag_id'             => $tagId,
+                            "{$morphName}_id"    => $chunkId,
+                            "{$morphName}_type"  => $morphType,
+                        ];
+                    }
+                }
+            }
+        }
+
+        if (!empty($taggableRows)) {
+            DB::table($taggableTable)->insertOrIgnore($taggableRows);
+        }
     }
 
     /**

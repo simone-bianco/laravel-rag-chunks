@@ -95,19 +95,19 @@ class PostProcessingAgent extends Agent
             $contentDescription .= ' STRICTLY FORBIDDEN to include meta-commentary like "These chunks describe...", "Here is...", or "This text covers...". Start IMMEDIATELY with the source text.';
         }
 
-        $tagsSchema = [];
+        $deterministicTagProperties = [];
+        $deterministicTagRequired = [];
         if (!empty($this->tagsByType)) {
             foreach ($this->tagsByType as $type => $tags) {
-                $tagsSchema[] = [
-                    "tags_$type" => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'enum',
-                            'description' => "Deterministic tag of type $type used to hard filter in RAG retrieval",
-                            'enum' => $tags
-                        ]
-                    ]
+                $deterministicTagProperties["tags_$type"] = [
+                    'type' => 'array',
+                    'description' => "Deterministic tags of type '$type'. MUST pick ONLY from the provided enum values. Leave empty if none apply.",
+                    'items' => [
+                        'type' => 'string',
+                        'enum' => $tags,
+                    ],
                 ];
+                $deterministicTagRequired[] = "tags_$type";
             }
         }
 
@@ -118,35 +118,36 @@ class PostProcessingAgent extends Agent
                 'chunks' => [
                     'type' => 'array',
                     'description' => 'Dynamically processed chunks, forming highly cohesive atomic semantic units.',
-                    'items' => [...$tagsSchema, ...[
+                    'items' => [
                         'type' => 'object',
                         'properties' => [
                             'content' => [
                                 'type' => 'string',
-                                'description' => $contentDescription
+                                'description' => $contentDescription,
                             ],
                             'tags' => [
                                 'type' => 'array',
                                 'description' => 'List of 5 to 10 semantic tags for RAG retrieval. CRITICAL: The main subject/entity of the chunk MUST be included as a tag (e.g., "aboleth"). Must be strictly LOWERCASE and SLUG_CASE (e.g., "aboleth", "lair_actions"). Tag both the subject and the action/event. Do not generate fewer than 5 tags.',
-                                'items' => ['type' => 'string']
+                                'items' => ['type' => 'string'],
                             ],
                             'questions' => [
                                 'type' => 'array',
                                 'description' => 'List of 3 to 5 reverse-engineered questions that this specific chunk answers perfectly. CRITICAL: Every single question MUST explicitly include the subject or entity name of the chunk. Do not generate fewer than 3 questions.',
-                                'items' => ['type' => 'string']
+                                'items' => ['type' => 'string'],
                             ],
                             'figure_path' => [
                                 'type' => 'string',
-                                'description' => 'The path to the figure/image. Return an empty string "" if there is no relevant figure.'
+                                'description' => 'The path to the figure/image. Return an empty string "" if there is no relevant figure.',
                             ],
-                        ]],
-                        'required' => [...['content', 'tags', 'questions', 'figure_path'], ...array_keys($tagsSchema)],
-                        'additionalProperties' => false
-                    ]
+                            ...$deterministicTagProperties,
+                        ],
+                        'required' => ['content', 'tags', 'questions', 'figure_path', ...$deterministicTagRequired],
+                        'additionalProperties' => false,
+                    ],
                 ],
             ],
             'required' => ['chunks'],
-            'additionalProperties' => false
+            'additionalProperties' => false,
         ];
     }
 

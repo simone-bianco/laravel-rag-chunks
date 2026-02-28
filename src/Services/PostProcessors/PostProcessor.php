@@ -74,7 +74,8 @@ class PostProcessor
                 tagsEmbedding: $existingEmbeddings[$item['tags_hash']] ?? null,
                 questions: $item['questions'],
                 questionsHash: $item['questions_hash'],
-                questionsEmbedding: $existingEmbeddings[$item['questions_hash']] ?? null
+                questionsEmbedding: $existingEmbeddings[$item['questions_hash']] ?? null,
+                deterministicTags: $item['deterministic_tags'] ?? null,
             );
 
             $this->fileService->writeOnStream(
@@ -117,6 +118,7 @@ class PostProcessor
             ->withContextInjection($agentOptions['context_injection'] ?? false)
             ->withSummarization($agentOptions['summarization'] ?? false)
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
+            ->withTagsByType($agentOptions['tags_by_type'] ?? [])
             ->respond();
 
         $buffer = [];
@@ -135,6 +137,15 @@ class PostProcessor
             // Recuperiamo il figure_path che l'AI ha deciso di associare a questo chunk dinamico
             $figurePath = !empty($aiData['figure_path']) ? $aiData['figure_path'] : null;
 
+            // Estrai i tag deterministici (tags_$type) se assign_tags era abilitato
+            $deterministicTags = null;
+            foreach (array_keys($agentOptions['tags_by_type'] ?? []) as $type) {
+                $fieldKey = "tags_$type";
+                if (!empty($aiData[$fieldKey])) {
+                    $deterministicTags[$type] = $aiData[$fieldKey];
+                }
+            }
+
             $buffer[] = [
                 'text' => $content,
                 'figure_path' => $figurePath,
@@ -143,6 +154,7 @@ class PostProcessor
                 'tags_hash' => HashService::hash(implode(',', $tags)),
                 'questions' => $questions,
                 'questions_hash' => HashService::hash(implode('?', $questions)),
+                'deterministic_tags' => $deterministicTags,
             ];
         }
 
