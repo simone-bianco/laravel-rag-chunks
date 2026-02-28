@@ -11,6 +11,8 @@ use Throwable;
 
 class DispatchParsingJob extends BaseDocumentParsingJob
 {
+    public int $tries = 4;
+
     public function backoff(): array
     {
         return [10, 30, 60];

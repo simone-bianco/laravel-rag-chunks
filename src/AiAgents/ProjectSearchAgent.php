@@ -18,7 +18,7 @@ class ProjectSearchAgent extends Agent
 
     protected Project $project;
 
-    protected $model = 'gpt-4.1-mini';
+    protected $model = 'gpt-5-mini';
 
     protected $parallelToolCalls = true;
 
