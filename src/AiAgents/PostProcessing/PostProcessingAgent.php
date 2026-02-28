@@ -20,6 +20,7 @@ class PostProcessingAgent extends Agent
     protected bool $contextInjection = false;
     protected bool $summarization = false;
     protected string $extraInstruction = '';
+    protected array $tagsByType = [];
 
     public function __construct(string $key, array $injectConfig = [])
     {
@@ -74,6 +75,12 @@ class PostProcessingAgent extends Agent
         return $this;
     }
 
+    public function withTagsByType(array $tagsByType = []): self
+    {
+        $this->tagsByType = $tagsByType;
+        return $this;
+    }
+
     protected function getResponseSchema(): array
     {
         if ($this->summarization) {
@@ -88,6 +95,22 @@ class PostProcessingAgent extends Agent
             $contentDescription .= ' STRICTLY FORBIDDEN to include meta-commentary like "These chunks describe...", "Here is...", or "This text covers...". Start IMMEDIATELY with the source text.';
         }
 
+        $tagsSchema = [];
+        if (!empty($this->tagsByType)) {
+            foreach ($this->tagsByType as $type => $tags) {
+                $tagsSchema[] = [
+                    "tags_$type" => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'enum',
+                            'description' => "Deterministic tag of type $type used to hard filter in RAG retrieval",
+                            'enum' => $tags
+                        ]
+                    ]
+                ];
+            }
+        }
+
         return [
             'type' => 'object',
             'description' => 'List of dynamically sized, ordered chunks with questions and tags',
@@ -95,7 +118,7 @@ class PostProcessingAgent extends Agent
                 'chunks' => [
                     'type' => 'array',
                     'description' => 'Dynamically processed chunks, forming highly cohesive atomic semantic units.',
-                    'items' => [
+                    'items' => [...$tagsSchema, ...[
                         'type' => 'object',
                         'properties' => [
                             'content' => [
@@ -116,8 +139,8 @@ class PostProcessingAgent extends Agent
                                 'type' => 'string',
                                 'description' => 'The path to the figure/image. Return an empty string "" if there is no relevant figure.'
                             ],
-                        ],
-                        'required' => ['content', 'tags', 'questions', 'figure_path'],
+                        ]],
+                        'required' => [...['content', 'tags', 'questions', 'figure_path'], ...array_keys($tagsSchema)],
                         'additionalProperties' => false
                     ]
                 ],

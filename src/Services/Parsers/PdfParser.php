@@ -185,7 +185,7 @@ class PdfParser implements DocumentParserInterface
      * @throws InvalidFileException
      * @throws PostProcessingException
      */
-    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 10): ParsingContextDTO
+    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 10, array $agentOptions = []): ParsingContextDTO
     {
         if (!$this->fileService->exists($context->relativeRefinedPath)) {
             throw new InvalidFileException("$context->relativeRefinedPath does not exist");
@@ -200,7 +200,8 @@ class PdfParser implements DocumentParserInterface
             $context->relativeRefinedPath,
             $relativePostProcessedOutputPath,
             $documentContext,
-            $batchSize
+            $batchSize,
+            $agentOptions
         );
 
         $context->relativePostProcessedPath = $relativePostProcessedOutputPath;

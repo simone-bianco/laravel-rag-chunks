@@ -92,7 +92,8 @@ class PostProcessor
     protected function runAgentAndPrepareBuffer(
         array $pendingItems,
         string $relativeDirPath,
-        ?string $documentContext
+        ?string $documentContext,
+        array $agentOptions = []
     ): array {
         if (empty($pendingItems)) {
             return [];
@@ -107,11 +108,15 @@ class PostProcessor
             ];
         }, $pendingItems);
 
-        // Istanzia e chiama l'agent
-        $postProcessingAgent = new PostProcessingAgent(Str::random());
+        // Istanzia e chiama l'agent con le opzioni del context del processo
+        $postProcessingAgent = new PostProcessingAgent(Str::random(), $agentOptions);
         $agentResponse = $postProcessingAgent
             ->withDocumentContext($documentContext)
             ->withChunks($chunksPayload)
+            ->withPreferredChunkLength($agentOptions['preferred_chunk_length'] ?? 600)
+            ->withContextInjection($agentOptions['context_injection'] ?? false)
+            ->withSummarization($agentOptions['summarization'] ?? false)
+            ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->respond();
 
         $buffer = [];
@@ -157,7 +162,8 @@ class PostProcessor
         string $relativeSourcePath,
         string $relativeOutputPath,
         ?string $documentContext = '',
-        int $batchSize = 10
+        int $batchSize = 10,
+        array $agentOptions = []
     ): void {
         $embedder = EmbeddingFactory::make();
 
@@ -197,7 +203,7 @@ class PostProcessor
 
                 // Se il batch è pieno, processalo
                 if (count($pendingBatch) >= $batchSize) {
-                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext);
+                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
                     $pendingBatch = []; // Reset batch
                 }
@@ -205,7 +211,7 @@ class PostProcessor
 
             // Processa eventuali elementi rimasti nel batch
             if (!empty($pendingBatch)) {
-                $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext);
+                $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
                 $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
             }
 
@@ -214,7 +220,7 @@ class PostProcessor
             if (isset($writeStream) && isset($embedder) && !empty($pendingBatch)) {
                 try {
                     // Proviamo a processare quello che è rimasto, se possibile
-                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath ?? '', $documentContext);
+                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath ?? '', $documentContext, $agentOptions);
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
                 } catch (Throwable $rescueException) {
                     // Ignoriamo errori nel rescue per non oscurare l'errore originale

@@ -67,11 +67,14 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
 
+            $postprocessorOptions = $process->context['postprocessor'] ?? [];
+
             try {
                 $postProcessedContext = $parser->postProcess(
                     $document->description,
                     $parser->contextFromArray($process->context),
-                    config('rag_chunks.agents.postprocessor.batch_size', 10)
+                    config('rag_chunks.agents.postprocessor.batch_size', 10),
+                    $postprocessorOptions
                 );
             } catch (PostProcessingException $exception) {
                 if ($exception->isRetryable()) {

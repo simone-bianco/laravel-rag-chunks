@@ -47,7 +47,7 @@ interface DocumentParserInterface
      * @throws PostProcessingException
      * @throws InvalidEmbeddingDriverException
      */
-    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 20): ParsingContextDTO;
+    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 20, array $agentOptions = []): ParsingContextDTO;
 
     /**
      * @throws FileNotFoundException
