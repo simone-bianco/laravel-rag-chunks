@@ -101,7 +101,7 @@ class PostProcessingAgent extends Agent
             foreach ($this->tagsByType as $type => $tags) {
                 $deterministicTagProperties["tags_$type"] = [
                     'type' => 'array',
-                    'description' => "Deterministic tags of type '$type'. MUST pick ONLY from the provided enum values. Leave empty if none apply.",
+                    'description' => "Deterministic tags of type '$type'. MUST pick ONLY from the provided slug enum values (kebab-case identifiers). Leave empty if none apply.",
                     'items' => [
                         'type' => 'string',
                         'enum' => $tags,

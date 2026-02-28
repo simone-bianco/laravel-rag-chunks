@@ -53,6 +53,7 @@ class ChunkService
             ->with([
                 'document',
                 'dedupMedia',
+                'tags.tagType',
                 'outgoingRelations.to_entity',
                 'incomingRelations' => function ($q) {
                     $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
@@ -81,6 +82,7 @@ class ChunkService
             );
 
         $paginator->through(function (Chunk $chunk) use ($searchData) {
+            $this->extractClassicTags($chunk);
             $chunk->image_url = $chunk->getFirstMedia()?->getUrl();
             $chunk->makeHidden(['dedup_media']);
 
@@ -116,6 +118,7 @@ class ChunkService
             ->select('*')
             ->with([
                 'dedupMedia',
+                'tags.tagType',
                 'outgoingRelations.to_entity',
                 'incomingRelations' => function ($q) {
                     $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
@@ -157,8 +160,20 @@ class ChunkService
      * Transform a collection of chunks for frontend consumption:
      * adds image_url, hides embeddings, serializes relations.
      */
+    /**
+     * Bulk-load classic tags and extract them to `classic_tags` grouped by type.
+     * Safe to call on both Eloquent collections and on individually transformed chunks.
+     */
+    public function attachClassicTags(Collection $chunks): void
+    {
+        $chunks->loadMissing('tags.tagType');
+        $chunks->each(fn ($chunk) => $this->extractClassicTags($chunk));
+    }
+
     public function transformForFrontend(Collection $chunks): Collection
     {
+        $this->attachClassicTags($chunks);
+
         return $chunks->transform(function (Chunk $chunk) {
             $chunk->image_url = $chunk->getFirstMedia()?->getUrl();
             unset($chunk->embedding, $chunk->tags_embedding, $chunk->questions_embedding);
@@ -197,6 +212,33 @@ class ChunkService
 
             return $chunk;
         });
+    }
+
+    /**
+     * Move the loaded `tags` relation (classic/deterministic tags) to `classic_tags`
+     * grouped by type, so it doesn't shadow the `tags` JSON column (semantic tags).
+     *
+     * Output: [{type_alias, type_label, tags: [{name, slug}]}]
+     */
+    private function extractClassicTags(Chunk $chunk): void
+    {
+        if ($chunk->relationLoaded('tags')) {
+            $chunk->classic_tags = $chunk->getRelation('tags')
+                ->groupBy('tag_type_id')
+                ->map(function ($tags) {
+                    $tagType = $tags->first()->relationLoaded('tagType') ? $tags->first()->tagType : null;
+                    return [
+                        'type_alias' => $tagType?->alias ?? '',
+                        'type_label' => $tagType?->label ?? '',
+                        'tags'       => $tags->map(fn ($t) => ['name' => $t->name, 'slug' => $t->slug])->values()->all(),
+                    ];
+                })
+                ->values()
+                ->all();
+            $chunk->unsetRelation('tags');
+        } else {
+            $chunk->classic_tags = [];
+        }
     }
 
     private function serializeRelationEntity(Model $entity): array

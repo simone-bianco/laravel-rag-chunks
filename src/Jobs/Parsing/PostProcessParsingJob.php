@@ -76,7 +76,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                     ->with(['tags' => fn ($q) => $q->select('id', 'tag_type_id', 'name', 'slug')])
                     ->get()
                     ->filter(fn ($type) => $type->tags->isNotEmpty())
-                    ->mapWithKeys(fn ($type) => [$type->alias => $type->tags->pluck('name')->toArray()])
+                    ->mapWithKeys(fn ($type) => [$type->alias => $type->tags->pluck('slug')->toArray()])
                     ->toArray();
 
                 if (!empty($tagsByType)) {

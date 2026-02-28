@@ -56,7 +56,7 @@ class FileService
     {
         $targetAbsolutePath = $this->getAbsolutePath($targetRelativePath);
 
-        rename($sourceAbsolutePath, $targetAbsolutePath);
+        copy($sourceAbsolutePath, $targetAbsolutePath);
     }
 
     public function generateTempDirPath(?string $dirName = null): string
@@ -88,6 +88,11 @@ class FileService
     public function getAbsolutePath(string $relativePath): string
     {
         return $this->storage->path($relativePath);
+    }
+
+    public function get(string $relativePath): ?string
+    {
+        return $this->storage->get($relativePath);
     }
 
     public function put(string $relativeFilePath, string $content): string
