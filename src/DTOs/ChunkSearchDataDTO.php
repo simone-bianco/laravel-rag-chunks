@@ -23,6 +23,8 @@ class ChunkSearchDataDTO
         public ?array      $chunksIds = null,
         public bool        $includeEmbeddings = false,
         public bool        $includePageUrls = false,
+        // chunk-level classic tag filter: typeAlias => tagIds[]
+        public ?array      $chunkTagGroups = null,
     ) {
         $this->tagFilters ??= collect();
     }
@@ -43,6 +45,7 @@ class ChunkSearchDataDTO
             tagFilters: isset($data['tagFilters']) ? collect($data['tagFilters']) : null,
             documentsAliases: $data['documentsAliases'] ?? null,
             chunksIds: $data['chunksIds'] ?? null,
+            chunkTagGroups: $data['chunkTagGroups'] ?? null,
         );
     }
 

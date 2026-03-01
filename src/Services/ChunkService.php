@@ -66,6 +66,7 @@ class ChunkService
             ->whereBasicFilters($searchData->chunksIds, $searchData->textSearch, $searchData->keywordsSearch)
             ->whereAliases($searchData->documentsAliases, $searchData->projectsAliases)
             ->whereTagFilters($searchData->tagFilters)
+            ->whereChunkTags($searchData->chunkTagGroups)
             ->withHybridRanking(
                 contentVector: $contentVector,
                 questionsVector: $questionsVector,
@@ -166,7 +167,24 @@ class ChunkService
      */
     public function attachClassicTags(Collection $chunks): void
     {
-        $chunks->loadMissing('tags.tagType');
+        $chunksWithoutTags = $chunks->reject(fn ($chunk) => $chunk->relationLoaded('tags'));
+        if ($chunksWithoutTags->isNotEmpty()) {
+            $chunksWithoutTags->load('tags');
+        }
+
+        $allTags = new \Illuminate\Database\Eloquent\Collection();
+        foreach ($chunks as $chunk) {
+            if ($chunk->relationLoaded('tags')) {
+                foreach ($chunk->getRelation('tags') as $tag) {
+                    $allTags->push($tag);
+                }
+            }
+        }
+
+        if ($allTags->isNotEmpty()) {
+            $allTags->loadMissing('tagType');
+        }
+
         $chunks->each(fn ($chunk) => $this->extractClassicTags($chunk));
     }
 

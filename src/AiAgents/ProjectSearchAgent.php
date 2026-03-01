@@ -30,7 +30,6 @@ class ProjectSearchAgent extends Agent
     public function __construct($key, string $projectAlias, bool $usesUserId = false, ?string $group = null)
     {
         $this->project = Project::query()
-            ->select(['alias', 'name', 'description'])
             ->where('alias', $projectAlias)
             ->firstOrFail();
 
@@ -46,12 +45,18 @@ class ProjectSearchAgent extends Agent
 
     public function instructions(): string
     {
+        $projectInstructions = $this->project->settings?->search_agent_instructions;
+        $projectInstructionsBlock = !empty($projectInstructions)
+            ? "\n### PROJECT-SPECIFIC INSTRUCTIONS\n{$projectInstructions}\n"
+            : '';
+
         return <<<INSTRUCTIONS
 You are a specialized **RAG Retrieval Agent**.
 Your goal is to perform a **Hybrid Search** that maximizes the probability of finding the exact answer to the user's request within the database chunks.
 
 **Project Context**
 You are working on: "{$this->project->name}: {$this->project->description}".
+$projectInstructionsBlock
 
 **SEARCH STRATEGY PROTOCOL**
 Call `search_chunks` carefully mapping the user's intent to the tool parameters:

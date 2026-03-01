@@ -153,7 +153,79 @@ class DocumentService
             }
         }
 
+        // Apply inherited tags from document metadata (set at parse-time via ParseDocumentModal)
+        $metadata = $document->fresh()->metadata ?? [];
+        $inheritedClassicTags = $metadata['chunk_classic_tags'] ?? [];
+        $inheritedSemanticTags = $metadata['chunk_semantic_tags'] ?? [];
+
+        if (!empty($inheritedClassicTags)) {
+            $this->attachInheritedClassicTagsToAllChunks($document, $inheritedClassicTags);
+        }
+        if (!empty($inheritedSemanticTags)) {
+            $this->mergeSemanticTagsToAllChunks($document, $inheritedSemanticTags);
+        }
+
         return $document;
+    }
+
+    /**
+     * Apply inherited classic tags (from document metadata) to ALL chunks of the document.
+     * Input format: { tagTypeId (int or string) => [tagIds] }
+     */
+    protected function attachInheritedClassicTagsToAllChunks(Document $document, array $tagsByTypeId): void
+    {
+        $allTagIds = array_values(array_unique(array_merge(...array_values(array_filter($tagsByTypeId)))));
+        if (empty($allTagIds)) {
+            return;
+        }
+
+        $chunkIds = Chunk::where('document_id', $document->id)->pluck('id')->toArray();
+        if (empty($chunkIds)) {
+            return;
+        }
+
+        $taggableTable = config('tags.taggable.table_name', 'taggables');
+        $morphName = config('tags.taggable.morph_name', 'taggable');
+        $morphType = (new Chunk)->getMorphClass();
+
+        $rows = [];
+        foreach ($chunkIds as $chunkId) {
+            foreach ($allTagIds as $tagId) {
+                $rows[] = [
+                    'tag_id'             => $tagId,
+                    "{$morphName}_id"    => $chunkId,
+                    "{$morphName}_type"  => $morphType,
+                ];
+            }
+        }
+
+        // Batch insert to avoid huge single INSERT; insertOrIgnore for idempotency
+        foreach (array_chunk($rows, 500) as $batch) {
+            DB::table($taggableTable)->insertOrIgnore($batch);
+        }
+    }
+
+    /**
+     * Merge inherited semantic tags into the `tags` JSON column of ALL document chunks.
+     * Uses array_unique so existing tags are never duplicated.
+     */
+    protected function mergeSemanticTagsToAllChunks(Document $document, array $semanticTags): void
+    {
+        if (empty($semanticTags)) {
+            return;
+        }
+
+        Chunk::where('document_id', $document->id)
+            ->select(['id', 'tags'])
+            ->chunkById(200, function ($chunks) use ($semanticTags) {
+                foreach ($chunks as $chunk) {
+                    $existing = $chunk->tags ?? [];
+                    $merged = array_values(array_unique(array_merge($existing, $semanticTags)));
+                    if ($merged !== $existing) {
+                        Chunk::where('id', $chunk->id)->update(['tags' => json_encode($merged, JSON_UNESCAPED_UNICODE)]);
+                    }
+                }
+            });
     }
 
     /**

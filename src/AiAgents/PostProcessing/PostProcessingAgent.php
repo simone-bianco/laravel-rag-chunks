@@ -2,15 +2,19 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
+use Illuminate\Support\Facades\Context;
 use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use RuntimeException;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SetContext;
 use TypeError;
 
 class PostProcessingAgent extends Agent
 {
+    protected const string CONTEXT_KEY = 'postprocessing_context';
+
     protected $history = CacheStorage::class;
     protected array $chunks = [];
     protected $mcpServers = [];
@@ -21,10 +25,20 @@ class PostProcessingAgent extends Agent
     protected bool $summarization = false;
     protected string $extraInstruction = '';
     protected array $tagsByType = [];
+    protected string $agentKey = '';
 
-    public function __construct(string $key, array $injectConfig = [])
-    {
+    public function __construct(
+        string $key,
+        array $injectConfig = [],
+        protected bool $trackContext = true,
+    ) {
         parent::__construct($key);
+
+        $this->agentKey = $key;
+
+        if ($this->trackContext) {
+            $this->withTool(new SetContext(self::CONTEXT_KEY));
+        }
 
         $config = config('rag_chunks.agents.postprocessor', []);
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
@@ -153,29 +167,47 @@ class PostProcessingAgent extends Agent
 
     public function instructions(): string
     {
-        // Regola dinamica per la Context Injection
         $contextRule = $this->contextInjection
             ? "6. **CONTEXT INJECTION**: For highly abstract data (e.g., an isolated stat table), prepend a brief clarifying context to the `content`."
             : "6. **NO META-COMMENTARY (CRITICAL)**: NEVER start the `content` with conversational phrases like \"These chunks describe...\". Start immediately with the raw text.";
 
-        // Regola dinamica per la Summarization
         $summarizationRule = $this->summarization
             ? "1. **SUMMARIZE CONTENT**: Condense the text to its core semantic meaning to save space. Discard fluff. However, you MUST STILL preserve numerical data, stats, and symbols EXACTLY."
             : "1. **ZERO SUMMARIZATION**: Preserve all sentences, numerical data, stats, and symbols EXACTLY as written.";
 
-        // Blocco opzionale per le Extra Instructions
         $extraInstructionsBlock = !empty($this->extraInstruction)
             ? "\n### EXTRA INSTRUCTIONS\n{$this->extraInstruction}\n"
             : "";
 
-        // Calcoliamo una stima in parole
         $estimatedWords = (int)($this->preferredChunkLength / 6);
+
+        $contextKey = "{$this->agentKey}_" . self::CONTEXT_KEY;
+        $savedContext = Context::getHidden($contextKey);
+
+        $contextBlock = '';
+        if ($this->trackContext) {
+            logger()->debug('Found context: ' . $savedContext);
+
+            $activeContextBlock = !empty($savedContext)
+                ? "### CURRENT ACTIVE CONTEXT (From previous iterations)\n{$savedContext}\n"
+                : "### CURRENT ACTIVE CONTEXT\nNone yet.\n";
+            $contextBlock = <<<CONTEXT
+$activeContextBlock
+### STATE & CONTEXT MANAGEMENT (CRITICAL)
+You have access to a tool to set the context for the NEXT processing iteration. You MUST use this tool frequently whenever you detect structural metadata in the current text (e.g., a new Chapter heading, Section title, or major entity shift).
+- **Purpose**: To inform the next agent iteration where we are in the document, ensuring consistent tagging and context across chunk boundaries.
+- **What to Save**: Store brief, hierarchical markers (e.g., "Current Chapter: Chapter 3 - Spells", "Current Subject: Adult Red Dragon"). You may add minor extra info, but DO NOT overdo it. Keep it concise to avoid confusing the next iteration.
+- **Updating & Flushing**: The current context is passed to you above in `CURRENT ACTIVE CONTEXT`. If the chunks you are processing move into a new chapter/section, the old context is no longer valid. You MUST call the tool to overwrite and replace the old context with the new structural location. If the context needs to be completely cleared, overwrite it using the tool. You are entirely responsible for keeping this cross-iteration state accurate and up-to-date.
+CONTEXT;
+        }
 
         return <<<INSTRUCTIONS
 ### PERSONA
 You are an expert optimizer and dynamic chunker for RAG systems.
 
 $this->documentContext
+
+$contextBlock
 
 ### GOAL & DYNAMIC CHUNKING
 Analyze the provided raw chunks. Clean, merge, or split them to form highly cohesive, atomic semantic units.

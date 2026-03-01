@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
+use SimoneBianco\LaravelRagChunks\Casts\ProjectSettingsCast;
 use SimoneBianco\LaravelRagChunks\Database\Factories\ProjectFactory;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 
@@ -29,7 +30,7 @@ class Project extends Model
     ];
 
     protected $casts = [
-        'settings' => 'array',
+        'settings' => ProjectSettingsCast::class,
     ];
 
     public function getTagsSlugsKeyedByTypes(): array

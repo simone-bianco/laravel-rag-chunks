@@ -27,12 +27,14 @@ class SearchInProject extends Tool
                 'type' => 'string',
                 'description' => 'A detailed search query to find relevant chunks',
             ],
-            'required' => [
-                'project_alias',
-                'search_query',
-            ],
-            'additionalProperties' => false,
         ];
+    }
+
+    protected array $required = ['project_alias', 'search_query'];
+
+    public function execute(array $input): mixed
+    {
+        return $this->handle($input);
     }
 
     protected function handle(array|DataModel $input): mixed
