@@ -53,7 +53,7 @@ class SearchChunks extends Tool
         foreach ($tagsByType as $alias => $slugs) {
             $tagProperties["tag_{$alias}"] = [
                 'type' => 'array',
-                'description' => "Hard filter: restrict results to chunks tagged with at least one of these \"{$alias}\" tags. Use ONLY when the user explicitly wants to filter by this category.",
+                'description' => "CRITICAL: Hard filter for category '{$alias}'. Look closely at the available enum values.",
                 'items' => [
                     'type' => 'string',
                     'enum' => $slugs,
@@ -68,7 +68,7 @@ class SearchChunks extends Tool
             ],
             'perPage' => [
                 'type' => 'integer',
-                'description' => 'Number of results per page',
+                'description' => 'Number of results per page, use 5 by default',
                 'enum' => [5, 10, 15],
             ],
             'keywordsSearch' => [

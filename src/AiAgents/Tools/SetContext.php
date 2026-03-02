@@ -26,14 +26,33 @@ class SetContext extends Tool
     public function getProperties(): array
     {
         return [
-            'text' => [
+            'chapter' => [
                 'type' => 'string',
-                'description' => 'The brief, hierarchical context data to save (e.g., "Chapter 3: Spells - Subject: Wizard"). Keep it concise.',
+                'description' => 'The brief, hierarchical context data to save (e.g., "Chapter 3: Core Concepts - Subject: Routing"). Keep it concise.',
             ],
+            'cache_memory' => [
+                'type' => 'array',
+                'description' => 'A list of relevant short cache memories, keep only the ones that may be relevant next; keep not more than 5-10 memories',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'content' => [
+                            'type' => 'string',
+                            'description' => 'Memory content'
+                        ],
+                        'was_relevant' => [
+                            'type' => 'string',
+                            'description' => 'If this memory was relevant in this iteration, then set to yes; if not, set to no',
+                            'enum' => ['yes', 'no']
+                        ]
+                    ],
+                    'required' => ['content', 'was_relevant']
+                ]
+            ]
         ];
     }
 
-    protected array $required = ['text'];
+    protected array $required = ['chapter', 'cache_memory'];
 
     public function execute(array $input): mixed
     {
@@ -42,7 +61,8 @@ class SetContext extends Tool
 
     protected function handle(array|DataModel $input): mixed
     {
-        $textToSave = $input['text'] ?? 'None';
+        $data = $input instanceof DataModel ? $input->toArray() : $input;
+        $textToSave = json_encode($data);
 
         Context::addHidden($this->contextKey, $textToSave);
 

@@ -116,6 +116,7 @@ class PostProcessor
             ->withChunks($chunksPayload)
             ->withPreferredChunkLength($agentOptions['preferred_chunk_length'] ?? 600)
             ->withContextInjection($agentOptions['context_injection'] ?? false)
+            ->withCleanText($agentOptions['clean_text'] ?? false)
             ->withSummarization($agentOptions['summarization'] ?? false)
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->withTagsByType($agentOptions['tags_by_type'] ?? [])

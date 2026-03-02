@@ -22,6 +22,7 @@ class PostProcessingAgent extends Agent
     protected array $config = [];
     protected int $preferredChunkLength = 600;
     protected bool $contextInjection = false;
+    protected bool $cleanText = false;
     protected bool $summarization = false;
     protected string $extraInstruction = '';
     protected array $tagsByType = [];
@@ -55,6 +56,12 @@ class PostProcessingAgent extends Agent
     public function withPreferredChunkLength(int $length): self
     {
         $this->preferredChunkLength = $length;
+        return $this;
+    }
+
+    public function withCleanText(bool $cleanText = false): self
+    {
+        $this->cleanText = $cleanText;
         return $this;
     }
 
@@ -97,10 +104,12 @@ class PostProcessingAgent extends Agent
 
     protected function getResponseSchema(): array
     {
-        if ($this->summarization) {
-            $contentDescription = 'The condensed, summarized text of the chunk. Extract the core semantic meaning. You MUST still preserve crucial numerical data and stat blocks exactly. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+        if ($this->cleanText && $this->summarization) {
+            $contentDescription = 'The cleaned and summarized text of the chunk. Remove OCR garbage, stray page numbers, and artifacts, then condense to core meaning. Stats and numbers are always preserved. NEVER remove entities, proper nouns, technical terms, code snippets, or numerical data. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+        } elseif ($this->cleanText) {
+            $contentDescription = 'The cleaned text of the chunk. Remove OCR noise (broken page breaks, stray page numbers, garbled characters) but NEVER alter content, rephrase, condense, or summarize. Preserve all terminology, entities, and meaning 100% faithfully. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         } else {
-            $contentDescription = 'The raw, unsummarized text of the chunk. You MUST strictly preserve all newlines (\n), tabs, formatting, numerical data, and stat blocks. NEVER summarize. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+            $contentDescription = 'The exact, unmodified text of the chunk. ABSOLUTELY FORBIDDEN to alter, clean, remove, or rephrase ANY part of the text. Copy it verbatim. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         }
 
         if ($this->contextInjection) {
@@ -141,7 +150,7 @@ class PostProcessingAgent extends Agent
                             ],
                             'tags' => [
                                 'type' => 'array',
-                                'description' => 'List of 5 to 10 semantic tags for RAG retrieval. CRITICAL: The main subject/entity of the chunk MUST be included as a tag (e.g., "aboleth"). Must be strictly LOWERCASE and SLUG_CASE (e.g., "aboleth", "lair_actions"). Tag both the subject and the action/event. Do not generate fewer than 5 tags.',
+                                'description' => 'List of 5 to 10 semantic tags for RAG retrieval. CRITICAL: The main subject/entity of the chunk MUST be included as a tag. Must be strictly LOWERCASE and SLUG_CASE. Tag both the subject and the action/event. Do not generate fewer than 5 tags.',
                                 'items' => ['type' => 'string'],
                             ],
                             'questions' => [
@@ -168,12 +177,16 @@ class PostProcessingAgent extends Agent
     public function instructions(): string
     {
         $contextRule = $this->contextInjection
-            ? "6. **CONTEXT INJECTION**: For highly abstract data (e.g., an isolated stat table), prepend a brief clarifying context to the `content`."
+            ? "6. **CONTEXT INJECTION**: For highly abstract data (e.g., an isolated table), prepend a brief clarifying context to the `content`."
             : "6. **NO META-COMMENTARY (CRITICAL)**: NEVER start the `content` with conversational phrases like \"These chunks describe...\". Start immediately with the raw text.";
 
-        $summarizationRule = $this->summarization
-            ? "1. **SUMMARIZE CONTENT**: Condense the text to its core semantic meaning to save space. Discard fluff. However, you MUST STILL preserve numerical data, stats, and symbols EXACTLY."
-            : "1. **ZERO SUMMARIZATION**: Preserve all sentences, numerical data, stats, and symbols EXACTLY as written.";
+        if ($this->cleanText && $this->summarization) {
+            $summarizationRule = "1. **CLEAN AND SUMMARIZE**: Remove OCR garbage (broken characters, stray page numbers, garbled text) AND condense to core meaning. STRICTLY FORBIDDEN to remove entities, proper nouns, technical terms, numerical data, or code. Stats and numbers are always preserved.";
+        } elseif ($this->cleanText) {
+            $summarizationRule = "1. **CLEAN ONLY — NO SUMMARIZATION**: Remove OCR noise (broken page breaks, stray page numbers, garbled characters) but NEVER condense, rephrase, or omit any content. Preserve all terminology, entities, and meaning 100% faithfully.";
+        } else {
+            $summarizationRule = "1. **ZERO TEXT MODIFICATION**: Do NOT alter the text in any way. Preserve ALL content EXACTLY as written. Never clean, rephrase, or condense. Only merge/split chunks for cohesion.";
+        }
 
         $extraInstructionsBlock = !empty($this->extraInstruction)
             ? "\n### EXTRA INSTRUCTIONS\n{$this->extraInstruction}\n"
@@ -186,8 +199,6 @@ class PostProcessingAgent extends Agent
 
         $contextBlock = '';
         if ($this->trackContext) {
-            logger()->debug('Found context: ' . $savedContext);
-
             $activeContextBlock = !empty($savedContext)
                 ? "### CURRENT ACTIVE CONTEXT (From previous iterations)\n{$savedContext}\n"
                 : "### CURRENT ACTIVE CONTEXT\nNone yet.\n";
@@ -196,14 +207,14 @@ $activeContextBlock
 ### STATE & CONTEXT MANAGEMENT (CRITICAL)
 You have access to a tool to set the context for the NEXT processing iteration. You MUST use this tool frequently whenever you detect structural metadata in the current text (e.g., a new Chapter heading, Section title, or major entity shift).
 - **Purpose**: To inform the next agent iteration where we are in the document, ensuring consistent tagging and context across chunk boundaries.
-- **What to Save**: Store brief, hierarchical markers (e.g., "Current Chapter: Chapter 3 - Spells", "Current Subject: Adult Red Dragon"). You may add minor extra info, but DO NOT overdo it. Keep it concise to avoid confusing the next iteration.
+- **What to Save**: Store brief, hierarchical markers (e.g., "Chapter 2 - Architecture", "Subject: Routing"). You may add minor extra info, but DO NOT overdo it. Keep it concise to avoid confusing the next iteration.
 - **Updating & Flushing**: The current context is passed to you above in `CURRENT ACTIVE CONTEXT`. If the chunks you are processing move into a new chapter/section, the old context is no longer valid. You MUST call the tool to overwrite and replace the old context with the new structural location. If the context needs to be completely cleared, overwrite it using the tool. You are entirely responsible for keeping this cross-iteration state accurate and up-to-date.
 CONTEXT;
         }
 
         return <<<INSTRUCTIONS
 ### PERSONA
-You are an expert optimizer and dynamic chunker for RAG systems.
+You are an expert data processor and dynamic chunker for RAG systems. You handle agnostic text sources (documentation, manuals, code, books).
 
 $this->documentContext
 
@@ -212,16 +223,16 @@ $contextBlock
 ### GOAL & DYNAMIC CHUNKING
 Analyze the provided raw chunks. Clean, merge, or split them to form highly cohesive, atomic semantic units.
 - You MUST NOT output a 1:1 mapping of input to output.
-- Separate distinct topics (e.g., isolate a lore description from a stat block).
-- TARGET SIZE: Maximum $this->preferredChunkLength characters (approximately $estimatedWords words) per chunk.
-- AGGRESSIVE SPLITTING: If a combined topic exceeds this limit, you MUST split it into smaller, logical sub-chunks. Semantic integrity (keeping a stat table together) overrides size, but otherwise, prioritize splitting. Do not create massive blocks.
+- Separate distinct topics (e.g., isolate a conceptual explanation from a technical table).
+- TARGET SIZE: Maximum $this->preferredChunkLength characters (approximately $estimatedWords words) per chunk. Do not cut in the middle of sentences.
+- AGGRESSIVE SPLITTING: If a combined topic exceeds this limit, you MUST split it into smaller, logical sub-chunks. Semantic integrity (keeping a structured block together) overrides size, but otherwise, prioritize splitting. Do not create massive blocks.
 
 ### CRITICAL CONTENT RULES
 $summarizationRule
-2. **PRESERVE FORMATTING**: Do NOT remove newlines (`\n`), tabs, or spacing from stat blocks, tables, or item descriptions. The rigid structure must remain intact.
-3. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
-4. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
-5. **MINIMUM METADATA**: You MUST generate at least 5 tags and at least 3 questions per output chunk. Do not be lazy.
+2. **PRESERVE ALL ENTITIES**: Treat the raw text as sacred. Do NOT remove specific items, variables, names, or domain-specific terminology.
+3. **PRESERVE FORMATTING**: Do NOT remove newlines (`\n`), tabs, or spacing from structured data, tables, or code blocks. The rigid structure must remain intact.
+4. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
+5. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
 $contextRule
 
 ### FIGURE RULES
