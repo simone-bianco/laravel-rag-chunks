@@ -128,14 +128,23 @@ abstract class AbstractLocalFileParser implements DocumentParserInterface
      * @return ParsingContextDTO           Updated context with relativePostProcessedPath set.
      * @throws InvalidFileException        If the refined file does not exist.
      */
-    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 20, array $agentOptions = []): ParsingContextDTO
-    {
+    public function postProcess(
+        ?string $documentContext,
+        ParsingContextDTO $context,
+        int $batchSize = 20,
+        array $agentOptions = [],
+        int $startFromInputLine = 0,
+        ?callable $onBatchComplete = null
+    ): ParsingContextDTO {
         if (!$this->fileService->exists($context->relativeRefinedPath)) {
             throw new InvalidFileException("File not found at {$context->relativeRefinedPath}");
         }
 
         $writeRelativePath = "$context->relativeDirPath/post_processed_output.jsonl";
-        if (!$this->fileService->exists($writeRelativePath)) {
+
+        // Partenza fresca: crea/tronca il file di output
+        // Resume (startFromInputLine > 0): preserva il file esistente per appendere
+        if ($startFromInputLine === 0 || !$this->fileService->exists($writeRelativePath)) {
             $this->fileService->put($writeRelativePath, '');
         }
 
@@ -144,7 +153,9 @@ abstract class AbstractLocalFileParser implements DocumentParserInterface
             $writeRelativePath,
             $documentContext,
             $batchSize,
-            $agentOptions
+            $agentOptions,
+            $startFromInputLine,
+            $onBatchComplete
         );
 
         $context->relativePostProcessedPath = $writeRelativePath;

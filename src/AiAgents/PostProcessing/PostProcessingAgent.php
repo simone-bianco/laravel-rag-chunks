@@ -4,7 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
 use Illuminate\Support\Facades\Context;
 use LarAgent\Agent;
-use LarAgent\Context\Drivers\CacheStorage;
+use LarAgent\Context\Drivers\InMemoryStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use RuntimeException;
@@ -15,7 +15,7 @@ class PostProcessingAgent extends Agent
 {
     protected const string CONTEXT_KEY = 'postprocessing_context';
 
-    protected $history = CacheStorage::class;
+    protected $history = InMemoryStorage::class;
     protected array $chunks = [];
     protected $mcpServers = [];
     protected string $documentContext = '';
@@ -26,7 +26,6 @@ class PostProcessingAgent extends Agent
     protected bool $summarization = false;
     protected string $extraInstruction = '';
     protected array $tagsByType = [];
-    protected string $agentKey = '';
 
     public function __construct(
         string $key,
@@ -34,8 +33,6 @@ class PostProcessingAgent extends Agent
         protected bool $trackContext = true,
     ) {
         parent::__construct($key);
-
-        $this->agentKey = $key;
 
         if ($this->trackContext) {
             $this->withTool(new SetContext(self::CONTEXT_KEY));
@@ -194,8 +191,7 @@ class PostProcessingAgent extends Agent
 
         $estimatedWords = (int)($this->preferredChunkLength / 6);
 
-        $contextKey = "{$this->agentKey}_" . self::CONTEXT_KEY;
-        $savedContext = Context::getHidden($contextKey);
+        $savedContext = Context::getHidden(self::CONTEXT_KEY);
 
         $contextBlock = '';
         if ($this->trackContext) {

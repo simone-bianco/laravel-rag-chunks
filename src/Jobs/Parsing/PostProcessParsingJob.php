@@ -93,19 +93,28 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                 }
             }
 
+            // Riprendi dall'ultima riga input processata con successo (0 = partenza fresca)
+            $resumeFromLine = (int) ($process->context['postprocessor_last_input_line'] ?? 0);
+
             try {
                 $postProcessedContext = $parser->postProcess(
                     $document->description,
                     $parser->contextFromArray($process->context),
                     config('rag_chunks.agents.postprocessor.batch_size', 10),
-                    $postprocessorOptions
+                    $postprocessorOptions,
+                    $resumeFromLine,
+                    function (int $lastInputLine) use ($process): void {
+                        $process->mergeContextAndSave(['postprocessor_last_input_line' => $lastInputLine]);
+                    }
                 );
             } catch (PostProcessingException $exception) {
                 if ($exception->isRetryable()) {
                     throw $exception; // outer catch handles retry via handleTemporaryFailure
                 }
+                // Errore strutturale non recuperabile: segna il processo come non riprovabile
                 $process->setError($exception->getMessage(), [
-                    ParsingPhase::POST_PROCESSING->value => $exception->toArray()
+                    ParsingPhase::POST_PROCESSING->value => $exception->toArray(),
+                    'is_retryable' => false,
                 ]);
                 $this->fail($exception);
                 return;

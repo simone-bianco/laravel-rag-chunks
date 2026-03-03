@@ -2,41 +2,121 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
+use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 use LarAgent\Agent;
-use LarAgent\Context\Drivers\CacheStorage;
+use LarAgent\Core\Contracts\DataModel;
+use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ConnectChunks;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetNextChunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetPreviousChunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ConnectChunks;
+use SimoneBianco\LaravelRagChunks\Models\Chunk;
+use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class ProjectSearchAgent extends Agent
 {
-    protected $history = CacheStorage::class;
+    protected $history = 'database';
 
     protected Project $project;
 
-    protected $model = 'gpt-5.1';
+    protected ?Document $document = null;
+
+    protected $model = 'gpt-5-mini';
 
     protected $parallelToolCalls = true;
+
+    protected $responseSchema = [
+        'name' => 'search_result',
+        'schema' => [
+            'type' => 'object',
+            'properties' => [
+                'relevant_chunks' => [
+                    'type' => 'array',
+                    'description' => 'Array of relevant chunks aliases',
+                    'items' => [
+                        'type' => 'string',
+                        'description' => 'chunk alias',
+                    ],
+                ],
+                'proposed_connections' => [
+                    'type' => 'array',
+                    'description' => 'A list of proposed connections between chunks and documents',
+                    'items' => [
+                        'type' => 'object',
+                        'description' => 'Single connection object',
+                        'properties' => [
+                            'source_entity_type' => [
+                                'type' => 'string',
+                                'description' => 'type of source entity',
+                                'enum' => ['chunk', 'document'],
+                            ],
+                            'source_entity_alias' => [
+                                'type' => 'string',
+                                'description' => 'alias of source entity',
+                            ],
+                            'destination_entity_type' => [
+                                'type' => 'string',
+                                'description' => 'type of destination entity',
+                                'enum' => ['chunk', 'document'],
+                            ],
+                            'destination_entity_alias' => [
+                                'type' => 'string',
+                                'description' => 'alias of destination entity',
+                            ],
+                            'relation_type' => [
+                                'type' => 'string',
+                                'description' => 'unidirectional if goes only from A to B, bidirectional if can be read in both ways',
+                                'enum' => ['bidirectional', 'unidirectional'],
+                            ],
+                        ],
+                        'required' => [
+                            'source_entity_type',
+                            'source_entity_alias',
+                            'destination_entity_type',
+                            'destination_entity_alias',
+                            'relation_type',
+                        ],
+                        'additional_properties' => false,
+                    ],
+                ],
+            ],
+            'required' => ['relevant_chunks', 'proposed_connections'],
+            'additionalProperties' => false,
+        ],
+        'strict' => true,
+    ];
 
     protected function logger(): LoggerInterface
     {
         return Log::channel('search');
     }
 
-    public function __construct($key, string $projectAlias, bool $usesUserId = false, ?string $group = null)
-    {
+    public function __construct(
+        $key,
+        string $projectAlias,
+        ?string $documentAlias = null,
+        bool $usesUserId = false,
+        ?string $group = null
+    ) {
         $this->project = Project::query()
+            ->when($documentAlias, function (Builder $query) use ($documentAlias) {
+                $query->with(['documents' => function (Builder $query) use ($documentAlias) {
+                    $query->where('alias', $documentAlias);
+                }]);
+            })
             ->where('alias', $projectAlias)
             ->firstOrFail();
 
+        $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
+
         $this->withTool(new SearchChunks($this->project));
-        $this->withTool(new GetPreviousChunk());
-        $this->withTool(new GetNextChunk());
-        $this->withTool(new ConnectChunks());
+        $this->withTool(new GetPreviousChunk);
+        $this->withTool(new GetNextChunk);
+        $this->withTool(new ConnectChunks);
 
         parent::__construct($key, $usesUserId, $group);
 
@@ -46,7 +126,7 @@ class ProjectSearchAgent extends Agent
     public function instructions(): string
     {
         $projectInstructions = $this->project->settings?->search_agent_instructions;
-        $projectInstructionsBlock = !empty($projectInstructions)
+        $projectInstructionsBlock = ! empty($projectInstructions)
             ? "\n### PROJECT-SPECIFIC INSTRUCTIONS\n{$projectInstructions}\n"
             : '';
 
@@ -74,7 +154,12 @@ The user speaks Italian, but the database is in ENGLISH.
 - MAXIMUM 3 SEARCH ATTEMPTS TOTAL.
 - If you hit 3 attempts and still have nothing, STOP. Output exactly: "Information not found in the database." No apologies.
 
-**STEP 4: FINAL OUTPUT**
+**STEP 4: PROPOSING CONNECTIONS (USE EXTREMELY SPARINGLY)**
+- In your `proposed_connections` array, ONLY return CRITICAL connections that significantly facilitate future retrieval by reducing search steps.
+- Use this strictly for highly cross-referenced data where knowing entity A means the system will almost certainly need entity B immediately.
+- DO NOT return obvious, trivial, or purely sequential connections. Less is more.
+
+**STEP 5: FINAL OUTPUT**
 - Output the raw, direct answer based ONLY on the retrieved text.
 - ZERO conversational filler. No introductions.
 $projectInstructionsBlock
@@ -84,5 +169,31 @@ INSTRUCTIONS;
     public function prompt($message)
     {
         return $message;
+    }
+
+    public function respond(?string $message = null): string|array|DataModel|MessageInterface
+    {
+        $raw = parent::respond($message);
+
+        $decoded = is_string($raw) ? json_decode($raw, true) : (is_array($raw) ? $raw : null);
+
+        if (! is_array($decoded) || empty($decoded['relevant_chunks'])) {
+            return $decoded ?? $raw;
+        }
+
+        $aliases = $decoded['relevant_chunks'];
+
+        $chunks = Chunk::query()
+            ->whereIn('id', $aliases)
+            ->withNeighborSnippets()
+            ->get();
+
+        $decoded['relevant_chunks'] = $chunks
+            ->mapWithKeys(fn (Chunk $chunk) => [
+                $chunk->id => ChunkMapper::loadAndMap($chunk),
+            ])
+            ->toArray();
+
+        return $decoded;
     }
 }

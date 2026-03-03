@@ -8,6 +8,7 @@ use LarAgent\Core\Abstractions\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Services\ChunkService;
 use SimoneBianco\LaravelSimpleTags\Tag;
@@ -24,6 +25,7 @@ class SearchChunks extends Tool
 
     public function __construct(
         protected Project $project,
+        protected ?Document $document = null,
         ?string $name = 'search_chunks',
         ?string $description = 'RAG search chunks'
     ) {

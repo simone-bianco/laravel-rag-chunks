@@ -167,7 +167,9 @@ class PostProcessor
      * @param string $relativeOutputPath
      * @param string|null $documentContext
      * @param int $batchSize
-     * @return void
+     * @param array $agentOptions
+     * @param int $startFromInputLine  Numero di righe input già processate (resume). 0 = partenza fresca.
+     * @param callable|null $onBatchComplete  Callback chiamata dopo ogni batch con l'ultima riga input processata.
      * @throws InvalidEmbeddingDriverException
      * @throws PostProcessingException
      */
@@ -176,11 +178,12 @@ class PostProcessor
         string $relativeOutputPath,
         ?string $documentContext = '',
         int $batchSize = 10,
-        array $agentOptions = []
+        array $agentOptions = [],
+        int $startFromInputLine = 0,
+        ?callable $onBatchComplete = null
     ): void {
         $embedder = EmbeddingFactory::make();
 
-        // Variabili per gestione errori
         $currentInputLine = 0;
         $lastProcessedLineContent = '';
 
@@ -189,20 +192,19 @@ class PostProcessor
             $readStream = $this->fileService->readStream($relativeSourcePath);
             $writeStream = $this->fileService->writeStream($relativeOutputPath);
 
-            // Calcola dove riprendere
-            $alreadyProcessed = $this->streamService->countLines($writeStream);
-            if ($alreadyProcessed > 0) {
+            // Se stiamo facendo resume, vai in fondo al file di output per appendere
+            if ($startFromInputLine > 0) {
                 $this->streamService->goToEnd($writeStream);
             }
 
-            $pendingBatch = []; // Conterrà oggetti RefinedItemDTO
+            $pendingBatch = [];
 
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
                 $lastProcessedLineContent = $line;
 
-                // Salta righe già processate o vuote
-                if ($currentInputLine <= $alreadyProcessed || trim($line) === '') {
+                // Salta le righe input già processate nella sessione precedente
+                if ($currentInputLine <= $startFromInputLine || trim($line) === '') {
                     continue;
                 }
 
@@ -211,38 +213,30 @@ class PostProcessor
                     continue;
                 }
 
-                // Aggiungi al batch corrente
                 $pendingBatch[] = RefinedItemDTO::fromArray($decoded);
 
-                // Se il batch è pieno, processalo
                 if (count($pendingBatch) >= $batchSize) {
                     $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                    $pendingBatch = []; // Reset batch
+                    $pendingBatch = [];
+                    if ($onBatchComplete) {
+                        $onBatchComplete($currentInputLine);
+                    }
                 }
             }
 
-            // Processa eventuali elementi rimasti nel batch
             if (!empty($pendingBatch)) {
                 $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
                 $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-            }
-
-        } catch (Throwable $exception) {
-            // Tentativo di salvataggio del buffer in memoria in caso di crash
-            if (isset($writeStream) && isset($embedder) && !empty($pendingBatch)) {
-                try {
-                    // Proviamo a processare quello che è rimasto, se possibile
-                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath ?? '', $documentContext, $agentOptions);
-                    $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                } catch (Throwable $rescueException) {
-                    // Ignoriamo errori nel rescue per non oscurare l'errore originale
+                if ($onBatchComplete) {
+                    $onBatchComplete($currentInputLine);
                 }
             }
 
+        } catch (Throwable $exception) {
             if (isset($readStream)) {
                 $this->fileService->closeStreams($readStream, $writeStream ?? null);
-            } else if (isset($writeStream)) {
+            } elseif (isset($writeStream)) {
                 $this->fileService->closeStreams(null, $writeStream);
             }
 

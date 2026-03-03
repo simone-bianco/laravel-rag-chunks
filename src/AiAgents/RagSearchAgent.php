@@ -13,7 +13,7 @@ class RagSearchAgent extends Agent
 {
     protected $history = CacheStorage::class;
 
-    protected $model = 'gpt-5.1-mini';
+    protected $model = 'gpt-5-mini';
 
     protected $tools = [
         SearchInProject::class
@@ -27,8 +27,7 @@ class RagSearchAgent extends Agent
     public function __construct($key, array $projectsAliases)
     {
         $this->projects = Project::query()
-            ->select(['alias', 'name', 'description'])
-            ->whereIn('alias', $projectsAliases)
+            ->where('alias', $projectsAliases)
             ->get()
             ->keyBy('alias');
 
