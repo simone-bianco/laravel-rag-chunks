@@ -5,6 +5,8 @@ namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelProcesses\Models\Process;
+use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Jobs\BaseProcessJob;
 
 abstract class BaseDocumentParsingJob extends BaseProcessJob
@@ -34,5 +36,32 @@ abstract class BaseDocumentParsingJob extends BaseProcessJob
             'trial' => $this->attempts(),
             ...$extra,
         ]);
+    }
+
+    /**
+     * Check if a stop signal has been sent for this process.
+     * If so, marks the process as manually stopped and returns true.
+     *
+     * @return bool True if stop signal was found (caller should return immediately).
+     */
+    protected function handleStopSignal(Process $process, string $phase): bool
+    {
+        if (!$process->isStopSignaled()) {
+            return false;
+        }
+
+        $isPostProcessing = in_array($phase, [
+            ParsingPhase::POST_PROCESSING->value,
+            ParsingPhase::POST_PROCESSED->value,
+        ]);
+
+        $process->clearStopSignal();
+        $process->setError('Process stopped manually.', [
+            'manually_stopped' => true,
+            'stopped_at_phase' => $phase,
+            'is_retryable'     => $isPostProcessing,
+        ]);
+
+        return true;
     }
 }

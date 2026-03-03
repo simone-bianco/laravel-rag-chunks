@@ -41,11 +41,11 @@ class SearchInProject extends Tool
 
     protected function handle(array|DataModel $input): mixed
     {
-        $result = (new ProjectSearchAgent(
+        $result = new ProjectSearchAgent(
             Str::random(),
             $this->projectAlias ?: $input['project_alias'],
             $this->documentAlias
-        ))->respond($input['search_query']);
+        )->respond($input['search_query']);
 
         // respond() ritorna un array arricchito con relevant_chunks_data
         return is_array($result) ? $result : $result->getContent();

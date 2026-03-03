@@ -44,6 +44,9 @@ class SaveParsingJob extends BaseDocumentParsingJob
 
             $process = Process::with('processable')->findOrFail($this->processId);
 
+            $phase = $process->context['phase'] ?? 'unknown';
+            if ($this->handleStopSignal($process, $phase)) return;
+
             /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
             $document = $process->processable;
             $this->documentId = $document->id;

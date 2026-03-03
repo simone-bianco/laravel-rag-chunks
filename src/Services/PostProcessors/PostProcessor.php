@@ -9,6 +9,7 @@ use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidEmbeddingDriverException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
+use SimoneBianco\LaravelRagChunks\Exceptions\ProcessStoppedException;
 use SimoneBianco\LaravelRagChunks\Facades\HashService;
 use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
@@ -238,6 +239,11 @@ class PostProcessor
                 $this->fileService->closeStreams($readStream, $writeStream ?? null);
             } elseif (isset($writeStream)) {
                 $this->fileService->closeStreams(null, $writeStream);
+            }
+
+            // Let the stop signal exception pass through without wrapping
+            if ($exception instanceof ProcessStoppedException) {
+                throw $exception;
             }
 
             $prev = $exception->getPrevious();

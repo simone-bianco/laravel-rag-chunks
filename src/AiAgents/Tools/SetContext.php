@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Abstractions\DataModel;
 use LarAgent\Tool;
@@ -21,14 +22,14 @@ class SetContext extends Tool
 
     protected function setContext(string $value): self
     {
-        Cache::set($this->contextKey, $value, 300);
+        Context::addHidden($this->contextKey, $value);
 
         return $this;
     }
 
     protected function getContext(): self
     {
-        Cache::get($this->contextKey, '');
+        Context::getHidden($this->contextKey, '');
 
         return $this;
     }
@@ -45,29 +46,14 @@ class SetContext extends Tool
                 'type' => 'string',
                 'description' => 'The brief, hierarchical context data to save (e.g., "Chapter 3: Core Concepts - Subject: Routing"). Keep it concise.',
             ],
-            'cache_memory' => [
-                'type' => 'array',
-                'description' => 'A list of relevant short cache memories, keep only the ones that may be relevant next; keep not more than 5-10 memories',
-                'items' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'content' => [
-                            'type' => 'string',
-                            'description' => 'Memory content'
-                        ],
-                        'was_relevant' => [
-                            'type' => 'string',
-                            'description' => 'If this memory was relevant in this iteration, then set to yes; if not, set to no',
-                            'enum' => ['yes', 'no']
-                        ]
-                    ],
-                    'required' => ['content', 'was_relevant']
-                ]
+            'brief_context' => [
+                'type' => 'string',
+                'description' => 'A very brief summary of the context, that could be useful for the next chunks batch'
             ]
         ];
     }
 
-    protected array $required = ['chapter', 'cache_memory'];
+    protected array $required = ['chapter', 'brief_context'];
 
     public function execute(array $input): mixed
     {
@@ -89,7 +75,8 @@ class SetContext extends Tool
         $this->logger()->debug('Context set by Agent', ['context' => $textToSave]);
 
         return [
-            'status' => 'Context saved'
+            'status' => 'Context successfully saved.',
+            'system_instruction' => 'CRITICAL STOP: The context is saved. DO NOT call any more tools. You MUST IMMEDIATELY generate and return the final JSON array of chunks.'
         ];
     }
 }

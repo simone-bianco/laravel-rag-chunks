@@ -51,7 +51,10 @@ class PostProcessingAgent extends Agent
     {
         $this->chunks = $chunks;
 
-        Log::channel('document-queue')->debug('CHUNKS', $this->chunks);
+        Log::channel('document-queue')->debug('CHUNKS', [
+            'count' => count($this->chunks),
+            'total_characters' => strlen(json_encode($this->chunks))
+        ]);
 
         return $this;
     }
@@ -108,11 +111,11 @@ class PostProcessingAgent extends Agent
     protected function getResponseSchema(): array
     {
         if ($this->cleanText && $this->summarization) {
-            $contentDescription = 'The cleaned and summarized text of the chunk. Remove OCR garbage, stray page numbers, and artifacts, then condense to core meaning. Stats and numbers are always preserved. NEVER remove entities, proper nouns, technical terms, code snippets, or numerical data. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+            $contentDescription = 'The cleaned, formatted, and summarized text of the chunk. Fix broken characters/encoding, merge arbitrary line breaks, and remove OCR noise, then condense to core meaning. Stats, numbers, entities, and technical terms MUST be preserved. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         } elseif ($this->cleanText) {
-            $contentDescription = 'The cleaned text of the chunk. Remove OCR noise (broken page breaks, stray page numbers, garbled characters) but NEVER alter content, rephrase, condense, or summarize. Preserve all terminology, entities, and meaning 100% faithfully. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+            $contentDescription = 'The cleaned and perfectly formatted text of the chunk. Fix broken encoding/characters, merge arbitrarily broken lines, and remove OCR noise. NEVER alter the actual meaning, rephrase, condense, or drop information. Preserve all entities 100% faithfully. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         } else {
-            $contentDescription = 'The exact, unmodified text of the chunk. ABSOLUTELY FORBIDDEN to alter, clean, remove, or rephrase ANY part of the text. Copy it verbatim. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+            $contentDescription = 'The exact text of the chunk, BUT with corrected formatting. You MUST fix broken encoding (e.g., unicode artifacts), repair garbled characters, and join mid-sentence line breaks. ABSOLUTELY FORBIDDEN to omit, condense, or change the underlying information. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         }
 
         if ($this->contextInjection) {
@@ -136,6 +139,12 @@ class PostProcessingAgent extends Agent
                 $deterministicTagRequired[] = "tags_$type";
             }
         }
+
+        Log::channel('document-queue')->debug('POSTPROCESSING SETTINGS', [
+            'summarization' => $this->summarization,
+            'cleanText' => $this->cleanText,
+            'contextInjection' => $this->contextInjection,
+        ]);
 
         return [
             'type' => 'object',
@@ -180,15 +189,15 @@ class PostProcessingAgent extends Agent
     public function instructions(): string
     {
         $contextRule = $this->contextInjection
-            ? "6. **CONTEXT INJECTION**: For highly abstract data (e.g., an isolated table), prepend a brief clarifying context to the `content`."
-            : "6. **NO META-COMMENTARY (CRITICAL)**: NEVER start the `content` with conversational phrases like \"These chunks describe...\". Start immediately with the raw text.";
+            ? "7. **CONTEXT INJECTION**: For highly abstract data (e.g., an isolated table), prepend a brief clarifying context to the `content`."
+            : "7. **NO META-COMMENTARY (CRITICAL)**: NEVER start the `content` with conversational phrases like \"These chunks describe...\". Start immediately with the raw text.";
 
         if ($this->cleanText && $this->summarization) {
-            $summarizationRule = "1. **CLEAN AND SUMMARIZE**: Remove OCR garbage (broken characters, stray page numbers, garbled text) AND condense to core meaning. STRICTLY FORBIDDEN to remove entities, proper nouns, technical terms, numerical data, or code. Stats and numbers are always preserved.";
+            $summarizationRule = "1. **CLEAN, FORMAT & SUMMARIZE**: Fix broken text, merge split lines, remove OCR garbage AND condense to core meaning. STRICTLY FORBIDDEN to remove entities, proper nouns, technical terms, numerical data, or code.";
         } elseif ($this->cleanText) {
-            $summarizationRule = "1. **CLEAN ONLY — NO SUMMARIZATION**: Remove OCR noise (broken page breaks, stray page numbers, garbled characters) but NEVER condense, rephrase, or omit any content. Preserve all terminology, entities, and meaning 100% faithfully.";
+            $summarizationRule = "1. **CLEAN & FORMAT ONLY**: Fix text encoding, repair garbled characters, merge mid-sentence line breaks, and remove OCR noise. NEVER condense, rephrase, or omit content. Preserve meaning 100% faithfully.";
         } else {
-            $summarizationRule = "1. **ZERO TEXT MODIFICATION**: Do NOT alter the text in any way. Preserve ALL content EXACTLY as written. Never clean, rephrase, or condense. Only merge/split chunks for cohesion.";
+            $summarizationRule = "1. **FORMAT REPAIR ONLY**: Do NOT alter the meaning or condense the text. However, you MUST fix bad formatting: join artificially broken lines, repair broken unicode/encoding, and correct clear OCR typos. All original information MUST survive intact.";
         }
 
         $extraInstructionsBlock = !empty($this->extraInstruction)
@@ -197,21 +206,22 @@ class PostProcessingAgent extends Agent
 
         $estimatedWords = (int)($this->preferredChunkLength / 6);
 
-        $savedContext = Context::getHidden(self::CONTEXT_KEY);
-
         $contextBlock = '';
         if ($this->trackContext) {
+            $savedContext = Context::getHidden(self::CONTEXT_KEY, '');
             $activeContextBlock = !empty($savedContext)
                 ? "### CURRENT ACTIVE CONTEXT (From previous iterations)\n{$savedContext}\n"
                 : "### CURRENT ACTIVE CONTEXT\nNone yet.\n";
             $contextBlock = <<<CONTEXT
 $activeContextBlock
 ### STATE & CONTEXT MANAGEMENT (CRITICAL)
-You have access to a tool to set the context for the NEXT processing iteration. You MUST use this tool frequently whenever you detect structural metadata in the current text (e.g., a new Chapter heading, Section title, or major entity shift).
-- **Purpose**: To inform the next agent iteration where we are in the document, ensuring consistent tagging and context across chunk boundaries.
-- **What to Save**: Store brief, hierarchical markers (e.g., "Chapter 2 - Architecture", "Subject: Routing"). You may add minor extra info, but DO NOT overdo it. Keep it concise to avoid confusing the next iteration.
-- **Updating & Flushing**: The current context is passed to you above in `CURRENT ACTIVE CONTEXT`. If the chunks you are processing move into a new chapter/section, the old context is no longer valid. You MUST call the tool to overwrite and replace the old context with the new structural location. If the context needs to be completely cleared, overwrite it using the tool. You are entirely responsible for keeping this cross-iteration state accurate and up-to-date.
+You have access to a tool to set the context for the NEXT processing iteration.
+- **Purpose**: To inform the next batch where we are in the document (e.g., "Chapter 2 - Architecture - Introduction").
+- **EXECUTION RULE (CRITICAL)**: You MUST call this tool AT MOST ONCE per execution. DO NOT call it in a loop. Determine the overarching context of these chunks, call the tool ONCE if it has changed from the CURRENT ACTIVE CONTEXT, and then IMMEDIATELY proceed to generate the final JSON output.
+- **Updating**: If the context hasn't changed, you do not need to call the tool at all.
 CONTEXT;
+
+            Context::forgetHidden(self::CONTEXT_KEY);
         }
 
         return <<<INSTRUCTIONS
@@ -227,14 +237,15 @@ Analyze the provided raw chunks. Clean, merge, or split them to form highly cohe
 - You MUST NOT output a 1:1 mapping of input to output.
 - Separate distinct topics (e.g., isolate a conceptual explanation from a technical table).
 - TARGET SIZE: Maximum $this->preferredChunkLength characters (approximately $estimatedWords words) per chunk. Do not cut in the middle of sentences.
-- AGGRESSIVE SPLITTING: If a combined topic exceeds this limit, you MUST split it into smaller, logical sub-chunks. Semantic integrity (keeping a structured block together) overrides size, but otherwise, prioritize splitting. Do not create massive blocks.
+- AGGRESSIVE SPLITTING: If a combined topic exceeds this limit, you MUST split it into smaller, logical sub-chunks. Semantic integrity (keeping a structured block together) overrides size, but otherwise, prioritize splitting. Do not create massive blocks. Do not stop cut sentences.
 
 ### CRITICAL CONTENT RULES
 $summarizationRule
-2. **PRESERVE ALL ENTITIES**: Treat the raw text as sacred. Do NOT remove specific items, variables, names, or domain-specific terminology.
-3. **PRESERVE FORMATTING**: Do NOT remove newlines (`\n`), tabs, or spacing from structured data, tables, or code blocks. The rigid structure must remain intact.
-4. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
-5. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
+2. **NO DATA LOSS (CRITICAL)**: You MUST process ALL provided input. Do not stop halfway. Do not omit paragraphs or sections. Every piece of information from the input must survive in the output, even if transformed/formatted.
+3. **PRESERVE ALL ENTITIES**: Treat the data as sacred. Do NOT remove specific items, variables, names, or domain-specific terminology.
+4. **PRESERVE INTENTIONAL FORMATTING**: While fixing bad OCR line-breaks, do NOT remove intentional formatting like newlines (`\n`), tabs, or spacing from lists, tables, or code blocks.
+5. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
+6. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
 $contextRule
 
 ### FIGURE RULES

@@ -67,7 +67,7 @@ class Document extends Model
 
     public function purgeChunks(): self
     {
-        DB::raw('DELETE FROM ' . Chunk::class . ' WHERE document_id = ' . $this->id);
+        Chunk::where('document_id', $this->id)->delete();
         return $this;
     }
 

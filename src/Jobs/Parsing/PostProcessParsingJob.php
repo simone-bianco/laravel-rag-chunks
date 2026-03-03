@@ -2,12 +2,14 @@
 
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
+use App\Events\PostProcessingProgressEvent;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use SimoneBianco\LaravelRagChunks\Exceptions\PostProcessingException;
+use SimoneBianco\LaravelRagChunks\Exceptions\ProcessStoppedException;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
@@ -60,9 +62,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                 'phase' => ParsingPhase::POST_PROCESSING->value
             ]);
 
-            if ($process->context['phase'] !== ParsingPhase::POST_PROCESSING) {
-                $process->mergeContextAndSave(['phase' => ParsingPhase::POST_PROCESSING->value]);
-            }
+            if ($this->handleStopSignal($process, ParsingPhase::POST_PROCESSING->value)) return;
 
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
@@ -103,10 +103,23 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                     config('rag_chunks.agents.postprocessor.batch_size', 7),
                     $postprocessorOptions,
                     $resumeFromLine,
-                    function (int $lastInputLine) use ($process): void {
+                    function (int $lastInputLine) use ($process, $document): void {
                         $process->mergeContextAndSave(['postprocessor_last_input_line' => $lastInputLine]);
+
+                        PostProcessingProgressEvent::dispatch(
+                            $document->id,
+                            $process->id,
+                            $lastInputLine,
+                        );
+
+                        if ($process->isStopSignaled()) {
+                            throw new ProcessStoppedException('Stop signal received during post-processing.');
+                        }
                     }
                 );
+            } catch (ProcessStoppedException) {
+                $this->handleStopSignal($process, ParsingPhase::POST_PROCESSING->value);
+                return;
             } catch (PostProcessingException $exception) {
                 if ($exception->isRetryable()) {
                     throw $exception; // outer catch handles retry via handleTemporaryFailure

@@ -170,6 +170,7 @@ class PdfParser implements DocumentParserInterface
             }
 
             $this->fileService->closeStreams($stream);
+            // TODO::evaluate if keep file
 //            $this->fileService->delete($outputJsonRelativePath);
 
             $context->relativeRefinedPath = $writeRelativePath;
@@ -185,8 +186,14 @@ class PdfParser implements DocumentParserInterface
      * @throws InvalidFileException
      * @throws PostProcessingException
      */
-    public function postProcess(?string $documentContext, ParsingContextDTO $context, int $batchSize = 10, array $agentOptions = []): ParsingContextDTO
-    {
+    public function postProcess(
+        ?string $documentContext,
+        ParsingContextDTO $context,
+        int $batchSize = 10,
+        array $agentOptions = [],
+        int $startFromInputLine = 0,
+        ?callable $onBatchComplete = null
+    ): ParsingContextDTO {
         if (!$this->fileService->exists($context->relativeRefinedPath)) {
             throw new InvalidFileException("$context->relativeRefinedPath does not exist");
         }

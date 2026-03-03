@@ -45,6 +45,9 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             /** @var Process $process */
             $process = Process::findOrFail($this->processId);
 
+            $phase = $process->context['phase'] ?? 'unknown';
+            if ($this->handleStopSignal($process, $phase)) return;
+
             $this->enrichContext();
 
             $process->setProcessing([
