@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
 use Illuminate\Support\Facades\Context;
+use Illuminate\Support\Facades\Log;
 use LarAgent\Agent;
 use LarAgent\Context\Drivers\InMemoryStorage;
 use LarAgent\Core\Contracts\DataModel;
@@ -42,6 +43,8 @@ class PostProcessingAgent extends Agent
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
         $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-5-mini';
         $this->preferredChunkLength = $injectConfig['preferred_chunk_length'] ?? $config['preferred_chunk_length'] ?? 600;
+
+        Log::channel('document-queue')->debug('Postprocessor config', $this->config);
     }
 
     public function withChunks(array $chunks): self

@@ -42,6 +42,26 @@ class ProjectSearchAgent extends Agent
                         'description' => 'chunk alias',
                     ],
                 ],
+                'relevant_images' => [
+                    'type' => 'array',
+                    'description' => 'Array of relevant images',
+                    'items' => [
+                        'type' => 'object',
+                        'description' => 'single image',
+                        'properties' => [
+                            'url' => [
+                                'type' => 'string',
+                                'description' => 'img url'
+                            ],
+                            'content' => [
+                                'type' => 'string',
+                                'description' => 'brief explanation of content'
+                            ]
+                        ],
+                        'required' => ['url', 'content'],
+                        'additional_properties' => false
+                    ],
+                ],
                 'proposed_connections' => [
                     'type' => 'array',
                     'description' => 'A list of proposed connections between chunks and documents',
@@ -187,6 +207,8 @@ INSTRUCTIONS;
             ->whereIn('id', $aliases)
             ->withNeighborSnippets()
             ->get();
+
+        $decoded['chunk_ids'] = $chunks->pluck('id')->values()->toArray();
 
         $decoded['relevant_chunks'] = $chunks
             ->mapWithKeys(fn (Chunk $chunk) => [

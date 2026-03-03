@@ -25,6 +25,18 @@ class SaveResponseData extends Tool
                 'description' => 'Array of relevant chunk UUIDs found during search',
                 'items' => ['type' => 'string'],
             ],
+            'relevant_images' => [
+                'type' => 'array',
+                'description' => 'Array of relevant images from the search results',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'url'     => ['type' => 'string'],
+                        'content' => ['type' => 'string', 'description' => 'Brief description of the image'],
+                    ],
+                    'required' => ['url', 'content'],
+                ],
+            ],
             'proposed_connections' => [
                 'type' => 'array',
                 'description' => 'Proposed connections between chunks or documents based on the search results',
@@ -67,9 +79,10 @@ class SaveResponseData extends Tool
         }
 
         static::$lastResponseData = [
-            'relevant_chunks' => $data['relevant_chunks'] ?? [],
+            'relevant_chunks'    => $data['relevant_chunks'] ?? [],
+            'relevant_images'    => $data['relevant_images'] ?? [],
             'proposed_connections' => $connections,
-            'applied_connections' => [],
+            'applied_connections'  => [],
         ];
 
         return ['status' => 'saved', 'chunks_count' => count(static::$lastResponseData['relevant_chunks'])];

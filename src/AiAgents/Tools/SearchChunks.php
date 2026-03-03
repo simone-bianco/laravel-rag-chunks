@@ -4,6 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use LarAgent\Core\Abstractions\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
@@ -158,9 +159,9 @@ class SearchChunks extends Tool
         if (is_array($logResults)) {
             array_walk_recursive($logResults, function (&$value, $key) {
                 if (is_string($value) && in_array($key, ['content', 'questions', 'semantic_tags'])) {
-                    $value = \Illuminate\Support\Str::limit(preg_replace('/\s+/', ' ', trim($value)), 100);
+                    $value = Str::limit(preg_replace('/\s+/', ' ', trim($value)), 100);
                 } elseif (is_string($value) && strlen($value) > 150) {
-                    $value = \Illuminate\Support\Str::limit(preg_replace('/\s+/', ' ', trim($value)), 150);
+                    $value = Str::limit(preg_replace('/\s+/', ' ', trim($value)), 150);
                 }
             });
         }

@@ -19,7 +19,7 @@ class ProjectChatAgent extends Agent
 
     protected ?Document $document = null;
 
-    protected $model = 'gpt-4.1';
+    protected $model = 'gpt-5-mini';
 
     protected $parallelToolCalls = true;
 
@@ -90,13 +90,28 @@ The database is in ENGLISH — translate the query if needed.
 
 **STEP 2 — SAVE**
 Call `save_response_data` with:
-- `relevant_chunks`: array of chunk UUIDs found to be relevant
+- `relevant_chunks`: use the `chunk_ids` array from the search result exactly as-is — these are the UUID strings (e.g. "42288f69-f5ab-44cb-babf-55d4e2485392"). Do NOT pass chunk content or aliases.
+- `relevant_images`: copy the `relevant_images` array from the search result as-is (each item has `url` and `content`)
 - `proposed_connections`: meaningful relationships identified between chunks/documents
 
 **STEP 3 — RESPOND**
 Write your answer in **rich Markdown** in the **same language the user used**.
 Base it ONLY on the retrieved data. Do not invent information.
 Use headings, bullet points, bold text, tables where appropriate.
+
+**IMAGE RULES (follow if `relevant_images` is non-empty):**
+- Embed images inline where they are contextually relevant, using standard Markdown: `![description](url)`
+- Place each image immediately after the paragraph it illustrates — alternate text and images for a visual, readable narrative.
+- Do NOT cluster all images at the end. Spread them naturally through the response.
+- Do NOT include a separate "Images" section or list of image links.
+- Do NOT offer the user to download images or open them — the UI already provides downloadable thumbnails.
+
+**CHUNK RULES (always apply):**
+- Do NOT list chunk IDs, UUIDs, or aliases anywhere in your response.
+- Do NOT tell the user how many chunks you found, which chunks are related, or offer to show "other related chunks".
+- Do NOT say things like "Altri chunk rilevanti collegati:", "Other related chunks:", or similar.
+- Just write the answer naturally. The UI shows chunk badges and connections separately.
+
 If nothing relevant is found, call `save_response_data` with empty arrays and say so clearly.
 
 ---
