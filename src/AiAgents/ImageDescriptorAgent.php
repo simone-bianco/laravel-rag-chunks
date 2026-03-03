@@ -27,7 +27,7 @@ class ImageDescriptorAgent extends Agent
 
         $config = config('rag_chunks.agents.image_descriptor', []);
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'default';
-        $this->config['model']    = $injectConfig['model']    ?? $config['model']    ?? 'gpt-4o-mini';
+        $this->config['model']    = $injectConfig['model']    ?? $config['model']    ?? 'gpt-4.1-mini';
     }
 
     public function withImageDataUrl(string $imageDataUrl): self
@@ -137,6 +137,7 @@ $contextBlock$existingBlock
 - `content` starts immediately with the subject — no "The image shows…" or "This depicts…"
 - Be specific: exact proper nouns, numbers, labels, technical terms as visible
 - Tags and questions stay out of `content`
+- DONT omit relevant information, BUT be as short as possible
 - Questions must name the subject; never use "it", "they", "this", or "the depicted"
 INSTRUCTIONS;
     }
