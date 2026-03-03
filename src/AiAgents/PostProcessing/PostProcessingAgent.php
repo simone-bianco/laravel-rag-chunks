@@ -50,6 +50,9 @@ class PostProcessingAgent extends Agent
     public function withChunks(array $chunks): self
     {
         $this->chunks = $chunks;
+
+        Log::channel('document-queue')->debug('CHUNKS', $this->chunks);
+
         return $this;
     }
 

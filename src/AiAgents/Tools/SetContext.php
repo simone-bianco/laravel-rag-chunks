@@ -2,7 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
-use Illuminate\Support\Facades\Context;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Abstractions\DataModel;
 use LarAgent\Tool;
@@ -16,9 +16,24 @@ class SetContext extends Tool
         ?string $description = 'Set the current document context (e.g., Chapter, Section, main subject) to keep track of location for the next agent iteration.',
     ) {
         parent::__construct($name, $description);
+        Log::channel('document-queue')->debug("CONTEXT KEY: $this->contextKey");
     }
 
-    public function logger(): LoggerInterface
+    protected function setContext(string $value): self
+    {
+        Cache::set($this->contextKey, $value, 300);
+
+        return $this;
+    }
+
+    protected function getContext(): self
+    {
+        Cache::get($this->contextKey, '');
+
+        return $this;
+    }
+
+    protected function logger(): LoggerInterface
     {
         return Log::channel(config('logging.default', 'stack'));
     }
@@ -64,13 +79,17 @@ class SetContext extends Tool
         $data = $input instanceof DataModel ? $input->toArray() : $input;
         $textToSave = json_encode($data);
 
-        Context::addHidden($this->contextKey, $textToSave);
+        $this->setContext($textToSave);
+
+        Log::channel('document-queue')->debug("FULL CONTEXT for $this->contextKey", [
+            'added_hidden' => $textToSave,
+            'full' => $this->getContext()
+        ]);
 
         $this->logger()->debug('Context set by Agent', ['context' => $textToSave]);
 
         return [
-            'status' => 'Context successfully updated for the next iteration',
-            'saved_context' => $textToSave,
+            'status' => 'Context saved'
         ];
     }
 }
