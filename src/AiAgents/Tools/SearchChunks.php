@@ -104,6 +104,9 @@ class SearchChunks extends Tool
 
         $data = ! is_array($input) ? $input->toArray() : $input;
         $data['projectsAliases'] = [$this->project->alias];
+        if ($this->document) {
+            $data['documentsAliases'] = [$this->document->alias];
+        }
 
         // Resolve tag_* properties (typeAlias => slugs[]) into chunkTagGroups (typeAlias => tagIds[])
         $tagTypeModel = config('tags.tag_type_model', TagType::class);

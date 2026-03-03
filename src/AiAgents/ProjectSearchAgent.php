@@ -133,7 +133,7 @@ class ProjectSearchAgent extends Agent
 
         $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
 
-        $this->withTool(new SearchChunks($this->project));
+        $this->withTool(new SearchChunks($this->project, $this->document));
         $this->withTool(new GetPreviousChunk);
         $this->withTool(new GetNextChunk);
         $this->withTool(new ConnectChunks);
