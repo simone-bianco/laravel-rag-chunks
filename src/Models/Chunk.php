@@ -72,6 +72,18 @@ class Chunk extends Model
         return new ChunkBuilder($query);
     }
 
+    /**
+     * Override HasTags::setTagsAttribute so that assigning an array of strings
+     * writes to the `tags` JSON column instead of syncing the taggable relation.
+     * Classic/deterministic tags must be managed via syncTagIds() / attachTags().
+     */
+    public function setTagsAttribute($tags): void
+    {
+        $this->attributes['tags'] = is_array($tags)
+            ? json_encode(array_values($tags), JSON_UNESCAPED_UNICODE)
+            : $tags;
+    }
+
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class);
