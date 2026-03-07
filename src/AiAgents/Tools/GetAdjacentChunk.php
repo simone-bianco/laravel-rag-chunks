@@ -8,9 +8,14 @@ use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 
-abstract class GetAdjacentChunk extends Tool
+class GetAdjacentChunk extends Tool
 {
-    abstract protected function direction(): int; // -1 for previous, +1 for next
+    public function __construct(
+        ?string $name = 'get_adjacent_chunk',
+        ?string $description = 'Get the chunk immediately before or after a given chunk in the same document'
+    ) {
+        parent::__construct($name, $description);
+    }
 
     public function logger(): LoggerInterface
     {
@@ -29,16 +34,32 @@ abstract class GetAdjacentChunk extends Tool
                 'type' => 'string',
                 'description' => 'UUID of the reference chunk',
             ],
+            'direction' => [
+                'type' => 'string',
+                'enum' => ['previous', 'next'],
+                'description' => 'Direction to fetch the chunk: "previous" or "next"'
+            ],
         ];
     }
 
-    protected array $required = ['chunkId'];
+    protected array $required = ['chunkId', 'direction'];
+
+    protected function getDirectionInt(?string $dir = null): int
+    {
+        if (method_exists($this, 'direction')) {
+            return $this->direction();
+        }
+        return $dir === 'previous' ? -1 : 1;
+    }
 
     protected function handle(array|DataModel $input): mixed
     {
         $data = !is_array($input) ? $input->toArray() : $input;
 
-        $this->logger()->debug('[Tool] ' . static::class . ' called', ['chunkId' => $data['chunkId']]);
+        $dirStr = $data['direction'] ?? 'next';
+        $dirInt = $this->getDirectionInt($dirStr);
+
+        $this->logger()->debug('[Tool] ' . static::class . ' called', ['chunkId' => $data['chunkId'], 'direction' => $dirStr]);
 
         $current = Chunk::find($data['chunkId']);
 
@@ -48,13 +69,13 @@ abstract class GetAdjacentChunk extends Tool
 
         $adjacent = Chunk::query()
             ->where('document_id', $current->document_id)
-            ->where('order', $current->order + $this->direction())
+            ->where('order', $current->order + $dirInt)
             ->withNeighborSnippets()
             ->with('dedupMedia')
             ->first();
 
         if (! $adjacent) {
-            return ['error' => 'No ' . ($this->direction() === -1 ? 'previous' : 'next') . ' chunk'];
+            return ['error' => 'No ' . ($dirInt === -1 ? 'previous' : 'next') . ' chunk available'];
         }
 
         $result = [$adjacent->id => ChunkMapper::loadAndMap($adjacent)];

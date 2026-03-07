@@ -11,15 +11,14 @@ class ChunkMapper
      */
     public static function mapItem(array $item): array
     {
+        // For standard AI Search Agent mapping, we deliberately exclude thick context fields
+        // like previous/next snippets or semantic tags to dramatically reduce token consumption
+        // and avoid context window bloats. The AI only needs the strict content and its ID/relations.
         return array_filter([
-            'document_id'    => $item['document_id'],
-            'previous_chunk' => array_filter(['content' => $item['prev_snippet'] ?? null]),
-            'content'        => $item['content'],
-            'next_chunk'     => array_filter(['content' => $item['next_snippet'] ?? null]),
-            'semantic_tags'  => $item['semantic_tags'] ?? $item['tags'] ?? [],
-            'questions'      => $item['questions'] ?? [],
-            'image_url'      => $item['image_url'] ?? null,
-            'relations'      => self::mapRelations($item),
+            'document_id' => $item['document_id'],
+            'content'     => $item['content'],
+            'image_url'   => $item['image_url'] ?? null,
+            'relations'   => self::mapRelations($item),
         ]);
     }
 

@@ -72,7 +72,7 @@ class SearchChunks extends Tool
             'perPage' => [
                 'type' => 'integer',
                 'description' => 'Number of results per page, use 5 by default',
-                'enum' => [5, 10, 15],
+                'enum' => [3, 5, 10],
             ],
             'keywordsSearch' => [
                 'type' => 'array',

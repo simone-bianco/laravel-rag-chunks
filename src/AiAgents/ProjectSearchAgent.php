@@ -19,7 +19,7 @@ use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class ProjectSearchAgent extends Agent
 {
-    protected $history = 'database';
+    protected $history = 'in_memory';
 
     protected Project $project;
 
@@ -27,7 +27,11 @@ class ProjectSearchAgent extends Agent
 
     protected $model = 'gpt-4.1-mini';
 
-    protected $parallelToolCalls = true;
+    protected $maxCompletionTokens = 16384;
+
+    // Must be false: with true the LLM can emit search+navigate calls in the same turn,
+    // creating tool_call_ids that the loop cannot satisfy in order → corrupt history.
+    protected $parallelToolCalls = false;
 
     protected $responseSchema = [
         'name' => 'search_result',
@@ -51,15 +55,15 @@ class ProjectSearchAgent extends Agent
                         'properties' => [
                             'url' => [
                                 'type' => 'string',
-                                'description' => 'img url'
+                                'description' => 'img url',
                             ],
                             'content' => [
                                 'type' => 'string',
-                                'description' => 'brief explanation of content'
-                            ]
+                                'description' => 'brief explanation of content',
+                            ],
                         ],
                         'required' => ['url', 'content'],
-                        'additional_properties' => false
+                        'additional_properties' => false,
                     ],
                 ],
                 'proposed_connections' => [
@@ -163,6 +167,7 @@ The user speaks Italian, but the database is in ENGLISH.
 - If the user asks a multi-part question (e.g., "A and B"), DO NOT search for both at once. Search for the most specific entity first.
 - `textSearch`: USE MAXIMUM 3 OR 4 ENGLISH WORDS. Strip all verbs and grammar. NEVER use quotes (""). (Example: dried dung beetles barrel)
 - `semanticTagsSearch`: 2 or 3 comma-separated English words.
+- `keywordsSearch`: STRICTLY FORBIDDEN on the first attempt. NEVER use it unless you got 0 results on the first try and need an exact word match fallback.
 - `tag_*` parameters: LEAVE THEM NULL. NEVER GUESS a location or category. ONLY use them if the user EXPLICITLY types the exact name of a place.
 
 **STEP 2: HOW TO HANDLE RESULTS (THE ANTI-LOOP RULE)**
@@ -179,9 +184,10 @@ The user speaks Italian, but the database is in ENGLISH.
 - Use this strictly for highly cross-referenced data where knowing entity A means the system will almost certainly need entity B immediately.
 - DO NOT return obvious, trivial, or purely sequential connections. Less is more.
 
-**STEP 5: FINAL OUTPUT**
+**STEP 5: FINAL OUTPUT (CRITICAL: DO NOT TRUNCATE RESULTS)**
 - Output the raw, direct answer based ONLY on the retrieved text.
 - ZERO conversational filler. No introductions.
+- YOU MUST EXTRACT AND RETURN **EVERY SINGLE** RELEVANT CHUNK ID you found in the search results. DO NOT stop at 1 or 2 chunks if more are relevant. DO NOT summarize or be lazy. If the tool returns 4 relevant chunks, your `relevant_chunks` array MUST contain exactly 4 IDs.
 $projectInstructionsBlock
 INSTRUCTIONS;
     }
@@ -193,12 +199,88 @@ INSTRUCTIONS;
 
     public function respond(?string $message = null): string|array|DataModel|MessageInterface
     {
-        $raw = parent::respond($message);
+        // Force raw MessageInterface return to bypass LarAgent's structured-output pipeline.
+        // The pipeline crashes with "processBeforeStructuredOutput(): Argument #1 must be array, null given"
+        // when the LLM returns null content after a tool-call loop. By getting the raw message,
+        // we can json_decode manually and handle null gracefully.
+        $this->returnMessage = true;
 
-        $decoded = is_string($raw) ? json_decode($raw, true) : (is_array($raw) ? $raw : null);
+        try {
+            $raw = parent::respond($message);
+        } catch (\Throwable $e) {
+            Log::warning('[ProjectSearchAgent] respond() failed, returning empty result', [
+                'error' => $e->getMessage(),
+            ]);
 
-        if (! is_array($decoded) || empty($decoded['relevant_chunks'])) {
-            return $decoded ?? $raw;
+            return [
+                'chunk_ids' => [],
+                'relevant_chunks' => [],
+                'relevant_images' => [],
+                'proposed_connections' => [],
+            ];
+        }
+
+        // Extract content from the raw MessageInterface.
+        // Important: getContent() returns a MessageContent object that implements __toString(),
+        // so we MUST cast it to (string) to pass it to json_decode().
+        //
+        // NOTE FOR DEBUGGING: adding explicit variable types in logs to ensure we see exactly
+        // what class is returned if it still fails.
+        Log::debug('[ProjectSearchAgent] Inspecting LLM raw output', [
+            'raw_type' => gettype($raw),
+            'raw_class' => is_object($raw) ? get_class($raw) : null,
+            'raw_content' => $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : 'null'),
+        ]);
+
+        $content = $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : null);
+
+        // Sanitize the content before decoding
+        $sanitizedContent = $content;
+        if (is_string($sanitizedContent)) {
+            // Remove markdown codeblock wrapping if strictly present
+            $sanitizedContent = preg_replace('/^```(?:json)?\s*(.*?)\s*```$/s', '$1', trim($sanitizedContent));
+
+            // If the model output the JSON twice (e.g. {...}\n{...}), extract only the first complete object
+            // Improved regex to handle newlines between objects better
+            if (preg_match('/^(\{\s*".*?\})\s*\{/s', $sanitizedContent, $matches)) {
+                $sanitizedContent = $matches[1];
+                Log::debug('[ProjectSearchAgent] Extracted first JSON object from duplicated output');
+            }
+
+            // Remove trailing commas in arrays/objects
+            $sanitizedContent = preg_replace('/,\s*([\]}])/m', '$1', $sanitizedContent);
+        }
+
+        Log::debug('[ProjectSearchAgent] Content after sanitization', [
+            'sanitized_content' => $sanitizedContent,
+        ]);
+
+        $decoded = is_string($sanitizedContent) ? json_decode($sanitizedContent, true) : (is_array($raw) ? $raw : null);
+
+        if (! is_array($decoded)) {
+            Log::warning('[ProjectSearchAgent] LLM returned non-JSON content', [
+                'raw_class' => is_object($raw) ? get_class($raw) : null,
+                'content_type' => gettype($content),
+                'content_preview' => is_string($content) ? mb_substr($content, 0, 1000) : null,
+                'json_error' => json_last_error_msg(),
+                'sanitized_preview' => is_string($sanitizedContent) ? mb_substr($sanitizedContent, 0, 1000) : null,
+            ]);
+
+            return [
+                'chunk_ids' => [],
+                'relevant_chunks' => [],
+                'relevant_images' => [],
+                'proposed_connections' => [],
+            ];
+        }
+
+        if (empty($decoded['relevant_chunks'])) {
+            return [
+                'chunk_ids' => [],
+                'relevant_chunks' => $decoded['relevant_chunks'] ?? [],
+                'relevant_images' => $decoded['relevant_images'] ?? [],
+                'proposed_connections' => $decoded['proposed_connections'] ?? [],
+            ];
         }
 
         $aliases = $decoded['relevant_chunks'];

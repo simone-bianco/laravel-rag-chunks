@@ -60,6 +60,8 @@ class InstallRagChunksCommand extends Command
         $migrations = [
             'create_tags_blueprints_table.php.stub' => 'create_tags_blueprints_table',
             'create_projects_table.php.stub' => 'create_projects_table',
+            'create_project_groups_table.php.stub' => 'create_project_groups_table',
+            'create_group_project_table.php.stub' => 'create_group_project_table',
             'create_documents_table.php.stub' => 'create_documents_table',
             'create_document_project_shares_table.php.stub' => 'create_document_project_shares_table',
             'create_chunks_table.php.stub' => 'create_chunks_table',

@@ -50,6 +50,12 @@ class Project extends Model
         return $this->hasMany(Document::class);
     }
 
+    public function groups(): BelongsToMany
+    {
+        return $this->belongsToMany(ProjectGroup::class, 'group_project')
+            ->withTimestamps();
+    }
+
     public function sharedDocuments(): BelongsToMany
     {
         return $this->belongsToMany(Document::class, 'document_project_shares')

@@ -21,17 +21,12 @@ class TxtParser extends AbstractLocalFileParser
         parent::__construct($fileService, $postProcessor, $documentService);
     }
 
-    /**
-     * @return string
-     */
     protected function getExpectedExtension(): string
     {
         return 'txt';
     }
 
     /**
-     * @param string $relativeDirPath
-     * @param string $relativeFilePath
      * @return TxtParsingContextDTO
      */
     protected function makeInitialContext(string $relativeDirPath, string $relativeFilePath): ParsingContextDTO
@@ -45,7 +40,7 @@ class TxtParser extends AbstractLocalFileParser
     /**
      * Reconstructs a TxtParsingContextDTO from the raw process context array.
      *
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return TxtParsingContextDTO
      */
     public function contextFromArray(array $data): ParsingContextDTO
@@ -57,7 +52,7 @@ class TxtParser extends AbstractLocalFileParser
      * Streams the .txt file through TxtChunkerService (character-based chunking),
      * and writes each RefinedItemDTO as a line to refined_output.jsonl.
      *
-     * @param TxtParsingContextDTO $context
+     * @param  TxtParsingContextDTO  $context
      * @return TxtParsingContextDTO
      */
     public function refineOutputJson(ParsingContextDTO $context): ParsingContextDTO
@@ -70,10 +65,18 @@ class TxtParser extends AbstractLocalFileParser
         /** @var array<RefinedItemDTO> $rawItems */
         foreach ($this->chunkerService->chunkTxt($absolutePath) as $rawItems) {
             foreach ($rawItems as $item) {
-                $this->fileService->writeOnStream(
-                    $writeStream,
-                    json_encode($item->toArray(), JSON_UNESCAPED_UNICODE) . "\n"
-                );
+                // JSON_INVALID_UTF8_SUBSTITUTE: sostituisce byte invalidi invece di ritornare false
+                $encoded = json_encode($item->toArray(), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+
+                if ($encoded === false) {
+                    // Fallback di sicurezza: non dovrebbe mai accadere dopo la pulizia nel chunker,
+                    // ma se accade lanciamo un'eccezione esplicita invece di scrivere una riga vuota.
+                    throw new \RuntimeException(
+                        'json_encode failed for chunk: '.json_last_error_msg()
+                    );
+                }
+
+                $this->fileService->writeOnStream($writeStream, $encoded."\n");
             }
         }
 
