@@ -12,6 +12,7 @@ class ChunkFilterDataDTO
         public ?int $charMax = null,
         public ?bool $isDirty = null,
         public ?bool $hasEmbedding = null,
+        public ?bool $hasImage = null,
         /** @var array<string, int[]>|null */
         public ?array $chunkTagGroups = null,
         public int $page = 1,

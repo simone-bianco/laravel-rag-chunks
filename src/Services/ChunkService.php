@@ -67,6 +67,7 @@ class ChunkService
             ->whereAliases($searchData->documentsAliases, $searchData->projectsAliases)
             ->whereTagFilters($searchData->tagFilters)
             ->whereChunkTags($searchData->chunkTagGroups)
+            ->whereHasImage($searchData->hasImage)
             ->withHybridRanking(
                 contentVector: $contentVector,
                 questionsVector: $questionsVector,
@@ -117,6 +118,7 @@ class ChunkService
 
         $query = Chunk::query()
             ->select('*')
+            ->withIsDirty()
             ->with([
                 'dedupMedia',
                 'tags.tagType',
@@ -130,6 +132,7 @@ class ChunkService
             ->whereContentLength($filterData->charMin, $filterData->charMax)
             ->whereDirty($filterData->isDirty)
             ->whereHasEmbedding($filterData->hasEmbedding)
+            ->whereHasImage($filterData->hasImage)
             ->whereChunkTags($filterData->chunkTagGroups);
 
         if ($hasSemanticSearch) {

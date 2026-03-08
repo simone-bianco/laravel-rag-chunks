@@ -24,7 +24,10 @@ class ChunkBuilder extends Builder
         return $this->when($dirty, fn ($q) => $q->where(function ($q) {
             $q->where('is_content_dirty', true)
                 ->orWhere('is_tags_dirty', true)
-                ->orWhere('is_questions_dirty', true);
+                ->orWhere('is_questions_dirty', true)
+                ->orWhereNull('embedding')
+                ->orWhereNull('tags_embedding')
+                ->orWhereNull('questions_embedding');
         }));
     }
 
@@ -37,6 +40,25 @@ class ChunkBuilder extends Builder
         return $has
             ? $this->whereNotNull('embedding')
             : $this->whereNull('embedding');
+    }
+
+    public function whereHasImage(?bool $has): self
+    {
+        if ($has === null) {
+            return $this;
+        }
+
+        if ($has) {
+            return $this->where(function ($q) {
+                $q->where('is_image', true)
+                    ->orWhereHas('dedupMedia');
+            });
+        }
+
+        return $this->where(function ($q) {
+            $q->where('is_image', false)
+                ->orWhereNull('is_image');
+        })->whereDoesntHave('dedupMedia');
     }
 
     /**

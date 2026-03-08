@@ -4,15 +4,15 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing;
 
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
-use LarAgent\Agent;
 use LarAgent\Context\Drivers\InMemoryStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use RuntimeException;
+use SimoneBianco\LaravelRagChunks\AiAgents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SetContext;
 use TypeError;
 
-class PostProcessingAgent extends Agent
+class PostProcessingAgent extends RotableAgent
 {
     protected const string CONTEXT_KEY = 'postprocessing_context';
 

@@ -2,11 +2,10 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
-use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
-class TagsCreatorAgent extends Agent
+class TagsCreatorAgent extends RotableAgent
 {
     protected $history = CacheStorage::class;
 

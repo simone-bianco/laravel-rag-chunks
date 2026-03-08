@@ -143,12 +143,21 @@ class SearchChunks extends Tool
                 'type' => 'string',
                 'description' => 'Comma-separated semantic tags, e.g. "goblin,history,lair"',
             ],
+            'hasImage' => [
+                'type' => 'boolean',
+                'description' => 'If true, return only chunks with images. If false, only chunks without images. Leave unset for mixed results.',
+            ],
+            'allowRelaxTagFilters' => [
+                'type' => 'boolean',
+                'description' => 'Optional safety valve for image queries. If true and hasImage=true returns 0 with multiple tag_* filters, tool may retry once without chunk tag filters.',
+            ],
         ], $tagProperties, $documentsAliasesProperties);
     }
 
     protected function handle(array|DataModel $input): mixed
     {
         $data = $this->normalizeInput($input);
+        $relaxedTagFiltersApplied = false;
 
         $tagFilters = $this->resolveTagFilters($data);
         if (!empty($tagFilters)) {
@@ -157,12 +166,43 @@ class SearchChunks extends Tool
 
         $this->logger()->debug('[Tool] SearchChunks called', ['data' => $data]);
 
-        $dto = ChunkSearchDataDTO::fromArray($data);
-        $results = $this->formatResults($this->chunkService->search($dto)->toArray());
+        $primaryRawResults = $this->searchRaw($data);
+        $results = $this->formatResults($primaryRawResults);
+
+        if ($this->shouldRelaxImageTagFilters($data, $primaryRawResults)) {
+            $relaxedData = $data;
+            unset($relaxedData['chunkTagGroups']);
+
+            $this->logger()->info('[Tool] SearchChunks retry without chunkTagGroups for image query', [
+                'project' => $this->project->alias,
+                'document' => $this->document?->alias,
+                'query' => $relaxedData['textSearch'] ?? null,
+            ]);
+
+            $relaxedRawResults = $this->searchRaw($relaxedData);
+
+            if (! empty($relaxedRawResults['data'] ?? [])) {
+                $results = $this->formatResults($relaxedRawResults);
+                $relaxedTagFiltersApplied = true;
+            }
+        }
+
+        if ($relaxedTagFiltersApplied) {
+            $results['_meta'] = [
+                'relaxed_chunk_tag_groups' => true,
+            ];
+        }
 
         $this->logger()->debug('[Tool] SearchChunks returned', ['data' => $this->truncateForLog($results)]);
 
         return $results;
+    }
+
+    private function searchRaw(array $data): array
+    {
+        $dto = ChunkSearchDataDTO::fromArray($data);
+
+        return $this->chunkService->search($dto)->toArray();
     }
 
     /**
@@ -171,6 +211,11 @@ class SearchChunks extends Tool
     private function normalizeInput(array|DataModel $input): array
     {
         $data = ! is_array($input) ? $input->toArray() : $input;
+        if (array_key_exists('has_image', $data) && ! array_key_exists('hasImage', $data)) {
+            $data['hasImage'] = $data['has_image'];
+            unset($data['has_image']);
+        }
+
         $data['projectsAliases'] = [$this->project->alias];
         if ($this->document) {
             $data['documentsAliases'] = [$this->document->alias];
@@ -208,6 +253,15 @@ class SearchChunks extends Tool
         }
 
         return $chunkTagGroups;
+    }
+
+    private function shouldRelaxImageTagFilters(array $data, array $rawPaginator): bool
+    {
+        return ($data['allowRelaxTagFilters'] ?? false) === true
+            && ($data['hasImage'] ?? null) === true
+            && ! empty($data['chunkTagGroups'])
+            && count($data['chunkTagGroups']) > 1
+            && empty($rawPaginator['data'] ?? []);
     }
 
     /**

@@ -10,7 +10,6 @@ use SimoneBianco\LaravelRagChunks\DTOs\ProjectDTO;
 use SimoneBianco\LaravelRagChunks\Enums\Process\ProcessType;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\Tag;
-use SimoneBianco\LaravelRagChunks\Models\TagsBlueprint;
 use Throwable;
 
 class ProjectService

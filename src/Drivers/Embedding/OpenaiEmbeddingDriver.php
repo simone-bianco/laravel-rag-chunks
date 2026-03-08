@@ -5,12 +5,15 @@ namespace SimoneBianco\LaravelRagChunks\Drivers\Embedding;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\AiAgents\Traits\InjectsRotatedOpenAIKey;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use Throwable;
 
 class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
 {
+    use InjectsRotatedOpenAIKey;
+
     public function __construct(
         protected string $configKey,
         protected ?string $baseUrl = null,
@@ -18,7 +21,6 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
         protected ?string $model = null,
     ) {
         $this->baseUrl ??= config("rag_chunks.embedders.$configKey.base_url");
-        $this->apiKey ??= config("rag_chunks.embedders.$configKey.api_key");
         $this->model ??= config("rag_chunks.embedders.$configKey.model");
     }
 
@@ -33,6 +35,10 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
     public function embed(string $text): array
     {
         try {
+            $this->injectRotatedOpenAIKey();
+
+            $this->apiKey = config("rag_chunks.embedders.$this->configKey.api_key");
+
             if (empty($this->apiKey)) {
                 throw new ClientException('OPENAI_API_KEY not set in config.', 401, null, null, [], false);
             }

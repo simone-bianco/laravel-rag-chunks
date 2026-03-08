@@ -4,12 +4,11 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use Exception;
 use Illuminate\Support\Collection;
-use LarAgent\Agent;
 use LarAgent\Context\Drivers\CacheStorage;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
-class RagSearchAgent extends Agent
+class RagSearchAgent extends RotableAgent
 {
     protected $history = CacheStorage::class;
 

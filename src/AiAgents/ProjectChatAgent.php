@@ -5,7 +5,6 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents;
 use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use LarAgent\Agent;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
@@ -15,7 +14,7 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 
-class ProjectChatAgent extends Agent
+class ProjectChatAgent extends RotableAgent
 {
     protected $history = PageChatStorageDriver::class;
 
@@ -143,6 +142,8 @@ Identify 1–3 independent, focused search angles that together cover the user's
 - Complex topic with multiple sub-aspects → up to 3 searches.
 
 Craft each query as a concise English phrase or question targeting the specific angle.
+If the user asks to show visual material (maps/images/diagrams/layouts) or the intent is plausibly visual, include at least one image-oriented query angle using terms like: `map`, `layout`, `diagram`, `image`, `screenshot`, `illustration`.
+For purely explanatory requests without visual intent, avoid forcing image-oriented angles.
 Examples:
 - "Dove vivono i goblin e cosa mangiano?" → `["goblin habitat territory", "goblin diet food"]`
 - "Chi è il drago Ignar?" → `["Ignar dragon"]`
@@ -154,6 +155,7 @@ For non-small-talk questions this step is mandatory.
 
 Each search item:
 - `query` (required): concise English phrase or question.
+- `hasImage` (optional): set `true` when the user explicitly asks to show/see images/maps/diagrams/layouts (including Italian forms like `mostrami`, `mostrameli`, `fammi vedere`).
 - `purpose` (optional): short label for your own clarity.
 
 ### STEP 3 — Read the results

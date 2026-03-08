@@ -21,6 +21,7 @@ class ChunkSearchDataDTO
         public ?Collection $tagFilters = null,
         public ?array      $documentsAliases = null,
         public ?array      $chunksIds = null,
+        public ?bool       $hasImage = null,
         public bool        $includeEmbeddings = false,
         public bool        $includePageUrls = false,
         // chunk-level classic tag filter: typeAlias => tagIds[]
@@ -45,6 +46,7 @@ class ChunkSearchDataDTO
             tagFilters: isset($data['tagFilters']) ? collect($data['tagFilters']) : null,
             documentsAliases: $data['documentsAliases'] ?? null,
             chunksIds: $data['chunksIds'] ?? null,
+            hasImage: isset($data['hasImage']) ? (bool) $data['hasImage'] : null,
             chunkTagGroups: $data['chunkTagGroups'] ?? null,
         );
     }
@@ -65,6 +67,7 @@ class ChunkSearchDataDTO
             'tagFilters' => $this->tagFilters?->toArray(),
             'documentsAliases' => $this->documentsAliases,
             'chunksIds' => $this->chunksIds,
+            'hasImage' => $this->hasImage,
         ];
     }
 }

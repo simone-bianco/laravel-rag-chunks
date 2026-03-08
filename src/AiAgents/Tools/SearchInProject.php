@@ -31,6 +31,10 @@ class SearchInProject extends Tool
                             'type'        => 'string',
                             'description' => 'The search query in ENGLISH, focused on the core concept (e.g. "goblin tribe rituals", "founding of the empire", "what do goblins eat?"). Be concise and specific.',
                         ],
+                        'hasImage' => [
+                            'type'        => 'boolean',
+                            'description' => 'If true, force image-only retrieval for this search angle (chunks with images only). Use when user explicitly asks to show/see maps/images/diagrams.',
+                        ],
                         'purpose' => [
                             'type'        => 'string',
                             'description' => 'Brief label for this search angle, for your own bookkeeping (e.g. "habitat", "diet", "history"). Not used by the search engine.',
@@ -54,20 +58,46 @@ class SearchInProject extends Tool
     {
         $searches = is_array($input) ? ($input['searches'] ?? []) : $input->toArray()['searches'] ?? [];
 
-        $count = count($searches);
+        $normalizedSearches = collect($searches)
+            ->filter(fn ($s) => is_array($s))
+            ->map(function (array $s) {
+                $query = trim((string) ($s['query'] ?? ''));
+
+                if ($query === '') {
+                    return null;
+                }
+
+                return [
+                    'query' => str_replace(["\r\n", "\n", "\r"], ' ', $query),
+                    'hasImage' => array_key_exists('hasImage', $s) ? (bool) $s['hasImage'] : null,
+                ];
+            })
+            ->filter()
+            ->values();
+
+        $count = $normalizedSearches->count();
 
         if ($count === 0) {
             return ['results' => []];
         }
 
-        $queryLines = collect($searches)
-            ->map(fn ($s, $i) => ($i + 1) . '. ' . trim($s['query'] ?? ''))
-            ->filter()
+        $queryLines = $normalizedSearches
+            ->map(function (array $s, int $i) {
+                $hasImage = $s['hasImage'] === null
+                    ? 'null'
+                    : ($s['hasImage'] ? 'true' : 'false');
+
+                $query = json_encode($s['query'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+                return ($i + 1) . ". query={$query}; hasImage={$hasImage}";
+            })
             ->join("\n");
 
         $message = "Execute the following {$count} search(es) in parallel using search_chunks. "
             . "Return a `results` array with exactly {$count} entr" . ($count === 1 ? 'y' : 'ies') . ", "
-            . "one per search, in the same order.\n\n"
+            . "one per search, in the same order.\n"
+            . "CRITICAL: if a line has hasImage=true, you MUST pass hasImage=true to search_chunks for that query. "
+            . "If hasImage=null, decide based on query intent.\n\n"
             . $queryLines;
 
         $result = new ProjectSearchAgent(

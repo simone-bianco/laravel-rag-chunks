@@ -4,7 +4,6 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
-use LarAgent\Agent;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
@@ -14,7 +13,7 @@ use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
-class ProjectSearchAgent extends Agent
+class ProjectSearchAgent extends RotableAgent
 {
     protected $history = 'in_memory';
 
@@ -154,6 +153,7 @@ These are hard enum filters that restrict results to chunks tagged with specific
 - The available enum values for each tag type are listed in the tool schema.
 - ONLY use them if the query explicitly mentions an entity that exactly matches one of the available enum values.
 - NEVER guess. If unsure whether a value exists, leave the parameter null.
+- When `hasImage=true`, keep recall high: avoid `tag_*` filters by default, and use at most one only if the user explicitly asked for that exact tag value.
 - Example: `tag_location=["ironforge"]` only if the user explicitly asks about "Ironforge".
 
 ### `documentsAliases` (SCOPE TO SPECIFIC DOCUMENTS)
@@ -161,10 +161,26 @@ Restricts search to chunks belonging to specific documents.
 - Leave null for cross-document search (the default and most common case).
 - Use only if the query explicitly mentions a specific document name.
 
-### `perPage` (RESULT SET SIZE — enum: 3, 5, 10)
-- `3`: Highly specific queries (exact named entity, narrow scope)
-- `5`: Standard (default — good balance of precision and recall)
-- `10`: Broad thematic queries expected to span many chunks
+### `hasImage` (VISUAL FILTER)
+- `true`: return only chunks that have images.
+- `false`: return only chunks without images.
+- Omit for mixed results.
+
+### `allowRelaxTagFilters` (IMAGE-SEARCH SAFETY VALVE)
+- Use only with `hasImage=true`.
+- Set to `true` only when tag filters are heuristic and over-restrictive (for example, many inferred tag groups that were not explicitly requested by the user).
+- Keep `false` when the user explicitly requested a precise tagged subset.
+
+If the incoming search line contains explicit `hasImage=true`, you MUST pass `hasImage=true` to `search_chunks` for that query.
+
+Set `hasImage=true` when the query explicitly asks to show/see visual material or strongly implies visual content.
+Image-intent cues include terms like: `show`, `image`, `photo`, `map`, `diagram`, `layout`, `schema`, `screenshot`, `illustrazione`, `mappa`, `diagramma`, `schema`, `mostrami`, `fammi vedere`.
+For ambiguous informational questions ("spiega", "riassumi", "what is", "tell me"), do NOT force `hasImage` unless there is explicit visual intent.
+
+### `perPage` (RESULT SET SIZE — enum: 8, 10, 12)
+- `8`: Highly specific queries (exact named entity, narrow scope)
+- `10`: Standard (default — good balance of precision and recall)
+- `12`: Broad thematic queries expected to span many chunks
 
 ### `page` (PAGINATION)
 - Start at 1. Only paginate if you need to retry with a different page.
@@ -181,6 +197,8 @@ Restricts search to chunks belonging to specific documents.
 
 ### If you found nothing (0 results):
 - Retry ONCE with `keywordsSearch` using the most specific proper nouns from the query, AND use fewer/broader `textSearch` keywords.
+- Only if `hasImage=true` was inferred (not explicitly requested by the user), you may retry once without `hasImage`.
+- If the user explicitly asked for images/maps/diagrams, keep `hasImage=true` and do NOT relax that constraint.
 - If still nothing after the retry: output `relevant_chunks: []` for that query. Do NOT loop further.
 
 ### CIRCUIT BREAKER
