@@ -9,9 +9,6 @@ use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ConnectChunks;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetNextChunk;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetPreviousChunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -29,86 +26,51 @@ class ProjectSearchAgent extends Agent
 
     protected $maxCompletionTokens = 16384;
 
-    // Must be false: with true the LLM can emit search+navigate calls in the same turn,
-    // creating tool_call_ids that the loop cannot satisfy in order → corrupt history.
-    protected $parallelToolCalls = false;
+    protected $parallelToolCalls = true;
 
+    /**
+     * Response schema: an array of result sets, one per input search query.
+     * Each entry mirrors the per-query output of the agent.
+     */
     protected $responseSchema = [
-        'name' => 'search_result',
+        'name'   => 'search_results',
         'schema' => [
-            'type' => 'object',
+            'type'       => 'object',
             'properties' => [
-                'relevant_chunks' => [
-                    'type' => 'array',
-                    'description' => 'Array of relevant chunks aliases',
-                    'items' => [
-                        'type' => 'string',
-                        'description' => 'chunk alias',
-                    ],
-                ],
-                'relevant_images' => [
-                    'type' => 'array',
-                    'description' => 'Array of relevant images',
-                    'items' => [
-                        'type' => 'object',
-                        'description' => 'single image',
+                'results' => [
+                    'type'        => 'array',
+                    'description' => 'One result entry per input search query, in the same order as the input list.',
+                    'items'       => [
+                        'type'       => 'object',
                         'properties' => [
-                            'url' => [
-                                'type' => 'string',
-                                'description' => 'img url',
+                            'relevant_chunks' => [
+                                'type'        => 'array',
+                                'description' => 'Array of chunk IDs (UUIDs) that are relevant to this specific search query. Include every single relevant chunk — do not truncate.',
+                                'items'       => [
+                                    'type'        => 'string',
+                                    'description' => 'Chunk ID (UUID), taken verbatim from the search results keys.',
+                                ],
                             ],
-                            'content' => [
-                                'type' => 'string',
-                                'description' => 'brief explanation of content',
-                            ],
-                        ],
-                        'required' => ['url', 'content'],
-                        'additional_properties' => false,
-                    ],
-                ],
-                'proposed_connections' => [
-                    'type' => 'array',
-                    'description' => 'A list of proposed connections between chunks and documents',
-                    'items' => [
-                        'type' => 'object',
-                        'description' => 'Single connection object',
-                        'properties' => [
-                            'source_entity_type' => [
-                                'type' => 'string',
-                                'description' => 'type of source entity',
-                                'enum' => ['chunk', 'document'],
-                            ],
-                            'source_entity_alias' => [
-                                'type' => 'string',
-                                'description' => 'alias of source entity',
-                            ],
-                            'destination_entity_type' => [
-                                'type' => 'string',
-                                'description' => 'type of destination entity',
-                                'enum' => ['chunk', 'document'],
-                            ],
-                            'destination_entity_alias' => [
-                                'type' => 'string',
-                                'description' => 'alias of destination entity',
-                            ],
-                            'relation_type' => [
-                                'type' => 'string',
-                                'description' => 'unidirectional if goes only from A to B, bidirectional if can be read in both ways',
-                                'enum' => ['bidirectional', 'unidirectional'],
+                            'relevant_images' => [
+                                'type'  => 'array',
+                                'description' => 'Images found in the chunks relevant to this query.',
+                                'items' => [
+                                    'type'       => 'object',
+                                    'properties' => [
+                                        'url'     => ['type' => 'string', 'description' => 'Image URL'],
+                                        'content' => ['type' => 'string', 'description' => 'Brief description of what the image shows'],
+                                    ],
+                                    'required'             => ['url', 'content'],
+                                    'additionalProperties' => false,
+                                ],
                             ],
                         ],
-                        'required' => [
-                            'source_entity_type',
-                            'source_entity_alias',
-                            'destination_entity_type',
-                            'destination_entity_alias',
-                            'relation_type',
-                        ],
-                        'additional_properties' => false,
+                        'required'             => ['relevant_chunks', 'relevant_images'],
+                        'additionalProperties' => false,
                     ],
                 ],
             ],
-            'required' => ['relevant_chunks', 'proposed_connections'],
+            'required'             => ['results'],
             'additionalProperties' => false,
         ],
         'strict' => true,
@@ -138,9 +100,6 @@ class ProjectSearchAgent extends Agent
         $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
 
         $this->withTool(new SearchChunks($this->project, $this->document));
-        $this->withTool(new GetPreviousChunk);
-        $this->withTool(new GetNextChunk);
-        $this->withTool(new ConnectChunks);
 
         parent::__construct($key, $usesUserId, $group);
 
@@ -155,39 +114,85 @@ class ProjectSearchAgent extends Agent
             : '';
 
         return <<<INSTRUCTIONS
-You are a highly restricted, literal-minded RAG Retrieval Agent. Do not overthink. Do not deduce. Follow this EXACT algorithm step-by-step.
+You are a highly restricted, literal-minded RAG Retrieval Agent for the project: "{$this->project->name}: {$this->project->description}".
 
-You are working on: "{$this->project->name}: {$this->project->description}".
-**CRITICAL: LANGUAGE RULE**
-The user speaks Italian, but the database is in ENGLISH.
-1. Translate the user's core concepts to ENGLISH before searching.
-2. Reply in the EXACT language of the retrieved text (ENGLISH).
+Your ONLY job is to call `search_chunks` and return structured chunk IDs. Do NOT write prose, do NOT add commentary, do NOT deduce — only retrieve and report.
 
-**STEP 1: HOW TO CALL search_chunks**
-- If the user asks a multi-part question (e.g., "A and B"), DO NOT search for both at once. Search for the most specific entity first.
-- `textSearch`: USE MAXIMUM 3 OR 4 ENGLISH WORDS. Strip all verbs and grammar. NEVER use quotes (""). (Example: dried dung beetles barrel)
-- `semanticTagsSearch`: 2 or 3 comma-separated English words.
-- `keywordsSearch`: STRICTLY FORBIDDEN on the first attempt. NEVER use it unless you got 0 results on the first try and need an exact word match fallback.
-- `tag_*` parameters: LEAVE THEM NULL. NEVER GUESS a location or category. ONLY use them if the user EXPLICITLY types the exact name of a place.
+---
+## STEP 0 — PARALLEL EXECUTION
+You receive a numbered list of N search queries. You MUST call `search_chunks` for ALL of them in a SINGLE parallel batch (one tool call per query, all dispatched simultaneously). Do NOT process them sequentially.
 
-**STEP 2: HOW TO HANDLE RESULTS (THE ANTI-LOOP RULE)**
-- Read the retrieved chunks. Mentally translate the user's Italian query to see if the English text matches (e.g. "scarabei" = "beetles").
-- IF YOU FIND A PARTIAL ANSWER (e.g., you find the tea, but not the barrel): YOU ARE STRICTLY FORBIDDEN FROM CALLING `search_chunks` AGAIN. You MUST immediately call `get_next_chunk` and `get_previous_chunk` on the ID of the chunk that had the partial answer. The missing context is always there.
-- IF YOU FIND NOTHING: Retry `search_chunks` exactly ONCE with fewer, broader keywords and absolutely NO tags.
+---
+## STEP 1 — HOW TO USE `search_chunks` PARAMETERS
 
-**STEP 3: CIRCUIT BREAKER**
-- MAXIMUM 3 SEARCH ATTEMPTS TOTAL.
-- If you hit 3 attempts and still have nothing, STOP. Output exactly: "Information not found in the database." No apologies.
+### `textSearch` (ALWAYS USE — Core semantic search)
+Embeds your string and finds chunks whose **content** is semantically similar.
+- Use 3-5 English keywords representing the core concept.
+- Strip all verbs, articles, and grammar. No quotes.
+- Example: `"goblin tribal elder ceremony"` (NOT `"what is the goblin ceremony?"`)
 
-**STEP 4: PROPOSING CONNECTIONS (USE EXTREMELY SPARINGLY)**
-- In your `proposed_connections` array, ONLY return CRITICAL connections that significantly facilitate future retrieval by reducing search steps.
-- Use this strictly for highly cross-referenced data where knowing entity A means the system will almost certainly need entity B immediately.
-- DO NOT return obvious, trivial, or purely sequential connections. Less is more.
+### `questionsSearch` (USE WHEN QUERY IS A QUESTION — Matches pre-indexed Q&A)
+Embeds your string and finds chunks whose **pre-indexed questions** are semantically similar.
+- If the input query looks like a question, repeat it here verbatim.
+- Synergizes with `textSearch` for significantly better recall.
+- Example: `"What do goblins eat?"`, `"How was the empire founded?"`
 
-**STEP 5: FINAL OUTPUT (CRITICAL: DO NOT TRUNCATE RESULTS)**
-- Output the raw, direct answer based ONLY on the retrieved text.
-- ZERO conversational filler. No introductions.
-- YOU MUST EXTRACT AND RETURN **EVERY SINGLE** RELEVANT CHUNK ID you found in the search results. DO NOT stop at 1 or 2 chunks if more are relevant. DO NOT summarize or be lazy. If the tool returns 4 relevant chunks, your `relevant_chunks` array MUST contain exactly 4 IDs.
+### `semanticTagsSearch` (USE FOR THEMATIC/CATEGORICAL QUERIES — Matches chunk tags)
+Embeds your string and finds chunks whose **semantic tag cloud** is similar.
+- Use 2-4 comma-separated English concept words.
+- Best for broad thematic queries, not specific entity lookups.
+- Example: `"combat, creature, melee"` or `"ancient, history, founding"`
+
+### `keywordsSearch` (FALLBACK ONLY — Hard exact-word filter)
+Returns ONLY chunks that contain ALL specified words (case-insensitive substring match).
+- **NEVER use on the first attempt.** Only use if first search returned 0 results and you need an exact name match.
+- Each word must be present in the chunk. Fewer words = broader results.
+- Example: `["Gragnok", "Warchief"]`
+
+### `tag_*` parameters (HARD CATEGORY FILTER — Dynamic per project)
+These are hard enum filters that restrict results to chunks tagged with specific values.
+- The available enum values for each tag type are listed in the tool schema.
+- ONLY use them if the query explicitly mentions an entity that exactly matches one of the available enum values.
+- NEVER guess. If unsure whether a value exists, leave the parameter null.
+- Example: `tag_location=["ironforge"]` only if the user explicitly asks about "Ironforge".
+
+### `documentsAliases` (SCOPE TO SPECIFIC DOCUMENTS)
+Restricts search to chunks belonging to specific documents.
+- Leave null for cross-document search (the default and most common case).
+- Use only if the query explicitly mentions a specific document name.
+
+### `perPage` (RESULT SET SIZE — enum: 3, 5, 10)
+- `3`: Highly specific queries (exact named entity, narrow scope)
+- `5`: Standard (default — good balance of precision and recall)
+- `10`: Broad thematic queries expected to span many chunks
+
+### `page` (PAGINATION)
+- Start at 1. Only paginate if you need to retry with a different page.
+
+---
+## STEP 2 — HANDLING RESULTS
+
+### If you found relevant chunks:
+- Results are grouped by document: `data['document-alias']['chunks']['chunk-uuid'] = {content, ...}`.
+- Collect chunk UUIDs from the `chunks` keys of EVERY document entry.
+- Include ALL relevant UUIDs in `relevant_chunks` — do NOT truncate.
+- `prev_chunk` and `next_chunk` provide IDs and short previews of adjacent chunks. Use them to understand context, but only add their IDs to `relevant_chunks` if they are directly relevant.
+- If a chunk has `image_url`, include it in `relevant_images`.
+
+### If you found nothing (0 results):
+- Retry ONCE with `keywordsSearch` using the most specific proper nouns from the query, AND use fewer/broader `textSearch` keywords.
+- If still nothing after the retry: output `relevant_chunks: []` for that query. Do NOT loop further.
+
+### CIRCUIT BREAKER
+Maximum 2 attempts per query (initial + one retry). After 2 attempts with no results, stop and return empty.
+
+---
+## STEP 3 — OUTPUT FORMAT
+
+Return a `results` array with exactly N entries (one per input query, same order).
+Each entry: `{ relevant_chunks: [uuid, ...], relevant_images: [...] }`.
+
+**LANGUAGE RULE**: Input queries may be in Italian. Always translate core concepts to ENGLISH before calling `search_chunks`. Return chunk IDs as-is (they are UUIDs from the search results keys).
 $projectInstructionsBlock
 INSTRUCTIONS;
     }
@@ -199,105 +204,46 @@ INSTRUCTIONS;
 
     public function respond(?string $message = null): string|array|DataModel|MessageInterface
     {
-        // Force raw MessageInterface return to bypass LarAgent's structured-output pipeline.
-        // The pipeline crashes with "processBeforeStructuredOutput(): Argument #1 must be array, null given"
-        // when the LLM returns null content after a tool-call loop. By getting the raw message,
-        // we can json_decode manually and handle null gracefully.
-        $this->returnMessage = true;
-
         try {
-            $raw = parent::respond($message);
+            $decoded = parent::respond($message);
         } catch (\Throwable $e) {
-            Log::warning('[ProjectSearchAgent] respond() failed, returning empty result', [
-                'error' => $e->getMessage(),
-            ]);
+            Log::warning('[ProjectSearchAgent] respond() failed', ['error' => $e->getMessage()]);
 
-            return [
-                'chunk_ids' => [],
-                'relevant_chunks' => [],
-                'relevant_images' => [],
-                'proposed_connections' => [],
-            ];
+            return ['results' => []];
         }
 
-        // Extract content from the raw MessageInterface.
-        // Important: getContent() returns a MessageContent object that implements __toString(),
-        // so we MUST cast it to (string) to pass it to json_decode().
-        //
-        // NOTE FOR DEBUGGING: adding explicit variable types in logs to ensure we see exactly
-        // what class is returned if it still fails.
-        Log::debug('[ProjectSearchAgent] Inspecting LLM raw output', [
-            'raw_type' => gettype($raw),
-            'raw_class' => is_object($raw) ? get_class($raw) : null,
-            'raw_content' => $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : 'null'),
-        ]);
+        if (! is_array($decoded) || empty($decoded['results'])) {
+            return ['results' => []];
+        }
 
-        $content = $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : null);
+        return ['results' => $this->resolveResults($decoded['results'])];
+    }
 
-        // Sanitize the content before decoding
-        $sanitizedContent = $content;
-        if (is_string($sanitizedContent)) {
-            // Remove markdown codeblock wrapping if strictly present
-            $sanitizedContent = preg_replace('/^```(?:json)?\s*(.*?)\s*```$/s', '$1', trim($sanitizedContent));
+    private function resolveResults(array $results): array
+    {
+        return array_map(function (array $searchResult) {
+            $chunkIds = $searchResult['relevant_chunks'] ?? [];
 
-            // If the model output the JSON twice (e.g. {...}\n{...}), extract only the first complete object
-            // Improved regex to handle newlines between objects better
-            if (preg_match('/^(\{\s*".*?\})\s*\{/s', $sanitizedContent, $matches)) {
-                $sanitizedContent = $matches[1];
-                Log::debug('[ProjectSearchAgent] Extracted first JSON object from duplicated output');
+            if (empty($chunkIds)) {
+                return [
+                    'chunk_ids'       => [],
+                    'relevant_chunks' => [],
+                    'relevant_images' => $searchResult['relevant_images'] ?? [],
+                ];
             }
 
-            // Remove trailing commas in arrays/objects
-            $sanitizedContent = preg_replace('/,\s*([\]}])/m', '$1', $sanitizedContent);
-        }
-
-        Log::debug('[ProjectSearchAgent] Content after sanitization', [
-            'sanitized_content' => $sanitizedContent,
-        ]);
-
-        $decoded = is_string($sanitizedContent) ? json_decode($sanitizedContent, true) : (is_array($raw) ? $raw : null);
-
-        if (! is_array($decoded)) {
-            Log::warning('[ProjectSearchAgent] LLM returned non-JSON content', [
-                'raw_class' => is_object($raw) ? get_class($raw) : null,
-                'content_type' => gettype($content),
-                'content_preview' => is_string($content) ? mb_substr($content, 0, 1000) : null,
-                'json_error' => json_last_error_msg(),
-                'sanitized_preview' => is_string($sanitizedContent) ? mb_substr($sanitizedContent, 0, 1000) : null,
-            ]);
+            $chunks = Chunk::query()
+                ->whereIn('id', $chunkIds)
+                ->withNeighborSnippets()
+                ->get();
 
             return [
-                'chunk_ids' => [],
-                'relevant_chunks' => [],
-                'relevant_images' => [],
-                'proposed_connections' => [],
+                'chunk_ids'       => $chunks->pluck('id')->values()->toArray(),
+                'relevant_chunks' => $chunks->mapWithKeys(fn (Chunk $chunk) => [
+                    $chunk->id => ChunkMapper::loadAndMap($chunk),
+                ])->toArray(),
+                'relevant_images' => $searchResult['relevant_images'] ?? [],
             ];
-        }
-
-        if (empty($decoded['relevant_chunks'])) {
-            return [
-                'chunk_ids' => [],
-                'relevant_chunks' => $decoded['relevant_chunks'] ?? [],
-                'relevant_images' => $decoded['relevant_images'] ?? [],
-                'proposed_connections' => $decoded['proposed_connections'] ?? [],
-            ];
-        }
-
-        $aliases = $decoded['relevant_chunks'];
-
-        $chunks = Chunk::query()
-            ->whereIn('id', $aliases)
-            ->withNeighborSnippets()
-            ->get();
-
-        $decoded['chunk_ids'] = $chunks->pluck('id')->values()->toArray();
-
-        $decoded['relevant_chunks'] = $chunks
-            ->mapWithKeys(fn (Chunk $chunk) => [
-                $chunk->id => ChunkMapper::loadAndMap($chunk),
-            ])
-            ->toArray();
-
-        return $decoded;
+        }, $results);
     }
 }

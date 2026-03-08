@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
+use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 
 class ChunkMapper
@@ -11,14 +12,12 @@ class ChunkMapper
      */
     public static function mapItem(array $item): array
     {
-        // For standard AI Search Agent mapping, we deliberately exclude thick context fields
-        // like previous/next snippets or semantic tags to dramatically reduce token consumption
-        // and avoid context window bloats. The AI only needs the strict content and its ID/relations.
         return array_filter([
-            'document_id' => $item['document_id'],
-            'content'     => $item['content'],
-            'image_url'   => $item['image_url'] ?? null,
-            'relations'   => self::mapRelations($item),
+            'content'    => $item['content'],
+            'image_url'  => $item['image_url'] ?? null,
+            'relations'  => self::mapRelations($item),
+            'prev_chunk' => self::mapNeighbor($item['prev_snippet_id'] ?? null, $item['prev_snippet'] ?? null),
+            'next_chunk' => self::mapNeighbor($item['next_snippet_id'] ?? null, $item['next_snippet'] ?? null),
         ]);
     }
 
@@ -33,6 +32,21 @@ class ChunkMapper
         $chunk->makeHidden(['embedding', 'questions_embedding', 'tags_embedding', 'dedup_media']);
 
         return self::mapItem($chunk->toArray());
+    }
+
+    /**
+     * Map a neighbor chunk (previous or next) into a compact format.
+     */
+    private static function mapNeighbor(?string $id, ?string $snippet): ?array
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return [
+            'id'      => $id,
+            'preview' => $snippet !== null ? Str::limit(trim($snippet), 50) : null,
+        ];
     }
 
     /**

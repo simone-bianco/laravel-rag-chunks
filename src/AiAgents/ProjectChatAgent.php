@@ -8,11 +8,7 @@ use LarAgent\Agent;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ConnectChunks;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetAdjacentChunk;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
-use SimoneBianco\LaravelRagChunks\Models\Chunk;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
@@ -24,87 +20,39 @@ class ProjectChatAgent extends Agent
 
     protected ?Document $document = null;
 
-    protected $model = 'gpt-4.1-mini'; // Mantenuto dal Chat Agent originale
+    protected $model = 'gpt-5.2';
 
     protected $maxCompletionTokens = 16384;
 
-    // Deve essere false per evitare che l'LLM chiami search e navigate nello stesso turno,
-    // corrompendo la cronologia delle chiamate ai tool.
     protected $parallelToolCalls = false;
 
     protected $responseSchema = [
-        'name' => 'agent_response',
+        'name'   => 'agent_response',
         'schema' => [
-            'type' => 'object',
+            'type'       => 'object',
             'properties' => [
                 'response' => [
-                    'type' => 'string',
-                    'description' => 'The assistant\'s final response to the user in rich Markdown. Can be conversational or informational.',
+                    'type'        => 'string',
+                    'description' => 'The assistant\'s final response to the user in rich Markdown. Can be conversational or informational. Always in the same language the user used.',
                 ],
                 'relevant_chunks' => [
-                    'type' => 'array',
-                    'description' => 'Array of relevant chunks IDs used to build the response. Leave empty for small talk.',
-                    'items' => [
-                        'type' => 'string',
-                        'description' => 'chunk ID (UUID)',
+                    'type'        => 'array',
+                    'description' => 'Array of chunk IDs (UUIDs) that were used to build this response. Collect them from the `chunk_ids` fields in the search results. Leave empty for small talk.',
+                    'items'       => [
+                        'type'        => 'string',
+                        'description' => 'Chunk ID (UUID)',
                     ],
                 ],
                 'relevant_images' => [
-                    'type' => 'array',
-                    'description' => 'Array of relevant images. Leave empty for small talk.',
-                    'items' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'url' => [
-                                'type' => 'string',
-                                'description' => 'img url',
-                            ],
-                            'content' => [
-                                'type' => 'string',
-                                'description' => 'brief explanation of content',
-                            ],
-                        ],
-                        'required' => ['url', 'content'],
-                        'additional_properties' => false,
-                    ],
-                ],
-                'proposed_connections' => [
-                    'type' => 'array',
-                    'description' => 'Proposed connections between chunks/documents. Leave empty for small talk.',
-                    'items' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'source_entity_type' => [
-                                'type' => 'string',
-                                'enum' => ['chunk', 'document'],
-                            ],
-                            'source_entity_alias' => [
-                                'type' => 'string',
-                            ],
-                            'destination_entity_type' => [
-                                'type' => 'string',
-                                'enum' => ['chunk', 'document'],
-                            ],
-                            'destination_entity_alias' => [
-                                'type' => 'string',
-                            ],
-                            'relation_type' => [
-                                'type' => 'string',
-                                'enum' => ['bidirectional', 'unidirectional'],
-                            ],
-                        ],
-                        'required' => [
-                            'source_entity_type',
-                            'source_entity_alias',
-                            'destination_entity_type',
-                            'destination_entity_alias',
-                            'relation_type',
-                        ],
-                        'additional_properties' => false,
+                    'type'        => 'array',
+                    'description' => 'Array of image URLs referenced in the response. Leave empty for small talk.',
+                    'items'       => [
+                        'type'        => 'string',
+                        'description' => 'Image URL',
                     ],
                 ],
             ],
-            'required' => ['response', 'relevant_chunks', 'relevant_images', 'proposed_connections'],
+            'required'             => ['response', 'relevant_chunks', 'relevant_images'],
             'additionalProperties' => false,
         ],
         'strict' => true,
@@ -133,14 +81,11 @@ class ProjectChatAgent extends Agent
 
         $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
 
-        // Integriamo tutti i tool del Search Agent
-        $this->withTool(new SearchChunks($this->project, $this->document));
-        $this->withTool(new GetAdjacentChunk);
-        $this->withTool(new ConnectChunks);
+        $this->withTool(new SearchInProject($this->project->alias, $this->document?->alias));
 
         parent::__construct($key, $usesUserId, $group);
 
-        $this->logger()->debug('[Agent] ProjectChatAgent initialized (Unified)', ['project' => $this->project->alias]);
+        $this->logger()->debug('[Agent] ProjectChatAgent initialized', ['project' => $this->project->alias]);
     }
 
     public function instructions(): string
@@ -155,44 +100,55 @@ class ProjectChatAgent extends Agent
             : '';
 
         return <<<INSTRUCTIONS
-You are an advanced, helpful assistant for the project: "{$this->project->name}: {$this->project->description}".
+You are a helpful, knowledgeable assistant for the project: "{$this->project->name}: {$this->project->description}".
 {$documentData}
-
-You have two main modes of operation: Conversational and Retrieval (RAG).
-
----
-## 1. CONVERSATIONAL MODE (Small Talk)
-If the user's message does NOT require looking up information (e.g., "Ciao!", "Grazie", "Come stai?"), respond friendly in the `response` property in the user's language.
-- DO NOT call any search tools.
-- Leave `relevant_chunks`, `relevant_images`, and `proposed_connections` arrays EMPTY.
+You have ONE tool available: `search_in_project`. It delegates the actual retrieval work to a dedicated search agent that handles all database querying internally.
 
 ---
-## 2. RETRIEVAL MODE (Information Search)
-If the user asks for information, follow this EXACT algorithm:
+## MODE 1 — SMALL TALK (No retrieval needed)
+If the user's message is conversational and requires no factual lookup (e.g. "Ciao!", "Grazie", "Come stai?"):
+- Respond naturally and friendly in the `response` field, in the user's language.
+- Do NOT call `search_in_project`.
+- Leave `relevant_chunks` and `relevant_images` empty.
 
-**CRITICAL: LANGUAGE RULE**
-The user speaks Italian, but the database is in ENGLISH. Translate the user's core concepts to ENGLISH before searching.
+---
+## MODE 2 — INFORMATION RETRIEVAL
+For any question requiring factual information from the project knowledge base:
 
-**STEP 1: HOW TO CALL search_chunks**
-- `textSearch`: USE MAXIMUM 3 OR 4 ENGLISH WORDS. Strip all verbs and grammar.
-- `semanticTagsSearch`: 2 or 3 comma-separated English words.
-- `keywordsSearch`: STRICTLY FORBIDDEN on the first attempt.
-- `tag_*` parameters: LEAVE THEM NULL unless the user explicitly names a place.
+### STEP 1 — Decompose the question into search angles
+Identify 1–3 independent, focused search angles that together cover the user's full question.
+- One focused question → 1 search.
+- Multi-part question (A and B) → 2 searches (one per part).
+- Complex topic with multiple sub-aspects → up to 3 searches.
 
-**STEP 2: HANDLING RESULTS (THE INVESTIGATION LOOP)**
-- NEVER GUESS or output "there are others not named". You have the tools to find them!
-- If a chunk abruptly cuts off, or genericizes names (like "the other wyrmlords"), YOU MUST call `get_adjacent_chunk` on THAT chunk's ID specifying `direction` (previous or next) to read the missing text.
-- If you find NOTHING relevant OR you need a highly specific subset (e.g. searching exact Wyrmlord names): Retry `search_chunks` exactly ONCE prioritizing `keywordsSearch` or extremely specific `tag_*` parameters to bypass pagination limits.
-- **ABSOLUTE MAXIMUM: 3 SEARCH/ADJACENT ATTEMPTS.** If you hit 3 successive tool calls and still lack the full info, STOP and output what you have. DO NOT loop endlessly through pages.
+Craft each query as a concise English phrase or question targeting the specific angle.
+Examples:
+- "Dove vivono i goblin e cosa mangiano?" → `["goblin habitat territory", "goblin diet food"]`
+- "Chi è il drago Ignar?" → `["Ignar dragon"]`
+- "Quali sono le fazioni principali e i loro leader?" → `["main factions overview", "faction leaders commanders"]`
 
-**STEP 3: FORMATTING THE FINAL RESPONSE (NO FLUFF RULE)**
-- Write your answer in the `response` property using **rich Markdown** in the **same language the user used** (e.g., Italian).
-- **CRITICAL: NEVER ADD CONVERSATIONAL FLUFF.** Do not say "Ecco le informazioni che ho trovato", "Basandomi sui documenti", or summarize irrelevant details. Give the raw, direct, and concise facts the user asked for.
-- Use headings, bullet points, and bold text where appropriate.
-- **IMAGES**: Embed them inline contextually in the `response` using Markdown: `![description](url)`. Alternate text and images. DO NOT cluster them at the end.
-- **CHUNKS**: You MUST extract and return EVERY SINGLE relevant chunk ID you found in the `relevant_chunks` array.
-- DO NOT list chunk IDs, UUIDs, or aliases in the `response` text. Do not say things like "Other related chunks:". Just answer naturally.
-- **CONNECTIONS**: In `proposed_connections`, only return CRITICAL, highly cross-referenced connections. Use sparingly.
+### STEP 2 — Call `search_in_project` ONCE
+Pass all search angles in a single `searches` array. **Never call the tool more than once per user turn.**
+
+Each search item:
+- `query` (required): concise English phrase or question.
+- `purpose` (optional): short label for your own clarity.
+
+### STEP 3 — Read the results
+The tool returns `{ results: [...] }` — an array with one entry per search, in the same order.
+Each entry contains:
+- `relevant_chunks`: a map of `{ uuid: { content, document_id, image_url, relations } }` — read the `content` field to understand what was found.
+- `chunk_ids`: flat array of UUIDs for the relevant chunks (use these in your final `relevant_chunks`).
+- `relevant_images`: array of `{ url, content }` objects.
+
+### STEP 4 — Compose the response (NO FLUFF RULE)
+- Write your answer in the `response` field using **rich Markdown**.
+- **Always respond in the same language the user used** (e.g., Italian if they wrote in Italian).
+- **NEVER add conversational filler** such as "Ecco le informazioni che ho trovato", "Basandomi sui documenti", or any similar preamble. Provide the direct, concise answer.
+- Use headings, bullet points, bold text, and tables where they aid clarity.
+- **Images**: if any `image_url` is present in the chunks or `relevant_images`, embed them inline using `![description](url)`. Integrate them contextually — do NOT cluster them at the end.
+- **Chunks**: in `relevant_chunks`, include ALL chunk UUIDs you used (from `chunk_ids` in the results). Do NOT mention UUIDs or aliases in the `response` text.
+- In `relevant_images`, include the URL strings of every image you embedded in the response.
 $projectInstructionsBlock
 INSTRUCTIONS;
     }
@@ -202,95 +158,16 @@ INSTRUCTIONS;
         return $message;
     }
 
-    public function respond(string|\LarAgent\Core\Contracts\Message|null $message = null): array|DataModel|MessageInterface
+    public function respond(string|MessageInterface|null $message = null): array|DataModel|MessageInterface
     {
-        // Bypassiamo la pipeline di output strutturato di LarAgent per gestire
-        // manualmente il parsing e l'idratazione dei Chunk.
-        $this->returnMessage = true;
-
         try {
-            $raw = parent::respond($message);
+            $result = parent::respond($message);
         } catch (\Throwable $e) {
-            Log::warning('[ProjectChatAgent] respond() failed, returning empty result', [
-                'error' => $e->getMessage(),
-            ]);
+            Log::warning('[ProjectChatAgent] respond() failed', ['error' => $e->getMessage()]);
 
-            return [
-                'response' => 'Si è verificato un errore durante l\'elaborazione della richiesta.',
-                'chunk_ids' => [],
-                'relevant_chunks' => [],
-                'relevant_images' => [],
-                'proposed_connections' => [],
-            ];
+            return ['response' => 'Si è verificato un errore. Riprova.', 'relevant_chunks' => [], 'relevant_images' => []];
         }
 
-        Log::debug('[ProjectChatAgent] Inspecting LLM raw output', [
-            'raw_type' => gettype($raw),
-            'raw_class' => is_object($raw) ? get_class($raw) : null,
-            'raw_content' => $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : 'null'),
-        ]);
-
-        $content = $raw instanceof MessageInterface ? (string) $raw->getContent() : (is_string($raw) ? $raw : null);
-
-        // Pulizia del contenuto prima del decode
-        $sanitizedContent = $content;
-        if (is_string($sanitizedContent)) {
-            $sanitizedContent = preg_replace('/^```(?:json)?\s*(.*?)\s*```$/s', '$1', trim($sanitizedContent));
-
-            if (preg_match('/^(\{\s*".*?\})\s*\{/s', $sanitizedContent, $matches)) {
-                $sanitizedContent = $matches[1];
-                Log::debug('[ProjectChatAgent] Extracted first JSON object from duplicated output');
-            }
-
-            $sanitizedContent = preg_replace('/,\s*([\]}])/m', '$1', $sanitizedContent);
-        }
-
-        $decoded = is_string($sanitizedContent) ? json_decode($sanitizedContent, true) : (is_array($raw) ? $raw : null);
-
-        if (! is_array($decoded)) {
-            Log::warning('[ProjectChatAgent] LLM returned non-JSON content', [
-                'json_error' => json_last_error_msg(),
-                'sanitized_preview' => is_string($sanitizedContent) ? mb_substr($sanitizedContent, 0, 1000) : null,
-            ]);
-
-            return [
-                'response' => is_string($sanitizedContent) ? $sanitizedContent : 'Errore nella formattazione della risposta strutturata.',
-                'chunk_ids' => [],
-                'relevant_chunks' => [],
-                'relevant_images' => [],
-                'proposed_connections' => [],
-            ];
-        }
-
-        // Se non ci sono chunk rilevanti (es. small talk o ricerca fallita),
-        // restituiamo comunque la risposta testuale.
-        if (empty($decoded['relevant_chunks'])) {
-            return [
-                'response' => $decoded['response'] ?? '',
-                'chunk_ids' => [],
-                'relevant_chunks' => [],
-                'relevant_images' => $decoded['relevant_images'] ?? [],
-                'proposed_connections' => $decoded['proposed_connections'] ?? [],
-            ];
-        }
-
-        // Idratazione dei Chunk dal Database se la ricerca ha prodotto risultati
-        $aliases = $decoded['relevant_chunks'];
-
-        $chunks = Chunk::query()
-            ->whereIn('id', $aliases)
-            ->withNeighborSnippets()
-            ->get();
-
-        $decoded['chunk_ids'] = $chunks->pluck('id')->values()->toArray();
-
-        $decoded['relevant_chunks'] = $chunks
-            ->mapWithKeys(fn (Chunk $chunk) => [
-                $chunk->id => ChunkMapper::loadAndMap($chunk),
-            ])
-            ->toArray();
-
-        // Ritorna l'oggetto decodificato completo: response, chunk_ids, relevant_chunks, images, connections
-        return $decoded;
+        return is_array($result) ? $result : ['response' => '', 'relevant_chunks' => [], 'relevant_images' => []];
     }
 }
