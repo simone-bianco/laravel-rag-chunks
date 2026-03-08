@@ -4,14 +4,16 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use LarAgent\Agent;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\History\PageChatStorageDriver;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
-use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
+use SimoneBianco\LaravelRagChunks\Models\Document;
 
 class ProjectChatAgent extends Agent
 {
@@ -48,8 +50,19 @@ class ProjectChatAgent extends Agent
                     'type'        => 'array',
                     'description' => 'Array of image URLs referenced in the response. Leave empty for small talk.',
                     'items'       => [
-                        'type'        => 'string',
-                        'description' => 'Image URL',
+                        'type'       => 'object',
+                        'properties' => [
+                            'url'     => [
+                                'type'        => 'string',
+                                'description' => 'Image URL',
+                            ],
+                            'content' => [
+                                'type'        => 'string',
+                                'description' => 'Brief description of what the image shows',
+                            ],
+                        ],
+                        'required'             => ['url', 'content'],
+                        'additionalProperties' => false,
                     ],
                 ],
             ],
@@ -100,10 +113,17 @@ class ProjectChatAgent extends Agent
             ? "You are scoped to document: \"{$this->document->name}\".\n"
             : '';
 
-        return <<<INSTRUCTIONS
+return <<<INSTRUCTIONS
 You are a helpful, knowledgeable assistant for the project: "{$this->project->name}: {$this->project->description}".
 {$documentData}
 You have ONE tool available: `search_in_project`. It delegates the actual retrieval work to a dedicated search agent that handles all database querying internally.
+
+## HARD SCOPE BOUNDARY (MANDATORY)
+- Treat this project as the single source of truth.
+- For domain entities (characters, places, factions, events), assume the user means the in-project context by default.
+- Do NOT disambiguate across external franchises/editions/games unless the user explicitly asks for comparison.
+- Do NOT mention out-of-scope works (for example BG3 or unrelated universes) unless explicitly requested by the user.
+- Do NOT use prior/world knowledge when answering factual questions. Ground answers only on retrieved chunks.
 
 ---
 ## MODE 1 — SMALL TALK (No retrieval needed)
@@ -130,6 +150,7 @@ Examples:
 
 ### STEP 2 — Call `search_in_project` ONCE
 Pass all search angles in a single `searches` array. **Never call the tool more than once per user turn.**
+For non-small-talk questions this step is mandatory.
 
 Each search item:
 - `query` (required): concise English phrase or question.
@@ -146,10 +167,13 @@ Each entry contains:
 - Write your answer in the `response` field using **rich Markdown**.
 - **Always respond in the same language the user used** (e.g., Italian if they wrote in Italian).
 - **NEVER add conversational filler** such as "Ecco le informazioni che ho trovato", "Basandomi sui documenti", or any similar preamble. Provide the direct, concise answer.
+- Never start with disambiguation like "Dipende quale X intendi" unless the user explicitly requested a cross-setting comparison.
+- If retrieved chunks are insufficient or missing, clearly state that the information is not available in this project and ask one concise follow-up constrained to the same project scope.
 - Use headings, bullet points, bold text, and tables where they aid clarity.
 - **Images**: if any `image_url` is present in the chunks or `relevant_images`, embed them inline using `![description](url)`. Integrate them contextually — do NOT cluster them at the end.
+- Do NOT output raw image URLs as plain text or as clickable link lists (for example `https://...png` or `[Mappa](https://...png)`). Always embed images directly in markdown image syntax.
 - **Chunks**: in `relevant_chunks`, include ALL chunk UUIDs you used (from `chunk_ids` in the results). Do NOT mention UUIDs or aliases in the `response` text.
-- In `relevant_images`, include the URL strings of every image you embedded in the response.
+- In `relevant_images`, include every embedded image as `{url, content}`.
 $projectInstructionsBlock
 INSTRUCTIONS;
     }
@@ -169,6 +193,81 @@ INSTRUCTIONS;
             return ['response' => 'Si è verificato un errore. Riprova.', 'relevant_chunks' => [], 'relevant_images' => []];
         }
 
-        return is_array($result) ? $result : ['response' => '', 'relevant_chunks' => [], 'relevant_images' => []];
+        if (! is_array($result)) {
+            return ['response' => '', 'relevant_chunks' => [], 'relevant_images' => []];
+        }
+
+        return $this->normalizeResult($result);
+    }
+
+    private function normalizeResult(array $result): array
+    {
+        $chunkIds = collect($result['relevant_chunks'] ?? [])
+            ->filter(fn ($id) => is_string($id) && $id !== '')
+            ->values()
+            ->toArray();
+
+        return [
+            'response' => (string) ($result['response'] ?? ''),
+            'relevant_chunks' => $chunkIds,
+            'relevant_images' => $this->normalizeRelevantImages($result['relevant_images'] ?? [], $chunkIds),
+        ];
+    }
+
+    private function normalizeRelevantImages(array $images, array $chunkIds): array
+    {
+        $normalized = [];
+
+        foreach ($images as $image) {
+            if (is_string($image) && $image !== '') {
+                $normalized[] = [
+                    'url' => $image,
+                    'content' => 'Immagine rilevante',
+                ];
+
+                continue;
+            }
+
+            if (! is_array($image)) {
+                continue;
+            }
+
+            $url = isset($image['url']) && is_string($image['url']) ? trim($image['url']) : '';
+
+            if ($url === '') {
+                continue;
+            }
+
+            $content = isset($image['content']) && is_string($image['content'])
+                ? trim($image['content'])
+                : '';
+
+            $normalized[] = [
+                'url' => $url,
+                'content' => $content !== '' ? $content : 'Immagine rilevante',
+            ];
+        }
+
+        if (! empty($chunkIds)) {
+            $chunks = Chunk::query()->whereIn('id', $chunkIds)->get();
+
+            foreach ($chunks as $chunk) {
+                $url = $chunk->getFirstMedia()?->getUrl();
+
+                if (! is_string($url) || $url === '') {
+                    continue;
+                }
+
+                $normalized[] = [
+                    'url' => $url,
+                    'content' => Str::limit(trim((string) $chunk->content), 120),
+                ];
+            }
+        }
+
+        return collect($normalized)
+            ->unique('url')
+            ->values()
+            ->toArray();
     }
 }
