@@ -8,13 +8,14 @@ use LarAgent\Agent;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\AiAgents\History\PageChatStorageDriver;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class ProjectChatAgent extends Agent
 {
-    protected $history = null;
+    protected $history = PageChatStorageDriver::class;
 
     protected Project $project;
 
