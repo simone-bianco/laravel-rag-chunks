@@ -182,7 +182,13 @@ class SearchChunks extends Tool
             $relaxedRawResults = $this->searchRaw($relaxedData);
 
             if (! empty($relaxedRawResults['data'] ?? [])) {
-                $results = $this->formatResults($relaxedRawResults);
+                $mergedRawResults = $this->mergeImageResults(
+                    $primaryRawResults,
+                    $relaxedRawResults,
+                    (int) ($data['perPage'] ?? 10)
+                );
+
+                $results = $this->formatResults($mergedRawResults);
                 $relaxedTagFiltersApplied = true;
             }
         }
@@ -257,11 +263,47 @@ class SearchChunks extends Tool
 
     private function shouldRelaxImageTagFilters(array $data, array $rawPaginator): bool
     {
+        $requestedPerPage = max(1, (int) ($data['perPage'] ?? 10));
+        $resultCount = count($rawPaginator['data'] ?? []);
+
         return ($data['allowRelaxTagFilters'] ?? false) === true
             && ($data['hasImage'] ?? null) === true
             && ! empty($data['chunkTagGroups'])
-            && count($data['chunkTagGroups']) > 1
-            && empty($rawPaginator['data'] ?? []);
+            && ((int) ($data['page'] ?? 1) === 1)
+            && $resultCount < $requestedPerPage;
+    }
+
+    /**
+     * Merge strict + relaxed image result sets preserving strict-first ordering
+     * and deduplicating by chunk id, capped to requested page size.
+     */
+    private function mergeImageResults(array $strictRaw, array $relaxedRaw, int $limit): array
+    {
+        $limit = max(1, $limit);
+
+        $merged = [];
+        $seen = [];
+
+        foreach ([($strictRaw['data'] ?? []), ($relaxedRaw['data'] ?? [])] as $items) {
+            foreach ($items as $item) {
+                $id = $item['id'] ?? null;
+
+                if (! is_string($id) || $id === '' || isset($seen[$id])) {
+                    continue;
+                }
+
+                $seen[$id] = true;
+                $merged[] = $item;
+
+                if (count($merged) >= $limit) {
+                    break 2;
+                }
+            }
+        }
+
+        $strictRaw['data'] = $merged;
+
+        return $strictRaw;
     }
 
     /**

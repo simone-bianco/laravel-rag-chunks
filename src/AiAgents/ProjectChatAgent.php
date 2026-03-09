@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\NormalizesChunkIds;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\AiAgents\History\PageChatStorageDriver;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
@@ -16,6 +17,8 @@ use SimoneBianco\LaravelRagChunks\Models\Document;
 
 class ProjectChatAgent extends RotableAgent
 {
+    use NormalizesChunkIds;
+
     protected $history = PageChatStorageDriver::class;
 
     protected Project $project;
@@ -188,6 +191,7 @@ INSTRUCTIONS;
     public function respond(string|MessageInterface|null $message = null): array|DataModel|MessageInterface
     {
         try {
+            $this->injectInstructionsForCurrentTurn();
             $result = parent::respond($message);
         } catch (\Throwable $e) {
             Log::warning('[ProjectChatAgent] respond() failed', ['error' => $e->getMessage()]);
@@ -204,10 +208,9 @@ INSTRUCTIONS;
 
     private function normalizeResult(array $result): array
     {
-        $chunkIds = collect($result['relevant_chunks'] ?? [])
-            ->filter(fn ($id) => is_string($id) && $id !== '')
-            ->values()
-            ->toArray();
+        $chunkIds = $this->normalizeChunkIds(is_array($result['relevant_chunks'] ?? null)
+            ? $result['relevant_chunks']
+            : []);
 
         return [
             'response' => (string) ($result['response'] ?? ''),
