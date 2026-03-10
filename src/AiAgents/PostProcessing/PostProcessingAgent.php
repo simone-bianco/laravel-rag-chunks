@@ -27,6 +27,8 @@ class PostProcessingAgent extends RotableAgent
     protected bool $summarization = false;
     protected string $extraInstruction = '';
     protected array $tagsByType = [];
+    protected ?string $batchContextBefore = null;
+    protected ?string $batchContextAfter = null;
 
     public function __construct(
         string $key,
@@ -105,6 +107,13 @@ class PostProcessingAgent extends RotableAgent
     public function withTagsByType(array $tagsByType = []): self
     {
         $this->tagsByType = $tagsByType;
+        return $this;
+    }
+
+    public function withBatchBoundaryContext(?string $before, ?string $after): self
+    {
+        $this->batchContextBefore = $before;
+        $this->batchContextAfter = $after;
         return $this;
     }
 
@@ -204,6 +213,18 @@ class PostProcessingAgent extends RotableAgent
             ? "\n### EXTRA INSTRUCTIONS\n{$this->extraInstruction}\n"
             : "";
 
+        $boundaryBlock = '';
+        if ($this->batchContextBefore !== null || $this->batchContextAfter !== null) {
+            $boundaryBlock = "\n### BATCH BOUNDARY CONTEXT (FOR AWARENESS ONLY — DO NOT REPRODUCE IN OUTPUT)\n";
+            $boundaryBlock .= "This batch is part of a larger sequential document. The snippets below are provided EXCLUSIVELY to help you understand continuity at the edges. They are NOT part of the input to process and MUST NOT appear in any `content` field.\n";
+            if ($this->batchContextBefore !== null) {
+                $boundaryBlock .= "**Text immediately preceding this batch:** `{$this->batchContextBefore}`\n";
+            }
+            if ($this->batchContextAfter !== null) {
+                $boundaryBlock .= "**Text immediately following this batch:** `{$this->batchContextAfter}`\n";
+            }
+        }
+
         $estimatedWords = (int)($this->preferredChunkLength / 6);
 
         $contextBlock = '';
@@ -250,6 +271,7 @@ $contextRule
 
 ### FIGURE RULES
 Preserve `figure_path` if present. If merging chunks with different figures, keep the most relevant or split the chunks to preserve both. Return "" if no figure.
+$boundaryBlock
 $extraInstructionsBlock
 INSTRUCTIONS;
     }

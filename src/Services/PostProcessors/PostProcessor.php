@@ -2,6 +2,8 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services\PostProcessors;
 
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\ServerException;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing\PostProcessingAgent;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
@@ -95,7 +97,9 @@ class PostProcessor
         array $pendingItems,
         string $relativeDirPath,
         ?string $documentContext,
-        array $agentOptions = []
+        array $agentOptions = [],
+        ?string $batchContextBefore = null,
+        ?string $batchContextAfter = null,
     ): array {
         if (empty($pendingItems)) {
             return [];
@@ -121,6 +125,7 @@ class PostProcessor
             ->withSummarization($agentOptions['summarization'] ?? false)
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->withTagsByType($agentOptions['tags_by_type'] ?? [])
+            ->withBatchBoundaryContext($batchContextBefore, $batchContextAfter)
             ->respond();
 
         $buffer = [];
@@ -198,7 +203,9 @@ class PostProcessor
                 $this->streamService->goToEnd($writeStream);
             }
 
+            $overlapSize = (int) config('rag_chunks.chunk_overlap', 50);
             $pendingBatch = [];
+            $previousTailContext = null; // ultimi N char del testo dell'ultimo item del batch precedente
 
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
@@ -217,17 +224,55 @@ class PostProcessor
                 $pendingBatch[] = RefinedItemDTO::fromArray($decoded);
 
                 if (count($pendingBatch) >= $batchSize) {
-                    $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
+                    // Cattura il contesto di coda PRIMA di svuotare il batch
+                    $tailText = end($pendingBatch)->text;
+                    $tailContext = $overlapSize > 0 ? mb_substr($tailText, -$overlapSize) : null;
+
+                    // Salva la posizione corrente PRIMA del lookahead, così il callback
+                    // riporta esattamente le righe elaborate in questo batch
+                    $batchEndLine = $currentInputLine;
+
+                    // Lookahead: leggi il prossimo item per ottenere il contesto di prefisso del batch successivo
+                    $suffixContext = null;
+                    $lookaheadItem = null;
+                    while (($lookaheadLine = fgets($readStream)) !== false) {
+                        $currentInputLine++;
+                        $lastProcessedLineContent = $lookaheadLine;
+                        if (trim($lookaheadLine) === '') {
+                            continue; // salta righe vuote e prosegui il lookahead
+                        }
+                        $lookaheadDecoded = json_decode($lookaheadLine, true);
+                        if ($lookaheadDecoded === null) {
+                            continue; // riga non valida, salta
+                        }
+                        $lookaheadItem = RefinedItemDTO::fromArray($lookaheadDecoded);
+                        if ($overlapSize > 0) {
+                            $suffixContext = mb_substr($lookaheadItem->text, 0, $overlapSize);
+                        }
+                        break;
+                    }
+
+                    $buffer = $this->runAgentAndPrepareBuffer(
+                        $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
+                        $previousTailContext, $suffixContext
+                    );
                     $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
-                    $pendingBatch = [];
+
+                    $previousTailContext = $tailContext;
+                    // Inizia il prossimo batch con il lookahead già letto, se disponibile
+                    $pendingBatch = $lookaheadItem ? [$lookaheadItem] : [];
+
                     if ($onBatchComplete) {
-                        $onBatchComplete($currentInputLine);
+                        $onBatchComplete($batchEndLine);
                     }
                 }
             }
 
             if (!empty($pendingBatch)) {
-                $buffer = $this->runAgentAndPrepareBuffer($pendingBatch, $relativeDirPath, $documentContext, $agentOptions);
+                $buffer = $this->runAgentAndPrepareBuffer(
+                    $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
+                    $previousTailContext, null
+                );
                 $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
                 if ($onBatchComplete) {
                     $onBatchComplete($currentInputLine);
@@ -248,8 +293,8 @@ class PostProcessor
 
             $prev = $exception->getPrevious();
             $isRetryable = ($exception instanceof \RuntimeException && $prev instanceof \TypeError)
-                || $prev instanceof \GuzzleHttp\Exception\ConnectException
-                || $prev instanceof \GuzzleHttp\Exception\ServerException
+                || $prev instanceof ConnectException
+                || $prev instanceof ServerException
                 || str_contains($exception->getMessage(), 'timed out')
                 || str_contains($exception->getMessage(), 'Connection refused')
                 || str_contains($exception->getMessage(), 'cURL error');

@@ -114,12 +114,12 @@ class SearchChunks extends Tool
             ],
             'perPage' => [
                 'type' => 'integer',
-                'description' => 'Number of results per page, use 5 by default',
+                'description' => 'Number of results per page. Use 10 by default. Allowed values: 8, 10, 12.',
                 'enum' => [8, 10, 12],
             ],
             'keywordsSearch' => [
                 'type' => 'array',
-                'description' => 'Hard filter: only chunks containing ALL these words are returned. NEVER use on the first search call — only use on follow-up calls if initial results are too broad.',
+                'description' => 'Hard lexical filter: only chunks containing ALL these substrings are returned. NEVER use on the first search call — refinement/fallback only. Each value is a case-insensitive substring match, not necessarily a full word. You may and should use partial words, stems, or robust lexical fragments when useful (e.g. "ross" to catch "rosso"/"rossi"). Prefer the language of the document rather than blindly using English. You may also try multiple likely document languages when useful.',
                 'items' => [
                     'type' => 'string',
                 ],
@@ -133,23 +133,24 @@ class SearchChunks extends Tool
             ],
             'textSearch' => [
                 'type' => 'string',
-                'description' => 'Core semantic meaning of the query, e.g. "Goblins and their history"',
+                'description' => 'ALWAYS provide this. Core semantic meaning of the query, compressed into 3-5 English concept keywords, e.g. "goblin tribal elder ceremony".',
             ],
             'questionsSearch' => [
                 'type' => 'string',
-                'description' => 'If the user asks a direct question, repeat it here to match pre-indexed questions, e.g. "What do goblins eat?"',
+                'description' => 'ALWAYS provide this, even when the user input is not a literal question. If the user asks a direct question, repeat/restyle it here. Otherwise put a short natural-language retrieval phrase, pseudo-question, or query-like sentence to improve matching against pre-indexed questions. This field is mandatory in practice because it improves recall and accuracy.',
             ],
             'semanticTagsSearch' => [
                 'type' => 'string',
-                'description' => 'Comma-separated semantic tags, e.g. "goblin,history,lair"',
+                'description' => 'ALWAYS provide this. Comma-separated English semantic concepts/tags, e.g. "goblin,history,lair". Mandatory in practice for every search because it improves thematic recall, even for exact entity lookups.',
             ],
             'hasImage' => [
-                'type' => 'boolean',
-                'description' => 'If true, return only chunks with images. If false, only chunks without images. Leave unset for mixed results.',
+                'type' => 'string',
+                'description' => 'Visual filter. Allowed values: "with", "without", "mixed". IMPORTANT: use "mixed" by default. Use "with" only when the query explicitly asks for images, maps, diagrams, screenshots, illustrations, or other visual material. Use "without" only when the user explicitly asks to exclude images or asks for text-only results. Never omit this field; default is "mixed".',
+                'enum' => ['with', 'without', 'mixed'],
             ],
             'allowRelaxTagFilters' => [
                 'type' => 'boolean',
-                'description' => 'Optional safety valve for image queries. If true and hasImage=true returns 0 with multiple tag_* filters, tool may retry once without chunk tag filters.',
+                'description' => 'Optional safety valve for image queries. If true and hasImage="with" returns too few results with multiple tag_* filters, tool may retry once without chunk tag filters.',
             ],
         ], $tagProperties, $documentsAliasesProperties);
     }
@@ -160,7 +161,7 @@ class SearchChunks extends Tool
         $relaxedTagFiltersApplied = false;
 
         $tagFilters = $this->resolveTagFilters($data);
-        if (!empty($tagFilters)) {
+        if (! empty($tagFilters)) {
             $data['chunkTagGroups'] = $tagFilters;
         }
 
@@ -217,12 +218,14 @@ class SearchChunks extends Tool
     private function normalizeInput(array|DataModel $input): array
     {
         $data = ! is_array($input) ? $input->toArray() : $input;
+
         if (array_key_exists('has_image', $data) && ! array_key_exists('hasImage', $data)) {
             $data['hasImage'] = $data['has_image'];
             unset($data['has_image']);
         }
 
         $data['projectsAliases'] = [$this->project->alias];
+
         if ($this->document) {
             $data['documentsAliases'] = [$this->document->alias];
         }
@@ -237,23 +240,28 @@ class SearchChunks extends Tool
     private function resolveTagFilters(array &$data): array
     {
         $chunkTagGroups = [];
+
         foreach ($data as $key => $value) {
             if (str_starts_with($key, 'tag_') && is_array($value) && count($value) > 0) {
                 $alias = substr($key, 4);
+
                 $tagType = TagType::query()
                     ->where('project_id', $this->project->id)
                     ->where('alias', $alias)
                     ->first();
+
                 if ($tagType) {
                     $ids = Tag::query()
                         ->where('tag_type_id', $tagType->id)
                         ->whereIn('slug', $value)
                         ->pluck('id')
                         ->toArray();
+
                     if (! empty($ids)) {
                         $chunkTagGroups[$alias] = $ids;
                     }
                 }
+
                 unset($data[$key]);
             }
         }
@@ -267,7 +275,7 @@ class SearchChunks extends Tool
         $resultCount = count($rawPaginator['data'] ?? []);
 
         return ($data['allowRelaxTagFilters'] ?? false) === true
-            && ($data['hasImage'] ?? null) === true
+            && ($data['hasImage'] ?? null) === 'with'
             && ! empty($data['chunkTagGroups'])
             && ((int) ($data['page'] ?? 1) === 1)
             && $resultCount < $requestedPerPage;
@@ -339,6 +347,7 @@ class SearchChunks extends Tool
     private function truncateForLog(array $results): array
     {
         $logResults = $results;
+
         if (is_array($logResults)) {
             array_walk_recursive($logResults, function (&$value, $key) {
                 if (is_string($value) && in_array($key, ['content', 'questions', 'semantic_tags'])) {

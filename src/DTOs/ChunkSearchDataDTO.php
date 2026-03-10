@@ -46,9 +46,27 @@ class ChunkSearchDataDTO
             tagFilters: isset($data['tagFilters']) ? collect($data['tagFilters']) : null,
             documentsAliases: $data['documentsAliases'] ?? null,
             chunksIds: $data['chunksIds'] ?? null,
-            hasImage: isset($data['hasImage']) ? (bool) $data['hasImage'] : null,
+            hasImage: self::resolveHasImage($data['hasImage'] ?? null),
             chunkTagGroups: $data['chunkTagGroups'] ?? null,
         );
+    }
+
+    private static function resolveHasImage(mixed $value): ?bool
+    {
+        if ($value === null) {
+            return null;
+        }
+        if ($value === 'with') {
+            return true;
+        }
+        if ($value === 'without') {
+            return false;
+        }
+        if ($value === 'mixed') {
+            return null;
+        }
+        // Legacy boolean support
+        return (bool) $value ?: null;
     }
 
     public function toArray(): array

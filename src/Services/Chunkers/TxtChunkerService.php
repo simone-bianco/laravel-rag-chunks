@@ -12,7 +12,7 @@ class TxtChunkerService
      * PDF ligature characters and other typographic Unicode that should be
      * replaced with their plain ASCII equivalents before chunking.
      */
-    private const LIGATURE_MAP = [
+    private const array LIGATURE_MAP = [
         "\u{FB00}" => 'ff',   // ﬀ
         "\u{FB01}" => 'fi',   // ﬁ
         "\u{FB02}" => 'fl',   // ﬂ
@@ -32,7 +32,7 @@ class TxtChunkerService
     ];
 
     public function __construct(
-        protected int $chunkSize = 1000,
+        protected int $chunkSize = 700,
         protected int $generatorChunkSize = 50,
     ) {}
 

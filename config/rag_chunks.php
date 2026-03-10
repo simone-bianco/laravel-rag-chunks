@@ -38,4 +38,12 @@ return [
         'times' => 3,
         'sleep' => 1000,
     ],
+
+    /*
+     * Number of characters to overlap at batch boundaries.
+     * The first chunk's agent call receives this many trailing chars from the previous batch,
+     * and the last chunk receives this many leading chars from the next batch.
+     * Set to 0 to disable overlap entirely.
+     */
+    'chunk_overlap' => 50,
 ];
