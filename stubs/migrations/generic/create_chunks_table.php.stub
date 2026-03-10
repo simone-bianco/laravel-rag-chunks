@@ -16,6 +16,7 @@ return new class extends Migration
             $table->boolean('is_image')->default(false);
             $table->json('tags')->nullable();
             $table->json('keywords')->nullable();
+            $table->string('chapter')->nullable()->index();
             $table->text('content');
             $table->string('hash')->index();
             $table->json('embedding')->nullable(); // Fallback for standard SQL

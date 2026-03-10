@@ -18,6 +18,7 @@ return new class extends Migration
             $table->jsonb('tags')->nullable();
             $table->jsonb('questions')->nullable();
             $table->string('hash')->index();
+            $table->string('chapter')->nullable()->index();
             $chosenEmbedder = config('rag_chunks.embedding', \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI)->value;
             $table->vector('embedding', config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536));
             $table->vector('questions_embedding', config("rag_chunks.embedders.$chosenEmbedder.embedding_size", 1536))->nullable();

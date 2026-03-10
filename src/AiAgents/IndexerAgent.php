@@ -13,9 +13,12 @@ class IndexerAgent extends RotableAgent
 {
     protected $history = 'in_memory';
 
+//    protected $provider = 'ollama';
+//    protected $model = 'gemma3:12b';
+
     protected $model = 'gpt-4.1-mini';
 
-    protected array $index = [];
+    protected ?array $index = null;
     protected array $chunks = [];
     protected string $documentInstructions = '';
 
@@ -48,61 +51,34 @@ class IndexerAgent extends RotableAgent
     }
 
     protected $responseSchema = [
-        'name'   => 'search_results',
-        'schema' => [
-            'type'       => 'object',
-            'properties' => [
-                'new_chapters' => [
-                    'type'        => 'array',
-                    'description' => 'New chapters that were not included in the definition',
-                    'items'       => [
-                        'type'       => 'object',
-                        'properties' => [
-                            'title' => [
+        'type'       => 'object',
+        'properties' => [
+            'chunks_by_chapter' => [
+                'type'        => 'array',
+                'description' => 'Chunks grouped under already existing chapters',
+                'items'       => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'chapter_title' => [
+                            'type'        => 'string',
+                            'description' => 'Unique title of the chapter',
+                        ],
+                        'chunks_uuids' => [
+                            'type'        => 'array',
+                            'description' => 'List of chunk UUIDs belonging to the chapter',
+                            'items'       => [
                                 'type'        => 'string',
-                                'description' => 'Title of the new chapter',
-                            ],
-                            'chunks_uuids' => [
-                                'type'        => 'array',
-                                'description' => 'List of chunk UUIDs belonging to the new chapter',
-                                'items'       => [
-                                    'type'        => 'string',
-                                    'description' => 'UUID of a single chunk',
-                                ],
+                                'description' => 'UUID of a single chunk',
                             ],
                         ],
-                        'required'             => ['title', 'chunks_uuids'],
-                        'additionalProperties' => false,
                     ],
-                ],
-                'chunks_by_chapter' => [
-                    'type'        => 'array',
-                    'description' => 'Chunks grouped under already existing chapters',
-                    'items'       => [
-                        'type'       => 'object',
-                        'properties' => [
-                            'chapter_alias' => [
-                                'type'        => 'string',
-                                'description' => 'Unique alias of the existing chapter',
-                            ],
-                            'chunks_uuids' => [
-                                'type'        => 'array',
-                                'description' => 'List of chunk UUIDs belonging to the chapter',
-                                'items'       => [
-                                    'type'        => 'string',
-                                    'description' => 'UUID of a single chunk',
-                                ],
-                            ],
-                        ],
-                        'required'             => ['chapter_uuid', 'chunks_uuids'],
-                        'additionalProperties' => false,
-                    ],
+                    'required'             => ['chapter_title', 'chunks_uuids'],
+                    'additionalProperties' => false,
                 ],
             ],
-            'required'             => ['new_chapters', 'chunks_by_chapter'],
-            'additionalProperties' => false,
         ],
-        'strict' => true,
+        'required'             => ['chunks_by_chapter'],
+        'additionalProperties' => false,
     ];
 
     protected function logger(): LoggerInterface
@@ -185,7 +161,7 @@ INSTRUCTIONS;
 
     public function respond(?string $message = null): string|array|DataModel|MessageInterface
     {
-        if (empty($this->index)) {
+        if ($this->index === null) {
             throw new InvalidArgumentException('[IndexerAgent] Index is not defined');
         }
 
@@ -194,8 +170,8 @@ INSTRUCTIONS;
         }
 
         $payload = [
-            'index'  => $this->index,
-            'chunks' => $this->chunks,
+            'current_index'  => $this->index,
+            'to_index_chunks' => $this->chunks,
         ];
 
         return parent::respond(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));

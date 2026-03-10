@@ -39,6 +39,7 @@ class Chunk extends Model
     protected $fillable = [
         'document_id',
         'content',
+        'chapter',
         'hash',
         'embedding',
         'tags',
