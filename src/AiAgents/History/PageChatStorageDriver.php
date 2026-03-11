@@ -51,6 +51,7 @@ class PageChatStorageDriver extends StorageDriver
             ->whereNotNull('content')
             ->where('content', '!=', '')
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get(['role', 'content']);
 
         if ($messages->isEmpty()) {

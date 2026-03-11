@@ -24,11 +24,11 @@ class SearchInProject extends Tool
         return [
             'persistentKey' => [
                 'type' => 'string',
-                'description' => "Reuse the same key across turns to preserve search-agent memory and refine results with feedback. Use a new random key to start a fresh search thread with no memory."
+                'description' => "Reuse the same key across turns to preserve search-agent memory and refine results with feedback. Use a new random key to start a fresh search thread with no memory. Create a key with a random suffix of an alphanumeric 5-digits."
             ],
             'searches' => [
                 'type'        => 'array',
-                'description' => 'Array of 1-3 independent search queries executed in parallel in one call. Do not call this tool multiple times in the same turn.',
+                'description' => 'Array of 1-5 independent search queries executed in parallel in one call. Do not call this tool multiple times in the same turn.',
                 'items'       => [
                     'type' => 'string',
                     'description' => 'Concise search query for one angle (e.g. "goblin tribe rituals", "founding of the empire").',

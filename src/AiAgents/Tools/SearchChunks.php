@@ -90,7 +90,7 @@ class SearchChunks extends Tool
         foreach ($this->tagsByType as $alias => $slugs) {
             $tagProperties["tag_{$alias}"] = [
                 'type' => 'array',
-                'description' => "CRITICAL: Hard filter for category '{$alias}'. Look closely at the available enum values.",
+                'description' => "CRITICAL HARD FILTER for category '{$alias}'. REFINEMENT ONLY: never send this on first attempt; use only on second attempt when first attempt is weak/empty and you need disambiguation.",
                 'items' => [
                     'type' => 'string',
                     'enum' => $slugs,
@@ -102,7 +102,7 @@ class SearchChunks extends Tool
         if (empty($this->document)) {
             $documentsAliasesProperties['documentsAliases'] = [
                 'type' => 'array',
-                'description' => 'If set, only chunks belonging to documents with chosen aliases will be taken',
+                'description' => 'Document hard scope. REFINEMENT ONLY: never set on first attempt unless the user explicitly asks to restrict to specific document aliases. Never guess aliases: use only explicit user-provided aliases or aliases surfaced by previous search results. On retry, combine with at most one deterministic filter family.',
                 'items' => ['type' => 'string'],
             ];
         }
@@ -138,7 +138,7 @@ class SearchChunks extends Tool
             ],
             'chapters' => [
                 'type' => 'array',
-                'description' => 'Optional, if you find potentially useful chapters in the first search (from the chunks), you may decide to apply this filter in OR',
+                'description' => 'REFINEMENT ONLY: never use on first attempt. Use only from attempt 2 with chapter aliases discovered in prior results. Never guess chapter aliases. Apply OR semantics and combine with at most one deterministic filter family.',
                 'items' => [
                     'type' => 'string',
                     'description' => 'Alias of the chapter'

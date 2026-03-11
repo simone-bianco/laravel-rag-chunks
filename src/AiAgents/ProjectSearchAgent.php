@@ -25,7 +25,9 @@ class ProjectSearchAgent extends RotableAgent
 
     protected ?Document $document = null;
 
-    protected $model = 'gpt-4.1-mini';
+    protected $model = 'gpt-4.1-nano';
+
+//    protected $model = 'gpt-4.1-mini';
 
     protected $maxCompletionTokens = 16384;
 
@@ -143,7 +145,10 @@ DEFAULT TOOLING
 SEARCH INPUT POLICY
 - Always provide: `textSearch`, `semanticTagsSearch`, `questionsSearch`.
 - `hasImage`: use `mixed` by default; `with` only for explicit visual requests; `without` only for explicit text-only requests.
-- `documentsAliases` only when document focus is needed.
+- ATTEMPT 1 MUST be broad:
+  - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, or any deterministic tag/document narrowing.
+  - MUST NOT send `documentsAliases` on attempt 1 unless the user explicitly asks to restrict to specific document aliases.
+  - If this agent is already document-scoped by constructor, keep that scope (tool will inject it).
 
 REFINEMENT-ONLY FIELDS
 - `keywordsSearch`, `chapters`, and `tag_*` are NEVER first-attempt fields.
@@ -151,13 +156,20 @@ REFINEMENT-ONLY FIELDS
 - `keywordsSearch`: prefer `OR` first, `AND` only for stricter disambiguation; substring matching is allowed.
 - `chapters`: use only chapter aliases discovered in prior results.
 - `tag_*`: never guess values; use exact enum values only; prefer one filter unless strict intersection is required.
+- On attempt 2, add deterministic narrowing progressively (not all at once):
+  - first choice: rewrite/broaden semantic fields,
+  - then optional `keywordsSearch`,
+  - then optional ONE deterministic filter family (`chapters` OR one `tag_*`).
 
 RETRY POLICY
 - Max 2 attempts.
 - Always set `allowRelaxTagFilters=true` on `search_chunks`.
+- Retry is PER QUERY, mandatory when first pass is weak.
+- For each query, if attempt 1 returns empty/near-empty data OR no clearly relevant chunks, MUST run attempt 2 before finalizing that query.
+- Consider attempt 1 weak when total returned chunks are < 3 OR chunks are tangential to the query intent.
 - If first attempt has low recall, broaden/rewrite query fields and optionally add refinement-only fields.
-- For page=1/perPage=10, if first pass returns < 7 chunks, MUST run a second `search_chunks` call.
 - If `hasImage=mixed` and results are weak, you may retry with `without` unless user explicitly requested visuals.
+- Never finalize `results` for a query after only one weak/empty attempt.
 
 RESULT EXTRACTION
 - Collect UUIDs from relevant chunks across all returned documents.
