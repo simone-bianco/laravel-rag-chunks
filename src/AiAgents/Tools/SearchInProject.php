@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Abstractions\DataModel;
 use LarAgent\Tool;
 use SimoneBianco\LaravelRagChunks\AiAgents\ProjectSearchAgent;
@@ -21,33 +22,22 @@ class SearchInProject extends Tool
     public function getProperties(): array
     {
         return [
+            'persistentKey' => [
+                'type' => 'string',
+                'description' => "Reuse the same key across turns to preserve search-agent memory and refine results with feedback. Use a new random key to start a fresh search thread with no memory."
+            ],
             'searches' => [
                 'type'        => 'array',
-                'description' => 'Array of independent search queries to execute in parallel. Each item targets a different aspect or angle of the user\'s question. Include 1-3 searches per call — never call this tool multiple times in a single turn.',
+                'description' => 'Array of 1-3 independent search queries executed in parallel in one call. Do not call this tool multiple times in the same turn.',
                 'items'       => [
-                    'type'       => 'object',
-                    'properties' => [
-                        'query' => [
-                            'type'        => 'string',
-                            'description' => 'The search query in ENGLISH, focused on the core concept (e.g. "goblin tribe rituals", "founding of the empire", "what do goblins eat?"). Be concise and specific.',
-                        ],
-                        'hasImage' => [
-                            'type'        => 'boolean',
-                            'description' => 'If true, force image-only retrieval for this search angle (chunks with images only). Use when user explicitly asks to show/see maps/images/diagrams.',
-                        ],
-                        'purpose' => [
-                            'type'        => 'string',
-                            'description' => 'Brief label for this search angle, for your own bookkeeping (e.g. "habitat", "diet", "history"). Not used by the search engine.',
-                        ],
-                    ],
-                    'required'             => ['query'],
-                    'additionalProperties' => false,
+                    'type' => 'string',
+                    'description' => 'Concise search query for one angle (e.g. "goblin tribe rituals", "founding of the empire").',
                 ],
             ],
         ];
     }
 
-    protected array $required = ['searches'];
+    protected array $required = ['persistentKey', 'searches'];
 
     public function execute(array $input): mixed
     {
@@ -56,55 +46,65 @@ class SearchInProject extends Tool
 
     protected function handle(array|DataModel $input): mixed
     {
-        $searches = is_array($input) ? ($input['searches'] ?? []) : $input->toArray()['searches'] ?? [];
+        $data = is_array($input) ? $input : $input->toArray();
+        $schema = $data;
 
-        $normalizedSearches = collect($searches)
-            ->filter(fn ($s) => is_array($s))
-            ->map(function (array $s) {
-                $query = trim((string) ($s['query'] ?? ''));
+        if (! is_array($schema) && method_exists($schema, 'toArray')) {
+            $schema = $schema->toArray();
+        }
 
-                if ($query === '') {
+        $schema = is_array($schema) ? $schema : [];
+        $persistentKeyRaw = (string) ($schema['persistentKey'] ?? $data['persistentKey'] ?? Str::random());
+        $persistentKey = str_starts_with($persistentKeyRaw, 'project_search:')
+            ? $persistentKeyRaw
+            : 'project_search:' . $persistentKeyRaw;
+
+        $searches = collect($schema['searches'] ?? [])
+            ->map(function ($search): ?array {
+                if (is_string($search)) {
+                    $query = trim($search);
+
+                    return $query !== '' ? ['query' => $query] : null;
+                }
+
+                if (! is_array($search)) {
                     return null;
                 }
 
-                return [
-                    'query' => str_replace(["\r\n", "\n", "\r"], ' ', $query),
-                    'hasImage' => array_key_exists('hasImage', $s) ? (bool) $s['hasImage'] : null,
-                ];
+                $query = isset($search['query']) && is_string($search['query'])
+                    ? trim($search['query'])
+                    : '';
+
+                return $query !== '' ? ['query' => $query] : null;
             })
             ->filter()
-            ->values();
+            ->values()
+            ->all();
 
-        $count = $normalizedSearches->count();
+        Log::channel('search')->info('[SearchInProject] Executing search tool', [
+            'project' => $this->projectAlias,
+            'document' => $this->documentAlias,
+            'persistent_key' => $persistentKey,
+            'searches_count' => count($searches),
+        ]);
 
-        if ($count === 0) {
+        if ($searches === []) {
             return ['results' => []];
         }
 
-        $queryLines = $normalizedSearches
+        $queryLines = collect($searches)
             ->map(function (array $s, int $i) {
-                $hasImage = $s['hasImage'] === null
-                    ? 'null'
-                    : ($s['hasImage'] ? 'true' : 'false');
-
                 $query = json_encode($s['query'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-                return ($i + 1) . ". query={$query}; hasImage={$hasImage}";
+                return ($i + 1) . ". query={$query}";
             })
             ->join("\n");
 
-        $message = "Execute the following {$count} search(es) in parallel using search_chunks. "
-            . "Return a `results` array with exactly {$count} entr" . ($count === 1 ? 'y' : 'ies') . ", "
-            . "one per search, in the same order.\n"
-            . "CRITICAL: if a line has hasImage=true, you MUST pass hasImage=true to search_chunks for that query. "
-            . "If hasImage=null, decide based on query intent.\n\n"
-            . $queryLines;
-
         $result = new ProjectSearchAgent(
-            Str::random(),
+            $persistentKey,
             $this->projectAlias,
             $this->documentAlias
-        )->respond($message);
+        )->respond("Search queries:\n$queryLines");
 
         return is_array($result) ? $result : $result->getContent();
     }

@@ -63,7 +63,13 @@ class ChunkService
                 $query->where('enabled', true);
             })
             ->withNeighborSnippets()
-            ->whereBasicFilters($searchData->chunksIds, $searchData->textSearch, $searchData->keywordsSearch)
+            ->whereBasicFilters(
+                $searchData->chunksIds,
+                $searchData->textSearch,
+                $searchData->keywordsSearch,
+                $searchData->keywordsSearchMode,
+                $searchData->chapters,
+            )
             ->whereAliases($searchData->documentsAliases, $searchData->projectsAliases)
             ->whereTagFilters($searchData->tagFilters)
             ->whereChunkTags($searchData->chunkTagGroups)

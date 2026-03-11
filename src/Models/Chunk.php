@@ -26,7 +26,7 @@ use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
  * @method ChunkBuilder whereChapters(?array $chapters)
  * @method ChunkBuilder whereChunkTags(?array $tagGroups)
  * @method ChunkBuilder whereKeywordSearch(?string $text, bool $caseSensitive = false)
- * @method ChunkBuilder whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch)
+ * @method ChunkBuilder whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch, string $keywordsSearchMode = 'AND', ?array $chapters = null)
  * @method ChunkBuilder whereAliases(?array $docAliases, ?array $projAliases)
  * @method ChunkBuilder whereTagFilters(?Collection $tagFilters)
  * @method ChunkBuilder withHybridRanking(?array $contentVector, ?array $questionsVector, ?array $tagsVector, ?float $weightContent, ?float $weightQuestions, ?float $weightTags)

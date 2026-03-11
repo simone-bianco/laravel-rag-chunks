@@ -3,6 +3,8 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 
 class ChunkMapper
@@ -12,8 +14,9 @@ class ChunkMapper
      */
     public static function mapItem(array $item): array
     {
-        return array_filter([
+        return self::prunePayload([
             'content'    => $item['content'],
+            'chapter'    => $item['chapter'] ?? null,
             'image_url'  => $item['image_url'] ?? null,
             'relations'  => self::mapRelations($item),
             'prev_chunk' => self::mapNeighbor($item['prev_snippet_id'] ?? null, $item['prev_snippet'] ?? null),
@@ -27,11 +30,47 @@ class ChunkMapper
      */
     public static function loadAndMap(Chunk $chunk): array
     {
-        $chunk->loadMissing('dedupMedia');
-        $chunk->image_url = $chunk->getFirstMedia()?->getUrl();
-        $chunk->makeHidden(['embedding', 'questions_embedding', 'tags_embedding', 'dedup_media']);
+        $chunk->loadMissing([
+            'dedupMedia',
+            'outgoingRelations.to_entity',
+            'incomingRelations' => function ($q) {
+                $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
+            },
+        ]);
 
-        return self::mapItem($chunk->toArray());
+        $item = [
+            'content' => $chunk->content,
+            'chapter' => $chunk->chapter,
+            'image_url' => $chunk->getFirstMedia()?->getUrl(),
+            'prev_snippet' => $chunk->prev_snippet,
+            'prev_snippet_id' => $chunk->prev_snippet_id,
+            'next_snippet' => $chunk->next_snippet,
+            'next_snippet_id' => $chunk->next_snippet_id,
+            'outgoing_relations' => $chunk->relationLoaded('outgoingRelations')
+                ? $chunk->getRelation('outgoingRelations')->map(function ($rel) {
+                    return [
+                        'to_entity_type' => $rel->to_entity_type,
+                        'to_entity' => ['id' => $rel->to_entity?->id],
+                        'name' => $rel->name,
+                        'description' => $rel->description,
+                        'created_at' => $rel->created_at,
+                    ];
+                })->all()
+                : [],
+            'incoming_relations' => $chunk->relationLoaded('incomingRelations')
+                ? $chunk->getRelation('incomingRelations')->map(function ($rel) {
+                    return [
+                        'from_entity_type' => $rel->from_entity_type,
+                        'from_entity' => ['id' => $rel->from_entity?->id],
+                        'name' => $rel->name,
+                        'description' => $rel->description,
+                        'created_at' => $rel->created_at,
+                    ];
+                })->all()
+                : [],
+        ];
+
+        return self::mapItem($item);
     }
 
     /**
@@ -43,10 +82,10 @@ class ChunkMapper
             return null;
         }
 
-        return [
+        return self::prunePayload([
             'id'      => $id,
             'preview' => $snippet !== null ? Str::limit(trim($snippet), 50) : null,
-        ];
+        ]);
     }
 
     /**
@@ -90,8 +129,33 @@ class ChunkMapper
             ->filter(fn ($r) => $r['chunk_id'] !== null)
             ->sortByDesc('created_at')
             ->take(5)
-            ->map(fn ($r) => ['chunk_id' => $r['chunk_id'], 'name' => $r['name']])
+            ->map(fn ($r) => self::prunePayload(['chunk_id' => $r['chunk_id'], 'name' => $r['name']]))
             ->values()
             ->toArray();
+    }
+
+    private static function prunePayload(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $clean = [];
+
+            foreach ($value as $key => $item) {
+                $pruned = self::prunePayload($item);
+
+                if ($pruned === null) {
+                    continue;
+                }
+
+                if (is_array($pruned) && $pruned === []) {
+                    continue;
+                }
+
+                $clean[$key] = $pruned;
+            }
+
+            return $clean;
+        }
+
+        return $value;
     }
 }

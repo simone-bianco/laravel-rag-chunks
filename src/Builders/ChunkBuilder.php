@@ -126,14 +126,39 @@ class ChunkBuilder extends Builder
         });
     }
 
-    public function whereBasicFilters(?array $chunksIds, ?string $textSearch, ?array $keywordsSearch): self
+    /**
+     * @param  string[]|null  $chunksIds
+     * @param  string[]|null  $keywordsSearch
+     * @param  string[]|null  $chapters
+     */
+    public function whereBasicFilters(
+        ?array $chunksIds,
+        ?string $textSearch,
+        ?array $keywordsSearch,
+        string $keywordsSearchMode = 'AND',
+        ?array $chapters = null
+    ): self
     {
         return $this
             ->when(!empty($chunksIds), fn($q) => $q->whereIn('id', $chunksIds))
-            ->when(!empty($keywordsSearch), function ($q) use ($keywordsSearch) {
+            ->when(!empty($chapters), fn ($q) => $q->whereIn('chapter', $chapters))
+            ->when(!empty($keywordsSearch), function ($q) use ($keywordsSearch, $keywordsSearchMode) {
+                $mode = strtoupper($keywordsSearchMode) === 'OR' ? 'OR' : 'AND';
+
+                if ($mode === 'OR') {
+                    $q->where(function ($or) use ($keywordsSearch) {
+                        foreach ($keywordsSearch as $keyword) {
+                            $or->orWhere('content', 'ilike', "%{$keyword}%");
+                        }
+                    });
+
+                    return $q;
+                }
+
                 foreach ($keywordsSearch as $keyword) {
                     $q->where('content', 'ilike', "%{$keyword}%");
                 }
+
                 return $q;
             });
     }
@@ -149,13 +174,26 @@ class ChunkBuilder extends Builder
             );
     }
 
-    public function whereTagFilters($tagFilters): self
+    public function whereTagFilters(?array $tagFilters): self
     {
-        return $this->when($tagFilters && $tagFilters->isNotEmpty(), function ($q) use ($tagFilters) {
-            $q->whereHas('document', function ($docQuery) use ($tagFilters) {
-                foreach ($tagFilters as $filter) {
-                    $method = $filter->rule_filter === TagFilterMode::ALL ? 'withAllTags' : 'withAnyTags';
-                    $docQuery->{$method}([$filter->tag], $filter->type);
+        $filters = new \Illuminate\Support\Collection($tagFilters ?? []);
+
+        return $this->when($filters->isNotEmpty(), function ($q) use ($filters) {
+            $q->whereHas('document', function ($docQuery) use ($filters) {
+                foreach ($filters as $filter) {
+                    $ruleFilter = is_array($filter) ? ($filter['rule_filter'] ?? null) : ($filter->rule_filter ?? null);
+                    $tag = is_array($filter) ? ($filter['tag'] ?? null) : ($filter->tag ?? null);
+                    $type = is_array($filter) ? ($filter['type'] ?? null) : ($filter->type ?? null);
+
+                    if ($tag === null || $type === null) {
+                        continue;
+                    }
+
+                    $isAllMode = $ruleFilter === TagFilterMode::ALL
+                        || (is_string($ruleFilter) && strtoupper($ruleFilter) === TagFilterMode::ALL->value);
+
+                    $method = $isAllMode ? 'withAllTags' : 'withAnyTags';
+                    $docQuery->{$method}([$tag], $type);
                 }
             });
         });

@@ -2,15 +2,17 @@
 
 namespace SimoneBianco\LaravelRagChunks\DTOs;
 
-use Illuminate\Support\Collection;
-
 class ChunkSearchDataDTO
 {
     public function __construct(
         public int         $page = 1,
         public int         $perPage = 100,
-        // keywords are key-insensitive and are used to filter chunks (they must contain those words)
+        // case-insensitive lexical substrings used for hard filtering
         public ?array      $keywordsSearch = null,
+        // lexical filter mode: OR (any keyword) / AND (all keywords)
+        public string      $keywordsSearchMode = 'AND',
+        // optional chapter aliases (OR semantics)
+        public ?array      $chapters = null,
         public ?string     $textSearch = null,
         public ?string     $questionsSearch = null,
         public ?string     $semanticTagsSearch = null,
@@ -18,7 +20,7 @@ class ChunkSearchDataDTO
         public float       $weightQuestions = 0.7,
         public float       $weightSemanticTags = 0.7,
         public ?array      $projectsAliases = null,
-        public ?Collection $tagFilters = null,
+        public ?array      $tagFilters = null,
         public ?array      $documentsAliases = null,
         public ?array      $chunksIds = null,
         public ?bool       $hasImage = null,
@@ -27,15 +29,49 @@ class ChunkSearchDataDTO
         // chunk-level classic tag filter: typeAlias => tagIds[]
         public ?array      $chunkTagGroups = null,
     ) {
-        $this->tagFilters ??= collect();
+        $this->tagFilters ??= [];
     }
 
     public static function fromArray(array $data): self
     {
+        $keywordsPayload = $data['keywordsSearch'] ?? null;
+        $keywordsSearch = null;
+        $keywordsSearchMode = 'AND';
+
+        if (is_array($keywordsPayload)) {
+            // New schema: { keywords: string[], mode: 'OR'|'AND' }
+            if (array_key_exists('keywords', $keywordsPayload)) {
+                $keywordsSearch = is_array($keywordsPayload['keywords'])
+                    ? array_values(array_filter(array_map(
+                        static fn ($k) => is_string($k) ? trim($k) : null,
+                        $keywordsPayload['keywords']
+                    )))
+                    : null;
+
+                $mode = strtoupper((string) ($keywordsPayload['mode'] ?? 'AND'));
+                $keywordsSearchMode = in_array($mode, ['OR', 'AND'], true) ? $mode : 'AND';
+            } else {
+                // Legacy schema: keywordsSearch: string[]
+                $keywordsSearch = array_values(array_filter(array_map(
+                    static fn ($k) => is_string($k) ? trim($k) : null,
+                    $keywordsPayload
+                )));
+            }
+        }
+
+        $chapters = isset($data['chapters']) && is_array($data['chapters'])
+            ? array_values(array_filter(array_map(
+                static fn ($chapter) => is_string($chapter) ? trim($chapter) : null,
+                $data['chapters']
+            )))
+            : null;
+
         return new self(
             page: $data['page'] ?? 1,
             perPage: $data['perPage'] ?? 100,
-            keywordsSearch: $data['keywordsSearch'] ?? null,
+            keywordsSearch: ! empty($keywordsSearch) ? $keywordsSearch : null,
+            keywordsSearchMode: $keywordsSearchMode,
+            chapters: ! empty($chapters) ? $chapters : null,
             textSearch: $data['textSearch'] ?? null,
             questionsSearch: $data['questionsSearch'] ?? null,
             semanticTagsSearch: $data['semanticTagsSearch'] ?? null,
@@ -43,7 +79,7 @@ class ChunkSearchDataDTO
             weightQuestions: isset($data['weightQuestions']) ? (float) $data['weightQuestions'] : 0.7,
             weightSemanticTags: isset($data['weightSemanticTags']) ? (float) $data['weightSemanticTags'] : 0.7,
             projectsAliases: $data['projectsAliases'] ?? null,
-            tagFilters: isset($data['tagFilters']) ? collect($data['tagFilters']) : null,
+            tagFilters: isset($data['tagFilters']) && is_array($data['tagFilters']) ? $data['tagFilters'] : null,
             documentsAliases: $data['documentsAliases'] ?? null,
             chunksIds: $data['chunksIds'] ?? null,
             hasImage: self::resolveHasImage($data['hasImage'] ?? null),
@@ -75,6 +111,8 @@ class ChunkSearchDataDTO
             'page' => $this->page,
             'perPage' => $this->perPage,
             'keywordsSearch' => $this->keywordsSearch,
+            'keywordsSearchMode' => $this->keywordsSearchMode,
+            'chapters' => $this->chapters,
             'textSearch' => $this->textSearch,
             'questionsSearch' => $this->questionsSearch,
             'semanticTagsSearch' => $this->semanticTagsSearch,
@@ -82,7 +120,7 @@ class ChunkSearchDataDTO
             'weightQuestions' => $this->weightQuestions,
             'weightSemanticTags' => $this->weightSemanticTags,
             'projectsAliases' => $this->projectsAliases,
-            'tagFilters' => $this->tagFilters?->toArray(),
+            'tagFilters' => $this->tagFilters,
             'documentsAliases' => $this->documentsAliases,
             'chunksIds' => $this->chunksIds,
             'hasImage' => $this->hasImage,

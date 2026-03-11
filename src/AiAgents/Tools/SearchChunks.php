@@ -118,18 +118,31 @@ class SearchChunks extends Tool
                 'enum' => [8, 10, 12],
             ],
             'keywordsSearch' => [
-                'type' => 'array',
-                'description' => 'Hard lexical filter: only chunks containing ALL these substrings are returned. NEVER use on the first search call — refinement/fallback only. Each value is a case-insensitive substring match, not necessarily a full word. You may and should use partial words, stems, or robust lexical fragments when useful (e.g. "ross" to catch "rosso"/"rossi"). Prefer the language of the document rather than blindly using English. You may also try multiple likely document languages when useful.',
-                'items' => [
-                    'type' => 'string',
+                'type' => 'object',
+                'description' => 'Hard lexical filter: only chunks containing these substrings are returned. NEVER use on the first search call — refinement/fallback only. Each value is a case-insensitive substring match, not necessarily a full word. You may and should use partial words, stems, or robust lexical fragments when useful (e.g. "ross" to catch "rosso"/"rossi"). Prefer the language of the document rather than blindly using English. You may also try multiple likely document languages when useful.',
+                'properties' => [
+                    'keywords' => [
+                        'type' => 'array',
+                        'description' => 'List of keywords to filter',
+                        'items' => [
+                            'type' => 'string'
+                        ]
+                    ],
+                    'mode' => [
+                        'type' => 'string',
+                        'description' => 'Filter mode',
+                        'enum' => ['OR', 'AND']
+                    ]
                 ],
+                'required' => ['keywords', 'mode']
             ],
-            'chunksAliases' => [
+            'chapters' => [
                 'type' => 'array',
-                'description' => 'If set, only chunks with chosen aliases will be taken',
+                'description' => 'Optional, if you find potentially useful chapters in the first search (from the chunks), you may decide to apply this filter in OR',
                 'items' => [
                     'type' => 'string',
-                ],
+                    'description' => 'Alias of the chapter'
+                ]
             ],
             'textSearch' => [
                 'type' => 'string',
@@ -150,7 +163,7 @@ class SearchChunks extends Tool
             ],
             'allowRelaxTagFilters' => [
                 'type' => 'boolean',
-                'description' => 'Optional safety valve for image queries. If true and hasImage="with" returns too few results with multiple tag_* filters, tool may retry once without chunk tag filters.',
+                'description' => 'Optional safety valve for low recall with chunk tag filters. If true and first-page results are below perPage while chunkTagGroups are active, tool may retry once without chunk tag filters.',
             ],
         ], $tagProperties, $documentsAliasesProperties);
     }
@@ -159,22 +172,34 @@ class SearchChunks extends Tool
     {
         $data = $this->normalizeInput($input);
         $relaxedTagFiltersApplied = false;
+        $deferredTagFiltersOnFirstPass = false;
 
-        $tagFilters = $this->resolveTagFilters($data);
-        if (! empty($tagFilters)) {
+        $resolvedTagFilters = $this->resolveTagFilters($data);
+        $tagFilters = $resolvedTagFilters['ids'];
+        $tagFiltersSlugs = $resolvedTagFilters['slugs'];
+
+        $canApplyTagFilters = $this->isRefinementRequest($data);
+
+        if (! empty($tagFilters) && $canApplyTagFilters) {
             $data['chunkTagGroups'] = $tagFilters;
+            $data['_chunkTagGroupsSlugsForLog'] = $tagFiltersSlugs;
+        } elseif (! empty($tagFilters)) {
+            $deferredTagFiltersOnFirstPass = true;
+            $data['_deferredChunkTagGroupsSlugsForLog'] = $tagFiltersSlugs;
         }
 
-        $this->logger()->debug('[Tool] SearchChunks called', ['data' => $data]);
+        $logData = $this->prepareDataForLog($data);
+        $this->logger()->debug('[Tool] SearchChunks called', ['data' => $logData]);
 
         $primaryRawResults = $this->searchRaw($data);
         $results = $this->formatResults($primaryRawResults);
 
-        if ($this->shouldRelaxImageTagFilters($data, $primaryRawResults)) {
+        if ($this->shouldRelaxTagFilters($data, $primaryRawResults)) {
             $relaxedData = $data;
             unset($relaxedData['chunkTagGroups']);
+            unset($relaxedData['_chunkTagGroupsSlugsForLog']);
 
-            $this->logger()->info('[Tool] SearchChunks retry without chunkTagGroups for image query', [
+            $this->logger()->info('[Tool] SearchChunks retry without chunkTagGroups due low recall', [
                 'project' => $this->project->alias,
                 'document' => $this->document?->alias,
                 'query' => $relaxedData['textSearch'] ?? null,
@@ -198,6 +223,12 @@ class SearchChunks extends Tool
             $results['_meta'] = [
                 'relaxed_chunk_tag_groups' => true,
             ];
+        }
+
+        if ($deferredTagFiltersOnFirstPass) {
+            $results['_meta'] = array_merge($results['_meta'] ?? [], [
+                'deferred_chunk_tag_groups' => true,
+            ]);
         }
 
         $this->logger()->debug('[Tool] SearchChunks returned', ['data' => $this->truncateForLog($results)]);
@@ -239,11 +270,16 @@ class SearchChunks extends Tool
      */
     private function resolveTagFilters(array &$data): array
     {
-        $chunkTagGroups = [];
+        $chunkTagGroupsIds = [];
+        $chunkTagGroupsSlugs = [];
 
         foreach ($data as $key => $value) {
             if (str_starts_with($key, 'tag_') && is_array($value) && count($value) > 0) {
                 $alias = substr($key, 4);
+                $slugs = array_values(array_filter(array_map(
+                    static fn ($slug) => is_string($slug) ? trim($slug) : null,
+                    $value
+                )));
 
                 $tagType = TagType::query()
                     ->where('project_id', $this->project->id)
@@ -253,12 +289,13 @@ class SearchChunks extends Tool
                 if ($tagType) {
                     $ids = Tag::query()
                         ->where('tag_type_id', $tagType->id)
-                        ->whereIn('slug', $value)
+                        ->whereIn('slug', $slugs)
                         ->pluck('id')
                         ->toArray();
 
                     if (! empty($ids)) {
-                        $chunkTagGroups[$alias] = $ids;
+                        $chunkTagGroupsIds[$alias] = $ids;
+                        $chunkTagGroupsSlugs[$alias] = $slugs;
                     }
                 }
 
@@ -266,19 +303,46 @@ class SearchChunks extends Tool
             }
         }
 
-        return $chunkTagGroups;
+        return [
+            'ids' => $chunkTagGroupsIds,
+            'slugs' => $chunkTagGroupsSlugs,
+        ];
     }
 
-    private function shouldRelaxImageTagFilters(array $data, array $rawPaginator): bool
+    private function shouldRelaxTagFilters(array $data, array $rawPaginator): bool
     {
         $requestedPerPage = max(1, (int) ($data['perPage'] ?? 10));
         $resultCount = count($rawPaginator['data'] ?? []);
 
         return ($data['allowRelaxTagFilters'] ?? false) === true
-            && ($data['hasImage'] ?? null) === 'with'
             && ! empty($data['chunkTagGroups'])
             && ((int) ($data['page'] ?? 1) === 1)
             && $resultCount < $requestedPerPage;
+    }
+
+    private function isRefinementRequest(array $data): bool
+    {
+        $hasKeywords = ! empty($data['keywordsSearch']['keywords'] ?? []);
+        $hasChapters = ! empty($data['chapters'] ?? []);
+
+        return $hasKeywords || $hasChapters;
+    }
+
+    private function prepareDataForLog(array $data): array
+    {
+        $logData = $data;
+
+        if (isset($logData['_chunkTagGroupsSlugsForLog'])) {
+            $logData['chunkTagGroups'] = $logData['_chunkTagGroupsSlugsForLog'];
+            unset($logData['_chunkTagGroupsSlugsForLog']);
+        }
+
+        if (isset($logData['_deferredChunkTagGroupsSlugsForLog'])) {
+            $logData['deferredChunkTagGroups'] = $logData['_deferredChunkTagGroupsSlugsForLog'];
+            unset($logData['_deferredChunkTagGroupsSlugsForLog']);
+        }
+
+        return $logData;
     }
 
     /**
