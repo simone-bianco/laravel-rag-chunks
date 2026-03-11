@@ -133,6 +133,9 @@ class ChunkService
             ->whereDirty($filterData->isDirty)
             ->whereHasEmbedding($filterData->hasEmbedding)
             ->whereHasImage($filterData->hasImage)
+            ->whereHasRelations($filterData->hasRelations)
+            ->whereHasChapter($filterData->hasChapter)
+            ->whereChapters($filterData->chapters)
             ->whereChunkTags($filterData->chunkTagGroups);
 
         if ($hasSemanticSearch) {

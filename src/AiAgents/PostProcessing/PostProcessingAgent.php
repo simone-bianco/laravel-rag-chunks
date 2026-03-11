@@ -91,11 +91,6 @@ class PostProcessingAgent extends RotableAgent
         return $this;
     }
 
-    public function structuredOutput(): array
-    {
-        return $this->getResponseSchema();
-    }
-
     public function withDocumentContext(?string $context): self
     {
         if (!empty($context)) {
@@ -115,6 +110,11 @@ class PostProcessingAgent extends RotableAgent
         $this->batchContextBefore = $before;
         $this->batchContextAfter = $after;
         return $this;
+    }
+
+    public function structuredOutput(): array
+    {
+        return $this->getResponseSchema();
     }
 
     protected function getResponseSchema(): array

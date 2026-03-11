@@ -61,6 +61,46 @@ class ChunkBuilder extends Builder
         })->whereDoesntHave('dedupMedia');
     }
 
+    public function whereHasRelations(?bool $has): self
+    {
+        if ($has === null) {
+            return $this;
+        }
+
+        if ($has) {
+            return $this->where(function ($q) {
+                $q->whereHas('outgoingRelations')
+                    ->orWhereHas('incomingRelations');
+            });
+        }
+
+        return $this
+            ->whereDoesntHave('outgoingRelations')
+            ->whereDoesntHave('incomingRelations');
+    }
+
+    public function whereHasChapter(?bool $has): self
+    {
+        if ($has === null) {
+            return $this;
+        }
+
+        return $has
+            ? $this->whereNotNull('chapter')->where('chapter', '!=', '')
+            : $this->where(function ($q) {
+                $q->whereNull('chapter')
+                    ->orWhere('chapter', '');
+            });
+    }
+
+    /**
+     * @param  string[]|null  $chapters
+     */
+    public function whereChapters(?array $chapters): self
+    {
+        return $this->when(! empty($chapters), fn ($q) => $q->whereIn('chapter', $chapters));
+    }
+
     /**
      * Filter by chunk-level tags (not document tags).
      *

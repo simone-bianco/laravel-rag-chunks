@@ -13,6 +13,10 @@ class ChunkFilterDataDTO
         public ?bool $isDirty = null,
         public ?bool $hasEmbedding = null,
         public ?bool $hasImage = null,
+        public ?bool $hasRelations = null,
+        public ?bool $hasChapter = null,
+        /** @var string[]|null */
+        public ?array $chapters = null,
         /** @var array<string, int[]>|null */
         public ?array $chunkTagGroups = null,
         public int $page = 1,
