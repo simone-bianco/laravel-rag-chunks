@@ -123,7 +123,7 @@ class SearchChunks extends Tool
                 'properties' => [
                     'keywords' => [
                         'type' => 'array',
-                        'description' => 'List of keywords to filter',
+                        'description' => 'List of keywords to filter; USE ONLY INDIVIDUAL WORD PER ITEM',
                         'items' => [
                             'type' => 'string'
                         ]

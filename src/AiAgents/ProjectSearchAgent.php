@@ -25,9 +25,9 @@ class ProjectSearchAgent extends RotableAgent
 
     protected ?Document $document = null;
 
-    protected $model = 'gpt-4.1-nano';
+//    protected $model = 'gpt-4.1-nano';
 
-//    protected $model = 'gpt-4.1-mini';
+    protected $model = 'gpt-5.4';
 
     protected $maxCompletionTokens = 16384;
 
