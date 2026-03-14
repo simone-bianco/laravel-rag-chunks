@@ -100,6 +100,7 @@ class PostProcessor
         array $agentOptions = [],
         ?string $batchContextBefore = null,
         ?string $batchContextAfter = null,
+        ?string $usefulInfoFromPreviousChunking = null,
     ): array {
         if (empty($pendingItems)) {
             return [];
@@ -126,12 +127,19 @@ class PostProcessor
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->withTagsByType($agentOptions['tags_by_type'] ?? [])
             ->withBatchBoundaryContext($batchContextBefore, $batchContextAfter)
+            ->withUsefulInfoFromPreviousChunking($usefulInfoFromPreviousChunking)
             ->respond();
+
+        $chunksResponse = $agentResponse['chunks'] ?? $agentResponse;
+        $usefulInfoForNextChunking = '';
+        if (is_array($agentResponse) && is_string($agentResponse['useful_info_for_next_chunking'] ?? null)) {
+            $usefulInfoForNextChunking = trim($agentResponse['useful_info_for_next_chunking']);
+        }
 
         $buffer = [];
 
         // Ricostruisci il buffer iterando sulla risposta dell'AI
-        foreach ($agentResponse as $aiData) {
+        foreach ($chunksResponse as $aiData) {
             $content = $aiData['content'] ?? '';
 
             if (empty($content)) {
@@ -165,7 +173,10 @@ class PostProcessor
             ];
         }
 
-        return $buffer;
+        return [
+            'buffer' => $buffer,
+            'useful_info_for_next_chunking' => $usefulInfoForNextChunking,
+        ];
     }
 
     /**
@@ -206,6 +217,7 @@ class PostProcessor
             $overlapSize = (int) config('rag_chunks.chunk_overlap', 50);
             $pendingBatch = [];
             $previousTailContext = null; // ultimi N char del testo dell'ultimo item del batch precedente
+            $usefulInfoForNextChunking = null;
 
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
@@ -252,11 +264,12 @@ class PostProcessor
                         break;
                     }
 
-                    $buffer = $this->runAgentAndPrepareBuffer(
+                    $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                         $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                        $previousTailContext, $suffixContext
+                        $previousTailContext, $suffixContext, $usefulInfoForNextChunking
                     );
-                    $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                    $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
+                    $usefulInfoForNextChunking = $agentProcessingResult['useful_info_for_next_chunking'] ?? null;
 
                     $previousTailContext = $tailContext;
                     // Inizia il prossimo batch con il lookahead già letto, se disponibile
@@ -269,11 +282,12 @@ class PostProcessor
             }
 
             if (!empty($pendingBatch)) {
-                $buffer = $this->runAgentAndPrepareBuffer(
+                $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                     $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                    $previousTailContext, null
+                    $previousTailContext, null, $usefulInfoForNextChunking
                 );
-                $this->processPostProcessingBuffer($buffer, $writeStream, $embedder);
+                $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
+                $usefulInfoForNextChunking = $agentProcessingResult['useful_info_for_next_chunking'] ?? null;
                 if ($onBatchComplete) {
                     $onBatchComplete($currentInputLine);
                 }
