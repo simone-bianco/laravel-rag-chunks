@@ -114,7 +114,7 @@ class PostProcessor
             'pending_items_count' => count($pendingItems),
             'create_index' => !empty($agentOptions['create_index']),
             'current_index_count' => count($currentIndex),
-            'current_index_values' => array_keys($currentIndex),
+            'current_index_values' => $currentIndex,
             'incoming_active_context' => $this->truncateForLog($activeContextFromPreviousChunking),
             'incoming_useful_info_present' => $usefulInfoFromPreviousChunking !== null && trim($usefulInfoFromPreviousChunking) !== '',
             'incoming_useful_info' => $this->truncateForLog($usefulInfoFromPreviousChunking),
@@ -143,7 +143,7 @@ class PostProcessor
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->withTagsByType($agentOptions['tags_by_type'] ?? [])
             ->withCreateIndex(!empty($agentOptions['create_index']))
-            ->withCurrentIndex(array_keys($currentIndex))
+            ->withCurrentIndex($currentIndex)
             ->withActiveContextFromPreviousChunking($activeContextFromPreviousChunking)
             ->withBatchBoundaryContext($batchContextBefore, $batchContextAfter)
             ->withUsefulInfoFromPreviousChunking($usefulInfoFromPreviousChunking)
@@ -152,11 +152,20 @@ class PostProcessor
         $chunksResponse = $agentResponse['chunks'] ?? $agentResponse;
         $activeContextForNextChunking = '';
         if (is_array($agentResponse) && is_string($agentResponse['active_context_for_next_chunking'] ?? null)) {
-            $activeContextForNextChunking = trim($agentResponse['active_context_for_next_chunking']);
+            $activeContextForNextChunking = $this->normalizeActiveContext($agentResponse['active_context_for_next_chunking']);
         }
         $usefulInfoForNextChunking = '';
         if (is_array($agentResponse) && is_string($agentResponse['useful_info_for_next_chunking'] ?? null)) {
             $usefulInfoForNextChunking = trim($agentResponse['useful_info_for_next_chunking']);
+        }
+
+        if ($batchContextAfter === null
+            && $usefulInfoForNextChunking !== ''
+            && !$this->containsTruncationSignal($usefulInfoForNextChunking)) {
+            Log::channel('document-queue')->debug('[PostProcessor] dropping speculative useful_info on last batch', [
+                'useful_info' => $this->truncateForLog($usefulInfoForNextChunking),
+            ]);
+            $usefulInfoForNextChunking = '';
         }
 
         $buffer = [];
@@ -174,11 +183,11 @@ class PostProcessor
             $chapter = null;
 
             if (!empty($agentOptions['create_index'])) {
-                $chapterTitle = trim((string)($aiData['chapter_title'] ?? ''));
+                $chapterTitle = $this->normalizeChapterTitle((string)($aiData['chapter_title'] ?? ''));
                 if ($chapterTitle !== '') {
-                    $chapter = preg_replace('/[^A-Za-z0-9\-]/', '', Str::kebab(strtolower($chapterTitle)));
+                    $chapter = $this->toChapterAlias($chapterTitle);
                     if (is_string($chapter) && $chapter !== '') {
-                        $currentIndex[$chapter] = true;
+                        $this->addCurrentIndexTitle($currentIndex, $chapterTitle);
                     } else {
                         $chapter = null;
                     }
@@ -216,7 +225,7 @@ class PostProcessor
             'outgoing_useful_info_present' => $usefulInfoForNextChunking !== '',
             'outgoing_useful_info' => $this->truncateForLog($usefulInfoForNextChunking),
             'current_index_count_after' => count($currentIndex),
-            'current_index_values_after' => array_keys($currentIndex),
+            'current_index_values_after' => $currentIndex,
         ]);
 
         return [
@@ -242,6 +251,60 @@ class PostProcessor
         }
 
         return mb_substr($value, 0, $max) . '...';
+    }
+
+    protected function toChapterAlias(string $chapterTitle): ?string
+    {
+        $normalizedTitle = strtolower(trim($chapterTitle));
+        if ($normalizedTitle === '') {
+            return null;
+        }
+
+        $alias = preg_replace('/[^a-z0-9]+/', '-', $normalizedTitle) ?? '';
+        $alias = preg_replace('/-+/', '-', $alias) ?? '';
+        $alias = trim($alias, '-');
+
+        return $alias !== '' ? $alias : null;
+    }
+
+    protected function normalizeChapterTitle(string $chapterTitle): string
+    {
+        $chapterTitle = trim($chapterTitle);
+        $chapterTitle = preg_replace('/\s+/', ' ', $chapterTitle) ?? $chapterTitle;
+        return trim($chapterTitle);
+    }
+
+    protected function addCurrentIndexTitle(array &$currentIndex, string $chapterTitle): void
+    {
+        $normalizedKey = strtolower($chapterTitle);
+        foreach ($currentIndex as $existingTitle) {
+            if (strtolower((string)$existingTitle) === $normalizedKey) {
+                return;
+            }
+        }
+
+        $currentIndex[] = $chapterTitle;
+    }
+
+    protected function normalizeActiveContext(?string $context): string
+    {
+        if ($context === null) {
+            return '';
+        }
+
+        $normalized = trim($context);
+        if ($normalized === '') {
+            return '';
+        }
+
+        $normalized = preg_replace('/[_\-]+/', ' ', $normalized) ?? $normalized;
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? $normalized;
+        return trim(mb_strtolower($normalized));
+    }
+
+    protected function containsTruncationSignal(string $value): bool
+    {
+        return preg_match('/truncat|unfinished|cut|fragment|ends with|continuation|continues?/i', $value) === 1;
     }
 
     /**
