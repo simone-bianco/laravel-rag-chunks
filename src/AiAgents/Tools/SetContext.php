@@ -2,7 +2,6 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Abstractions\DataModel;

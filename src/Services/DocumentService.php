@@ -115,6 +115,7 @@ class DocumentService
                 'is_image' => !!$data->figurePath,
                 'questions' => !empty($data->questions) ? json_encode($data->questions, JSON_UNESCAPED_UNICODE) : null,
                 'questions_embedding' => !empty($data->questionsEmbedding) ? (is_string($data->questionsEmbedding) ? $data->questionsEmbedding : json_encode($data->questionsEmbedding)) : null,
+                'chapter' => $data->chapter,
             ];
 
             $chunksBuffer[] = $data;

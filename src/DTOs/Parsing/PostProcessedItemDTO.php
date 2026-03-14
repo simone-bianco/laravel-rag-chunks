@@ -18,6 +18,7 @@ class PostProcessedItemDTO implements Arrayable
         public ?string $questionsHash = null,
         public ?array $questionsEmbedding = null,
         public ?array $deterministicTags = null,
+        public ?string $chapter = null,
     ) {}
 
     public function toArray(): array
@@ -34,6 +35,7 @@ class PostProcessedItemDTO implements Arrayable
             'questions_hash' => $this->questionsHash,
             'questions_embedding' => $this->questionsEmbedding,
             'deterministic_tags' => $this->deterministicTags,
+            'chapter' => $this->chapter,
         ];
     }
 
@@ -51,6 +53,7 @@ class PostProcessedItemDTO implements Arrayable
             questionsHash: $data['questions_hash'],
             questionsEmbedding: $data['questions_embedding'],
             deterministicTags: $data['deterministic_tags'] ?? null,
+            chapter: $data['chapter'] ?? null,
         );
     }
 }

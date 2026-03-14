@@ -4,6 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\Services\PostProcessors;
 
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\ServerException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\AiAgents\PostProcessing\PostProcessingAgent;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
@@ -79,6 +80,7 @@ class PostProcessor
                 questionsHash: $item['questions_hash'],
                 questionsEmbedding: $existingEmbeddings[$item['questions_hash']] ?? null,
                 deterministicTags: $item['deterministic_tags'] ?? null,
+                chapter: $item['chapter'] ?? null,
             );
 
             $this->fileService->writeOnStream(
@@ -100,11 +102,25 @@ class PostProcessor
         array $agentOptions = [],
         ?string $batchContextBefore = null,
         ?string $batchContextAfter = null,
+        ?string $activeContextFromPreviousChunking = null,
         ?string $usefulInfoFromPreviousChunking = null,
+        array &$currentIndex = [],
     ): array {
         if (empty($pendingItems)) {
             return [];
         }
+
+        Log::channel('document-queue')->debug('[PostProcessor] iteration input', [
+            'pending_items_count' => count($pendingItems),
+            'create_index' => !empty($agentOptions['create_index']),
+            'current_index_count' => count($currentIndex),
+            'current_index_values' => array_keys($currentIndex),
+            'incoming_active_context' => $this->truncateForLog($activeContextFromPreviousChunking),
+            'incoming_useful_info_present' => $usefulInfoFromPreviousChunking !== null && trim($usefulInfoFromPreviousChunking) !== '',
+            'incoming_useful_info' => $this->truncateForLog($usefulInfoFromPreviousChunking),
+            'batch_context_before' => $this->truncateForLog($batchContextBefore),
+            'batch_context_after' => $this->truncateForLog($batchContextAfter),
+        ]);
 
         // ORA PASSIAMO ALL'AI SIA IL TESTO CHE IL FIGURE PATH, così sa che immagine ha!
         $chunksPayload = array_map(function ($item) use ($relativeDirPath) {
@@ -126,11 +142,18 @@ class PostProcessor
             ->withSummarization($agentOptions['summarization'] ?? false)
             ->withExtraInstructions($agentOptions['extra_instructions'] ?? null)
             ->withTagsByType($agentOptions['tags_by_type'] ?? [])
+            ->withCreateIndex(!empty($agentOptions['create_index']))
+            ->withCurrentIndex(array_keys($currentIndex))
+            ->withActiveContextFromPreviousChunking($activeContextFromPreviousChunking)
             ->withBatchBoundaryContext($batchContextBefore, $batchContextAfter)
             ->withUsefulInfoFromPreviousChunking($usefulInfoFromPreviousChunking)
             ->respond();
 
         $chunksResponse = $agentResponse['chunks'] ?? $agentResponse;
+        $activeContextForNextChunking = '';
+        if (is_array($agentResponse) && is_string($agentResponse['active_context_for_next_chunking'] ?? null)) {
+            $activeContextForNextChunking = trim($agentResponse['active_context_for_next_chunking']);
+        }
         $usefulInfoForNextChunking = '';
         if (is_array($agentResponse) && is_string($agentResponse['useful_info_for_next_chunking'] ?? null)) {
             $usefulInfoForNextChunking = trim($agentResponse['useful_info_for_next_chunking']);
@@ -148,6 +171,19 @@ class PostProcessor
 
             $tags = $aiData['tags'] ?? [];
             $questions = $aiData['questions'] ?? [];
+            $chapter = null;
+
+            if (!empty($agentOptions['create_index'])) {
+                $chapterTitle = trim((string)($aiData['chapter_title'] ?? ''));
+                if ($chapterTitle !== '') {
+                    $chapter = preg_replace('/[^A-Za-z0-9\-]/', '', Str::kebab(strtolower($chapterTitle)));
+                    if (is_string($chapter) && $chapter !== '') {
+                        $currentIndex[$chapter] = true;
+                    } else {
+                        $chapter = null;
+                    }
+                }
+            }
 
             // Recuperiamo il figure_path che l'AI ha deciso di associare a questo chunk dinamico
             $figurePath = !empty($aiData['figure_path']) ? $aiData['figure_path'] : null;
@@ -170,13 +206,42 @@ class PostProcessor
                 'questions' => $questions,
                 'questions_hash' => HashService::hash(implode('?', $questions)),
                 'deterministic_tags' => $deterministicTags,
+                'chapter' => $chapter,
             ];
         }
 
+        Log::channel('document-queue')->debug('[PostProcessor] iteration output', [
+            'buffer_items_count' => count($buffer),
+            'outgoing_active_context' => $this->truncateForLog($activeContextForNextChunking),
+            'outgoing_useful_info_present' => $usefulInfoForNextChunking !== '',
+            'outgoing_useful_info' => $this->truncateForLog($usefulInfoForNextChunking),
+            'current_index_count_after' => count($currentIndex),
+            'current_index_values_after' => array_keys($currentIndex),
+        ]);
+
         return [
             'buffer' => $buffer,
+            'active_context_for_next_chunking' => $activeContextForNextChunking,
             'useful_info_for_next_chunking' => $usefulInfoForNextChunking,
         ];
+    }
+
+    protected function truncateForLog(?string $value, int $max = 1200): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (mb_strlen($value) <= $max) {
+            return $value;
+        }
+
+        return mb_substr($value, 0, $max) . '...';
     }
 
     /**
@@ -214,10 +279,12 @@ class PostProcessor
                 $this->streamService->goToEnd($writeStream);
             }
 
-            $overlapSize = (int) config('rag_chunks.chunk_overlap', 50);
+            $overlapSize = (int) config('rag_chunks.chunk_overlap', 150);
             $pendingBatch = [];
             $previousTailContext = null; // ultimi N char del testo dell'ultimo item del batch precedente
+            $activeContextForNextChunking = null;
             $usefulInfoForNextChunking = null;
+            $currentIndex = [];
 
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
@@ -266,9 +333,10 @@ class PostProcessor
 
                     $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                         $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                        $previousTailContext, $suffixContext, $usefulInfoForNextChunking
+                        $previousTailContext, $suffixContext, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex
                     );
                     $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
+                    $activeContextForNextChunking = $agentProcessingResult['active_context_for_next_chunking'] ?? null;
                     $usefulInfoForNextChunking = $agentProcessingResult['useful_info_for_next_chunking'] ?? null;
 
                     $previousTailContext = $tailContext;
@@ -284,10 +352,9 @@ class PostProcessor
             if (!empty($pendingBatch)) {
                 $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                     $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                    $previousTailContext, null, $usefulInfoForNextChunking
+                    $previousTailContext, null, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex
                 );
                 $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
-                $usefulInfoForNextChunking = $agentProcessingResult['useful_info_for_next_chunking'] ?? null;
                 if ($onBatchComplete) {
                     $onBatchComplete($currentInputLine);
                 }
