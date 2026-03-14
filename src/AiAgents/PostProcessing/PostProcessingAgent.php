@@ -29,6 +29,7 @@ class PostProcessingAgent extends RotableAgent
     protected array $tagsByType = [];
     protected ?string $batchContextBefore = null;
     protected ?string $batchContextAfter = null;
+    protected ?string $usefulInfoFromPreviousChunking = null;
 
     public function __construct(
         string $key,
@@ -112,6 +113,12 @@ class PostProcessingAgent extends RotableAgent
         return $this;
     }
 
+    public function withUsefulInfoFromPreviousChunking(?string $usefulInfo): self
+    {
+        $this->usefulInfoFromPreviousChunking = !empty($usefulInfo) ? trim($usefulInfo) : null;
+        return $this;
+    }
+
     public function structuredOutput(): array
     {
         return $this->getResponseSchema();
@@ -120,12 +127,14 @@ class PostProcessingAgent extends RotableAgent
     protected function getResponseSchema(): array
     {
         if ($this->cleanText && $this->summarization) {
-            $contentDescription = 'The cleaned, formatted, and summarized text of the chunk. Fix broken characters/encoding, merge arbitrary line breaks, and remove OCR noise, then condense to core meaning. Stats, numbers, entities, and technical terms MUST be preserved. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+            $contentDescription = 'The cleaned, formatted, and summarized text of the chunk. Fix broken characters/encoding, merge arbitrary line breaks, and remove OCR noise, then condense to core meaning using an EXTRACTIVE approach (delete less relevant sentences first, avoid rewriting facts). Stats, numbers, entities, and technical terms MUST be preserved. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         } elseif ($this->cleanText) {
             $contentDescription = 'The cleaned and perfectly formatted text of the chunk. Fix broken encoding/characters, merge arbitrarily broken lines, and remove OCR noise. NEVER alter the actual meaning, rephrase, condense, or drop information. Preserve all entities 100% faithfully. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         } else {
             $contentDescription = 'The exact text of the chunk, BUT with corrected formatting. You MUST fix broken encoding (e.g., unicode artifacts), repair garbled characters, and join mid-sentence line breaks. ABSOLUTELY FORBIDDEN to omit, condense, or change the underlying information. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         }
+
+        $contentDescription .= ' CRITICAL FIDELITY: NEVER invent entities, objects, characters, events, relationships, or mechanics that are not in the source. NEVER swap object/entity type (example: chest -> person). Preserve polarity and intent exactly (example: rivalry must not become camaraderie). Preserve numbers, DCs, dice expressions, units, and constraints exactly as written.';
 
         if ($this->contextInjection) {
             $contentDescription .= ' May include a brief injected context at the very beginning if the data is highly abstract.';
@@ -135,6 +144,19 @@ class PostProcessingAgent extends RotableAgent
 
         $deterministicTagProperties = [];
         $deterministicTagRequired = [];
+        $allowedFigurePaths = array_values(array_filter(array_unique(array_map(function (array $chunk): string {
+            return isset($chunk['figure_path']) && is_string($chunk['figure_path'])
+                ? trim($chunk['figure_path'])
+                : '';
+        }, $this->chunks))));
+        $figurePathProperty = [
+            'type' => 'string',
+            'description' => 'The path to the figure/image. MUST be exactly one of the provided input figure_path values, or empty string "" when there is no relevant figure.',
+        ];
+        if (!empty($allowedFigurePaths)) {
+            $figurePathProperty['enum'] = [...$allowedFigurePaths, ''];
+        }
+
         if (!empty($this->tagsByType)) {
             foreach ($this->tagsByType as $type => $tags) {
                 $deterministicTagProperties["tags_$type"] = [
@@ -159,6 +181,10 @@ class PostProcessingAgent extends RotableAgent
             'type' => 'object',
             'description' => 'List of dynamically sized, ordered chunks with questions and tags',
             'properties' => [
+                'useful_info_for_next_chunking' => [
+                    'type' => 'string',
+                    'description' => 'Put there useful information for next chunking, for instance if the last chunk you received is cut and the next part will be handled by the next agent; keep as short as possible'
+                ],
                 'chunks' => [
                     'type' => 'array',
                     'description' => 'Dynamically processed chunks, forming highly cohesive atomic semantic units.',
@@ -180,8 +206,7 @@ class PostProcessingAgent extends RotableAgent
                                 'items' => ['type' => 'string'],
                             ],
                             'figure_path' => [
-                                'type' => 'string',
-                                'description' => 'The path to the figure/image. Return an empty string "" if there is no relevant figure.',
+                                ...$figurePathProperty,
                             ],
                             ...$deterministicTagProperties,
                         ],
@@ -190,7 +215,7 @@ class PostProcessingAgent extends RotableAgent
                     ],
                 ],
             ],
-            'required' => ['chunks'],
+            'required' => ['useful_info_for_next_chunking', 'chunks'],
             'additionalProperties' => false,
         ];
     }
@@ -202,7 +227,7 @@ class PostProcessingAgent extends RotableAgent
             : "7. **NO META-COMMENTARY (CRITICAL)**: NEVER start the `content` with conversational phrases like \"These chunks describe...\". Start immediately with the raw text.";
 
         if ($this->cleanText && $this->summarization) {
-            $summarizationRule = "1. **CLEAN, FORMAT & SUMMARIZE**: Fix broken text, merge split lines, remove OCR garbage AND condense to core meaning. STRICTLY FORBIDDEN to remove entities, proper nouns, technical terms, numerical data, or code.";
+            $summarizationRule = "1. **CLEAN, FORMAT & SUMMARIZE**: Fix broken text, merge split lines, remove OCR garbage AND condense to core meaning. Use extractive compression by removing less relevant parts first; avoid rewriting facts unless needed for OCR repair. STRICTLY FORBIDDEN to remove entities, proper nouns, technical terms, numerical data, or code.";
         } elseif ($this->cleanText) {
             $summarizationRule = "1. **CLEAN & FORMAT ONLY**: Fix text encoding, repair garbled characters, merge mid-sentence line breaks, and remove OCR noise. NEVER condense, rephrase, or omit content. Preserve meaning 100% faithfully.";
         } else {
@@ -225,6 +250,11 @@ class PostProcessingAgent extends RotableAgent
             }
         }
 
+        $iterativeUsefulInfoBlock = '';
+        if ($this->usefulInfoFromPreviousChunking !== null) {
+            $iterativeUsefulInfoBlock = "\n### ITERATIVE HANDOFF FROM PREVIOUS BATCH\n{$this->usefulInfoFromPreviousChunking}\n";
+        }
+
         $estimatedWords = (int)($this->preferredChunkLength / 6);
 
         $contextBlock = '';
@@ -242,7 +272,6 @@ You have access to a tool to set the context for the NEXT processing iteration.
 - **Updating**: If the context hasn't changed, you do not need to call the tool at all.
 CONTEXT;
 
-            Context::forgetHidden(self::CONTEXT_KEY);
         }
 
         return <<<INSTRUCTIONS
@@ -268,10 +297,23 @@ $summarizationRule
 5. **NO METADATA IN TEXT**: Put tags and questions EXCLUSIVELY in their dedicated JSON arrays. Never print them inside the `content` string.
 6. **SUBJECT IN METADATA**: The tags array AND every single question MUST explicitly include the main subject/entity name of the chunk. Never use pronouns like "it" or "they" in questions.
 $contextRule
+8. **ANTI-INVENTION (CRITICAL)**: Never add content that is not present in source text. If uncertain, keep source wording; do not guess.
+9. **NO SEMANTIC FLIPS (CRITICAL)**: Never invert roles/relationships/sentiment (ally vs rival, support vs threat, optional vs mandatory, invitation vs summons).
+10. **PRESERVE TECHNICAL LITERALS**: Keep all numerical values and mechanical literals unchanged (DC values, dice notation like `3d10`, distances, durations, requirements, constraints).
+11. **PRESERVE VOICE WHEN POSSIBLE**: Keep stylistic tone (ironic, theatrical, dark humor) if present in source; do not neutralize tone into generic exposition.
 
 ### FIGURE RULES
 Preserve `figure_path` if present. If merging chunks with different figures, keep the most relevant or split the chunks to preserve both. Return "" if no figure.
+
+### ITERATIVE HANDOFF FIELD (CRITICAL)
+- You MUST always return `useful_info_for_next_chunking`.
+- Use it to pass short, practical continuity hints for the next batch (e.g., unfinished sentence, truncated list or tables, expected continuation, unresolved reference).
+- You MUST include only directly observed boundary facts from the current input; never infer or invent future content.
+- Keep it concise and actionable.
+- If there is nothing useful to hand off, return an empty string "".
+
 $boundaryBlock
+$iterativeUsefulInfoBlock
 $extraInstructionsBlock
 INSTRUCTIONS;
     }
@@ -287,7 +329,12 @@ INSTRUCTIONS;
             throw new RuntimeException('AI provider returned null content (transient error or refusal): ' . $e->getMessage(), 0, $e);
         }
 
-        return $response['chunks'] ?? [];
+        return [
+            'useful_info_for_next_chunking' => is_string($response['useful_info_for_next_chunking'] ?? null)
+                ? trim($response['useful_info_for_next_chunking'])
+                : '',
+            'chunks' => $response['chunks'] ?? [],
+        ];
     }
 
     public function prompt($message)

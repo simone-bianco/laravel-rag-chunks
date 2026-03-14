@@ -194,7 +194,7 @@ class PostProcessor
         string $relativeSourcePath,
         string $relativeOutputPath,
         ?string $documentContext = '',
-        int $batchSize = 10,
+        int $batchSize = 8,
         array $agentOptions = [],
         int $startFromInputLine = 0,
         ?callable $onBatchComplete = null

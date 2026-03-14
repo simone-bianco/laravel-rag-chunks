@@ -124,14 +124,14 @@ abstract class AbstractLocalFileParser implements DocumentParserInterface
      *
      * @param string|null $documentContext Optional document-level context to pass to the post-processor.
      * @param ParsingContextDTO $context   The context holding relativeRefinedPath and relativeDirPath.
-     * @param int $batchSize               Number of items to process per batch (default 20).
+     * @param int $batchSize               Number of items to process per batch (default 8).
      * @return ParsingContextDTO           Updated context with relativePostProcessedPath set.
      * @throws InvalidFileException        If the refined file does not exist.
      */
     public function postProcess(
         ?string $documentContext,
         ParsingContextDTO $context,
-        int $batchSize = 20,
+        int $batchSize = 8,
         array $agentOptions = [],
         int $startFromInputLine = 0,
         ?callable $onBatchComplete = null

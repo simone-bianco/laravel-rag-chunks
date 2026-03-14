@@ -13,6 +13,7 @@ return [
         'postprocessor' => [
             'provider' => 'openai',
             'model' => 'gpt-4.1-nano',
+            'batch_size' => 8,
             'chunks_in_schema' => false
         ],
     ],

@@ -189,7 +189,7 @@ class PdfParser implements DocumentParserInterface
     public function postProcess(
         ?string $documentContext,
         ParsingContextDTO $context,
-        int $batchSize = 10,
+        int $batchSize = 8,
         array $agentOptions = [],
         int $startFromInputLine = 0,
         ?callable $onBatchComplete = null

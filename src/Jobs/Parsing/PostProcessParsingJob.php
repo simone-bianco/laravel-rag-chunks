@@ -100,7 +100,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                 $postProcessedContext = $parser->postProcess(
                     $document->description,
                     $parser->contextFromArray($process->context),
-                    config('rag_chunks.agents.postprocessor.batch_size', 7),
+                    config('rag_chunks.agents.postprocessor.batch_size', 8),
                     $postprocessorOptions,
                     $resumeFromLine,
                     function (int $lastInputLine) use ($process, $document): void {
