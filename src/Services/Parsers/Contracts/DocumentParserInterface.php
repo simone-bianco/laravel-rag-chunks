@@ -53,5 +53,5 @@ interface DocumentParserInterface
      * @throws FileNotFoundException
      * @throws Throwable
      */
-    public function saveDocument(Document $document, ParsingContextDTO $context): Document;
+    public function saveDocument(Document $document, ParsingContextDTO $context, array $options = []): Document;
 }

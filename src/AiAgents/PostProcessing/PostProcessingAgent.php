@@ -359,6 +359,9 @@ Preserve `figure_path` if present. If merging chunks with different figures, kee
 - Keep it concise and actionable.
 - If there is nothing useful to hand off, return an empty string "".
 
+### CHUNKS OUTPUT (CRITICAL)
+- For dirty chunks are dirty (non-UTF-8 characters that don't have meaning or new line in the middle of a sentence), you MUST produce a clean output instead with a well formatted text; don't put unnecessary dirty characters and unnecessary new lines
+
 $boundaryBlock
 $iterativeUsefulInfoBlock
 $indexingBlock

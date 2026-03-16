@@ -58,7 +58,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
             $this->documentId = $document->id;
             $this->enrichContext();
 
-            $process->mergeContextAndSave([
+            $process->setProcessing([
                 'phase' => ParsingPhase::POST_PROCESSING->value
             ]);
 

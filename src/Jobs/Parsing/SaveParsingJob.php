@@ -44,21 +44,26 @@ class SaveParsingJob extends BaseDocumentParsingJob
 
             $process = Process::with('processable')->findOrFail($this->processId);
 
-            $phase = $process->context['phase'] ?? 'unknown';
-            if ($this->handleStopSignal($process, $phase)) return;
+            $process->setProcessing([
+                'phase' => ParsingPhase::SAVING->value
+            ]);
+
+            if ($this->handleStopSignal($process, ParsingPhase::SAVING->value)) return;
 
             /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
             $document = $process->processable;
             $this->documentId = $document->id;
             $this->enrichContext();
 
-            $process->mergeContextAndSave([
-                'phase' => ParsingPhase::SAVING->value
-            ]);
-
             /** @var PdfParser $parser */
             $parser = DocumentParserFactory::make($document->extension);
-            $parser->saveDocument($document, $parser->contextFromArray($process->context));
+            $parser->saveDocument(
+                $document,
+                $parser->contextFromArray($process->context),
+                [
+                    'keep_chunks_with_images' => (bool) ($process->context['keep_chunks_with_images'] ?? false),
+                ]
+            );
 
             $process->setComplete(['phase' => ParsingPhase::COMPLETED->value]);
 

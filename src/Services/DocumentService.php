@@ -8,10 +8,13 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
+use SimoneBianco\LaravelProcesses\Models\Process;
+use SimoneBianco\LaravelRagChunks\AiAgents\GenerateDocumentMetadataAgent;
 use SimoneBianco\LaravelRagChunks\DTOs\DocumentSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\PostProcessedItemDTO;
 use SimoneBianco\LaravelRagChunks\Enums\TagFilterMode;
 use SimoneBianco\LaravelRagChunks\Exceptions\InvalidFileException;
+use SimoneBianco\LaravelRagChunks\Jobs\GenerateDocumentMetadataJob;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
@@ -70,19 +73,33 @@ class DocumentService
      * @throws FileNotFoundException
      * @throws Throwable
      */
-    public function regeneratePostProcessedChunks(Document $document, string $relativeJsonlPath): Document
+    public function regeneratePostProcessedChunks(Document $document, string $relativeJsonlPath, array $options = []): Document
     {
         if (!$this->fileService->exists($relativeJsonlPath)) {
             throw new FileNotFoundException("JSONL file not found at $relativeJsonlPath");
         }
 
+        $keepChunksWithImages = (bool) ($options['keep_chunks_with_images'] ?? false);
         $now = now();
-        $document->purgeChunks();
+
+        if ($keepChunksWithImages) {
+            $document->chunks()
+                ->where(function (Builder $query) {
+                    $query->where('is_image', false)
+                        ->orWhereNull('is_image');
+                })
+                ->whereDoesntHave('dedupMedia')
+                ->delete();
+        } else {
+            $document->purgeChunks();
+        }
+
+        $maxExistingOrder = (int) ($document->chunks()->max('order') ?? 0);
         $readStream = $this->fileService->readStream($relativeJsonlPath);
         $chunksBuffer = [];
         $figuresBuffer = [];
         $deterministicTagsBuffer = []; // chunkId => {typeAlias => [slugs]}
-        $index = 1;
+        $index = $maxExistingOrder + 1;
         while (($line = fgets($readStream)) !== false) {
             $line = str_replace(["\u{0000}", '\\u0000'], '', $line);
             $data = PostProcessedItemDTO::fromArray(json_decode($line, true));
@@ -123,13 +140,16 @@ class DocumentService
                 continue;
             }
 
-            DB::transaction(function () use ($chunksBuffer, $figuresBuffer) {
+            DB::transaction(function () use ($chunksBuffer, $figuresBuffer, $document) {
                 Chunk::insert($chunksBuffer);
 
                 if (!empty($figuresBuffer)) {
                     $this->attachFiguresToChunks($figuresBuffer);
                 }
             });
+
+            // Update denormalized cache column
+            $this->updateDocumentIndexedCache($document);
 
             if (!empty($deterministicTagsBuffer)) {
                 $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
@@ -141,7 +161,7 @@ class DocumentService
         }
 
         if (!empty($chunksBuffer)) {
-            DB::transaction(function () use ($chunksBuffer, $figuresBuffer) {
+            DB::transaction(function () use ($chunksBuffer, $figuresBuffer, $document) {
                 Chunk::insert($chunksBuffer);
 
                 if (!empty($figuresBuffer)) {
@@ -152,6 +172,9 @@ class DocumentService
             if (!empty($deterministicTagsBuffer)) {
                 $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
             }
+
+            // Update denormalized cache column
+            $this->updateDocumentIndexedCache($document);
         }
 
         // Apply inherited tags from document metadata (set at parse-time via ParseDocumentModal)
@@ -384,6 +407,390 @@ class DocumentService
 
     /**
      * @param Document $document
+     * @param array{
+     *     generate_name?: bool,
+     *     generate_description?: bool,
+     *     generate_classic_tags?: bool,
+     *     generate_semantic_tags?: bool,
+     *     generate_questions?: bool
+     * } $options
+     */
+    public function generateMetadata(Document $document, array $options): Process
+    {
+        if ($document->hasActiveProcesses()) {
+            throw new RuntimeException('Cannot generate metadata while another process is active.');
+        }
+
+        $resolvedOptions = $this->resolveMetadataGenerationOptions($options);
+
+        if (! $this->shouldGenerateAnyMetadata($resolvedOptions)) {
+            throw new RuntimeException('No metadata field selected for generation.');
+        }
+
+        $process = $document->startProcess('document_metadata_generation', [
+            'options' => $resolvedOptions,
+            'phase' => 'queued',
+            'is_retryable' => false,
+        ]);
+
+        GenerateDocumentMetadataJob::dispatch($process->id);
+
+        return $process;
+    }
+
+    /**
+     * @param array{
+     *     generate_name?: bool,
+     *     generate_description?: bool,
+     *     generate_classic_tags?: bool,
+     *     generate_semantic_tags?: bool,
+     *     generate_questions?: bool
+     * } $options
+     * @param array<string, array<int, string>> $availableClassicTagsByType
+     * @param array<int, string> $availableTagTypes
+     * @return array<string, mixed>
+     */
+    public function generateMetadataPayload(
+        Document $document,
+        array $options,
+        array $availableClassicTagsByType = [],
+        array $availableTagTypes = [],
+    ): array
+    {
+        $resolvedOptions = $this->resolveMetadataGenerationOptions($options);
+
+        if (! $this->shouldGenerateAnyMetadata($resolvedOptions)) {
+            throw new RuntimeException('No metadata field selected for generation.');
+        }
+
+        $content = $this->getDocumentContentSnippetForMetadata($document);
+
+        if ($content === '') {
+            throw new RuntimeException('Unable to extract a usable content snippet from the document.');
+        }
+
+        $agent = (new GenerateDocumentMetadataAgent(uniqid('doc-meta-', true)))
+            ->withCurrentName((string) ($document->name ?? ''))
+            ->withCurrentDescription((string) ($document->description ?? ''))
+            ->withDocumentContent($content)
+            ->withAvailableTagTypes($availableTagTypes)
+            ->withAvailableClassicTagsByType($availableClassicTagsByType)
+            ->withGenerateName((bool) ($resolvedOptions['generate_name'] ?? false))
+            ->withGenerateDescription((bool) ($resolvedOptions['generate_description'] ?? false))
+            ->withGenerateClassicTags((bool) ($resolvedOptions['generate_classic_tags'] ?? false))
+            ->withGenerateSemanticTags((bool) ($resolvedOptions['generate_semantic_tags'] ?? false))
+            ->withGenerateQuestions((bool) ($resolvedOptions['generate_questions'] ?? false));
+
+        $response = $agent->respond();
+
+        return is_array($response) ? $response : [];
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     * @param array{
+     *     generate_name?: bool,
+     *     generate_description?: bool,
+     *     generate_classic_tags?: bool,
+     *     generate_semantic_tags?: bool,
+     *     generate_questions?: bool
+     * } $options
+     * @return array<string, mixed>
+     */
+    public function applyGeneratedMetadata(Document $document, array $metadata, array $options): array
+    {
+        $resolvedOptions = $this->resolveMetadataGenerationOptions($options);
+
+        $updates = [];
+        $applied = [];
+
+        if (($resolvedOptions['generate_name'] ?? false) && array_key_exists('name', $metadata)) {
+            $name = trim((string) ($metadata['name'] ?? ''));
+            if ($name !== '') {
+                $updates['name'] = mb_substr($name, 0, 255);
+                $applied['name'] = $updates['name'];
+            }
+        }
+
+        if (($resolvedOptions['generate_description'] ?? false) && array_key_exists('description', $metadata)) {
+            $description = trim((string) ($metadata['description'] ?? ''));
+            if ($description !== '') {
+                $updates['description'] = $description;
+                $applied['description'] = $description;
+            }
+        }
+
+        if (($resolvedOptions['generate_semantic_tags'] ?? false) && array_key_exists('semantic_tags', $metadata)) {
+            $semanticTags = $this->normalizeStringList(is_array($metadata['semantic_tags']) ? $metadata['semantic_tags'] : [], 255);
+            $updates['semantic_tags'] = $semanticTags;
+            $applied['semantic_tags'] = $semanticTags;
+        }
+
+        if (($resolvedOptions['generate_questions'] ?? false) && array_key_exists('questions', $metadata)) {
+            $questions = $this->normalizeStringList(is_array($metadata['questions']) ? $metadata['questions'] : [], 1000);
+            $updates['questions'] = $questions;
+            $applied['questions'] = $questions;
+        }
+
+        if (! empty($updates)) {
+            $document->update($updates);
+        }
+
+        if (($resolvedOptions['generate_classic_tags'] ?? false) && array_key_exists('classic_tags', $metadata)) {
+            $classicTags = $this->normalizeClassicTags(is_array($metadata['classic_tags']) ? $metadata['classic_tags'] : []);
+            [$tagIds, $tagIdsByType] = $this->resolveClassicTagIdsByType($document, $classicTags);
+            $document->tags()->sync($tagIds);
+
+            $applied['classic_tags'] = $classicTags;
+            $applied['classic_tags_by_type'] = $tagIdsByType;
+        }
+
+        return $applied;
+    }
+
+    /**
+     * @param array{
+     *     generate_name?: bool,
+     *     generate_description?: bool,
+     *     generate_classic_tags?: bool,
+     *     generate_semantic_tags?: bool,
+     *     generate_questions?: bool
+     * } $options
+     * @return array{
+     *     generate_name: bool,
+     *     generate_description: bool,
+     *     generate_classic_tags: bool,
+     *     generate_semantic_tags: bool,
+     *     generate_questions: bool
+     * }
+     */
+    protected function resolveMetadataGenerationOptions(array $options): array
+    {
+        return [
+            'generate_name' => (bool) ($options['generate_name'] ?? true),
+            'generate_description' => (bool) ($options['generate_description'] ?? true),
+            'generate_classic_tags' => (bool) ($options['generate_classic_tags'] ?? true),
+            'generate_semantic_tags' => (bool) ($options['generate_semantic_tags'] ?? true),
+            'generate_questions' => (bool) ($options['generate_questions'] ?? true),
+        ];
+    }
+
+    /**
+     * @param array{
+     *     generate_name: bool,
+     *     generate_description: bool,
+     *     generate_classic_tags: bool,
+     *     generate_semantic_tags: bool,
+     *     generate_questions: bool
+     * } $options
+     */
+    protected function shouldGenerateAnyMetadata(array $options): bool
+    {
+        return in_array(true, [
+            $options['generate_name'],
+            $options['generate_description'],
+            $options['generate_classic_tags'],
+            $options['generate_semantic_tags'],
+            $options['generate_questions'],
+        ], true);
+    }
+
+    /**
+     * @param array<int, mixed> $values
+     * @return array<int, string>
+     */
+    protected function normalizeStringList(array $values, int $maxLength): array
+    {
+        $normalized = [];
+        $seen = [];
+
+        foreach ($values as $value) {
+            if (! is_string($value) && ! is_numeric($value)) {
+                continue;
+            }
+
+            $item = trim((string) $value);
+            if ($item === '') {
+                continue;
+            }
+
+            $item = mb_substr($item, 0, $maxLength);
+            $key = Str::lower($item);
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $normalized[] = $item;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, mixed> $classicTags
+     * @return array<int, array{type: string, tags: array<int, string>}>
+     */
+    protected function normalizeClassicTags(array $classicTags): array
+    {
+        $normalized = [];
+
+        foreach ($classicTags as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+
+            $type = trim((string) ($group['type'] ?? ''));
+            $tags = $this->normalizeStringList(is_array($group['tags'] ?? null) ? $group['tags'] : [], 100);
+
+            if ($type === '' || empty($tags)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'type' => $type,
+                'tags' => $tags,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, array{type: string, tags: array<int, string>}> $classicTags
+     * @return array{0: array<int, mixed>, 1: array<int|string, array<int, mixed>>}
+     */
+    protected function resolveClassicTagIdsByType(Document $document, array $classicTags): array
+    {
+        if (empty($classicTags)) {
+            return [[], []];
+        }
+
+        $tagTypeModel = config('tags.tag_type_model', \SimoneBianco\LaravelSimpleTags\TagType::class);
+        $tagModel = config('tags.tag_model', \SimoneBianco\LaravelSimpleTags\Tag::class);
+
+        $tagTypes = $tagTypeModel::query()
+            ->where('project_id', $document->project_id)
+            ->get(['id', 'alias', 'label']);
+
+        if ($tagTypes->isEmpty()) {
+            return [[], []];
+        }
+
+        $typeLookup = [];
+        $typeIds = [];
+
+        foreach ($tagTypes as $tagType) {
+            $typeIds[] = $tagType->id;
+
+            $alias = Str::slug((string) ($tagType->alias ?? ''));
+            $label = Str::slug((string) ($tagType->label ?? ''));
+
+            if ($alias !== '') {
+                $typeLookup[$alias] = $tagType->id;
+            }
+            if ($label !== '') {
+                $typeLookup[$label] = $tagType->id;
+            }
+        }
+
+        $tagRecords = $tagModel::query()
+            ->whereIn('tag_type_id', $typeIds)
+            ->get(['id', 'tag_type_id', 'name', 'slug']);
+
+        $tagLookupByType = [];
+        foreach ($tagRecords as $tagRecord) {
+            $typeId = $tagRecord->tag_type_id;
+            $slug = Str::slug((string) ($tagRecord->slug ?? ''));
+            $name = Str::slug((string) ($tagRecord->name ?? ''));
+
+            if ($slug !== '') {
+                $tagLookupByType[$typeId][$slug] = $tagRecord->id;
+            }
+            if ($name !== '') {
+                $tagLookupByType[$typeId][$name] = $tagRecord->id;
+            }
+        }
+
+        $tagIdsByType = [];
+        foreach ($classicTags as $group) {
+            $typeKey = Str::slug($group['type']);
+            $typeId = $typeLookup[$typeKey] ?? null;
+            if (! $typeId) {
+                continue;
+            }
+
+            foreach ($group['tags'] as $tagName) {
+                $tagKey = Str::slug($tagName);
+                $tagId = $tagLookupByType[$typeId][$tagKey] ?? null;
+                if ($tagId) {
+                    $tagIdsByType[$typeId][] = $tagId;
+                }
+            }
+        }
+
+        foreach ($tagIdsByType as $typeId => $tagIds) {
+            $tagIdsByType[$typeId] = array_values(array_unique($tagIds));
+        }
+
+        $allTagIdsMap = [];
+        foreach ($tagIdsByType as $tagIds) {
+            foreach ($tagIds as $tagId) {
+                $allTagIdsMap[(string) $tagId] = $tagId;
+            }
+        }
+
+        $allTagIds = array_values($allTagIdsMap);
+
+        return [$allTagIds, $tagIdsByType];
+    }
+
+    protected function getDocumentContentSnippetForMetadata(Document $document): string
+    {
+        $chunkContent = trim($this->getDocumentChunkSnippetForMetadata($document));
+        if ($chunkContent !== '') {
+            return mb_substr($chunkContent, 0, 12000);
+        }
+
+        if ($document->file_path === null || trim($document->file_path) === '' || ! $this->fileService->exists($document->file_path)) {
+            return '';
+        }
+
+        $content = $this->fileService->get($document->file_path);
+
+        return mb_substr(trim((string) $content), 0, 12000);
+    }
+
+    protected function getDocumentChunkSnippetForMetadata(Document $document): string
+    {
+        $limit = 12000;
+        $buffer = '';
+
+        $chunks = $document->chunks()
+            ->select('content')
+            ->whereNotNull('content')
+            ->orderBy('order')
+            ->limit(50)
+            ->get();
+
+        foreach ($chunks as $chunk) {
+            $content = trim((string) ($chunk->content ?? ''));
+            if ($content === '') {
+                continue;
+            }
+
+            $buffer = trim($buffer . ' ' . $content);
+
+            if (mb_strlen($buffer) >= $limit) {
+                break;
+            }
+        }
+
+        return mb_substr($buffer, 0, $limit);
+    }
+
+    /**
+     * @param Document $document
      * @param int $targetOrder
      * @param array{content: string, embedding?: array} $data
      * @return Chunk
@@ -425,5 +832,22 @@ class DocumentService
         } catch (RuntimeException $e) {
              throw new FileNotFoundException($e->getMessage());
         }
+    }
+
+    /**
+     * Update the cached_has_indexed_chunks column for a document.
+     * Called after bulk chunk operations to ensure the cache stays in sync.
+     */
+    protected function updateDocumentIndexedCache(Document $document): void
+    {
+        $hasIndexedChunks = $document->chunks()
+            ->whereNotNull('chapter')
+            ->where('chapter', '!=', '')
+            ->exists();
+
+        $document->updateQuietly([
+            'cached_has_indexed_chunks' => $hasIndexedChunks,
+            'cached_at' => now(),
+        ]);
     }
 }

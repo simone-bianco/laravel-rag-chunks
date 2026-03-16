@@ -170,11 +170,12 @@ abstract class AbstractLocalFileParser implements DocumentParserInterface
      * @param ParsingContextDTO $context  The context holding relativePostProcessedPath.
      * @return Document                   The updated document.
      */
-    public function saveDocument(Document $document, ParsingContextDTO $context): Document
+    public function saveDocument(Document $document, ParsingContextDTO $context, array $options = []): Document
     {
         return $this->documentService->regeneratePostProcessedChunks(
             $document,
-            $context->relativePostProcessedPath
+            $context->relativePostProcessedPath,
+            $options
         );
     }
 }

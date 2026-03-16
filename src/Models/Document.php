@@ -37,6 +37,9 @@ class Document extends Model
         'metadata',
         'is_chunks_dirty',
         'is_description_dirty',
+        'cached_has_indexed_chunks',
+        'cached_has_active_processes',
+        'cached_at',
     ];
 
     protected function casts()
@@ -52,6 +55,9 @@ class Document extends Model
             'questions_embedding' => VectorArray::class,
             'is_chunks_dirty' => 'boolean',
             'is_description_dirty' => 'boolean',
+            'cached_has_indexed_chunks' => 'boolean',
+            'cached_has_active_processes' => 'boolean',
+            'cached_at' => 'datetime',
         ];
     }
 

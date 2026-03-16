@@ -220,12 +220,13 @@ class PdfParser implements DocumentParserInterface
      * @throws FileNotFoundException
      * @throws Throwable
      */
-    public function saveDocument(Document $document, ParsingContextDTO $context): Document
+    public function saveDocument(Document $document, ParsingContextDTO $context, array $options = []): Document
     {
         $document->enabled = true;
         return $this->documentService->regeneratePostProcessedChunks(
             $document,
-            $context->relativePostProcessedPath
+            $context->relativePostProcessedPath,
+            $options
         );
     }
 }

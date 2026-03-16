@@ -439,6 +439,9 @@ class PostProcessor
             $isRetryable = ($exception instanceof \RuntimeException && $prev instanceof \TypeError)
                 || $prev instanceof ConnectException
                 || $prev instanceof ServerException
+                || $exception instanceof \OpenAI\Exceptions\UnserializableResponse
+                || $exception instanceof \JsonException
+                || str_contains($exception->getMessage(), 'Syntax error')
                 || str_contains($exception->getMessage(), 'timed out')
                 || str_contains($exception->getMessage(), 'Connection refused')
                 || str_contains($exception->getMessage(), 'cURL error');

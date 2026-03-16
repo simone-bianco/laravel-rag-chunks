@@ -43,8 +43,11 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
 
         $process = Process::with('processable')->findOrFail($this->processId);
 
-        $phase = $process->context['phase'] ?? 'unknown';
-        if ($this->handleStopSignal($process, $phase)) return;
+        $process->setProcessing([
+            'phase' => ParsingPhase::REFINING->value
+        ]);
+
+        if ($this->handleStopSignal($process, ParsingPhase::REFINING->value)) return;
 
         /** @var \SimoneBianco\LaravelRagChunks\Models\Document $document */
         $document = $process->processable;
