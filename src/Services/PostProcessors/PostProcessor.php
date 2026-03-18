@@ -125,7 +125,7 @@ class PostProcessor
         // ORA PASSIAMO ALL'AI SIA IL TESTO CHE IL FIGURE PATH, così sa che immagine ha!
         $chunksPayload = array_map(function ($item) use ($relativeDirPath) {
             return [
-                'text' => $item->text,
+                'text' => \SimoneBianco\LaravelRagChunks\Support\TextSanitizer::sanitizeForJson($item->text),
                 // Pre-assembliamo il path qui, in modo che l'AI debba solo restituirlo testualmente
                 'figure_path' => !empty($item->figurePath) ? "$relativeDirPath/{$item->figurePath}" : null,
             ];
@@ -436,15 +436,17 @@ class PostProcessor
             }
 
             $prev = $exception->getPrevious();
+            $message = $exception->getMessage();
             $isRetryable = ($exception instanceof \RuntimeException && $prev instanceof \TypeError)
                 || $prev instanceof ConnectException
                 || $prev instanceof ServerException
                 || $exception instanceof \OpenAI\Exceptions\UnserializableResponse
                 || $exception instanceof \JsonException
-                || str_contains($exception->getMessage(), 'Syntax error')
-                || str_contains($exception->getMessage(), 'timed out')
-                || str_contains($exception->getMessage(), 'Connection refused')
-                || str_contains($exception->getMessage(), 'cURL error');
+                || str_contains($message, 'Syntax error')
+                || str_contains($message, 'timed out')
+                || str_contains($message, 'Connection refused')
+                || str_contains($message, 'cURL error')
+                || str_contains($message, 'We could not parse the JSON body of your request');
 
             throw new PostProcessingException(
                 "Error during post-processing: {$exception->getMessage()}",

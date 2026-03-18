@@ -124,11 +124,17 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                 if ($exception->isRetryable()) {
                     throw $exception; // outer catch handles retry via handleTemporaryFailure
                 }
+
+                $manualRetryable = str_contains($exception->getMessage(), 'Unexpected finish reason: content_filter')
+                    || str_contains($exception->getMessage(), 'finished with reason: SAFETY')
+                    || str_contains($exception->getMessage(), 'finished with reason: RECITATION');
+
                 // Errore strutturale non recuperabile: segna il processo come non riprovabile
                 $process->setError($exception->getMessage(), [
                     ParsingPhase::POST_PROCESSING->value => $exception->toArray(),
-                    'is_retryable' => false,
+                    'is_retryable' => $manualRetryable,
                 ]);
+
                 $this->fail($exception);
                 return;
             }
