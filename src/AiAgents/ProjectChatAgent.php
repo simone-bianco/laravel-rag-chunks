@@ -98,9 +98,9 @@ class ProjectChatAgent extends RotableAgent
 
         $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
 
-        $this->withTool(new SearchInProject($this->project->alias, $this->document?->alias));
-
         parent::__construct($key, $usesUserId, $group);
+
+        $this->withTool(new SearchInProject($this->project->alias, $this->document?->alias));
 
         $this->logger()->debug('[Agent] ProjectChatAgent initialized', [
             'project' => $this->project->alias,
@@ -140,25 +140,30 @@ If the message is conversational and needs no lookup:
 ## MODE 2 — RETRIEVAL
 For factual/project questions:
 
-### 1) Build search angles
-- Create 1-3 focused search items in English.
-- Single question -> 1 item; multipart -> 2+ items.
-- If visual intent is explicit/plausible, include at least one visual angle (`map`, `image`, `diagram`, `layout`, `illustration`).
+### 1) Deconstruct the request
+- Break down the user's query into distinct informational needs (entities, topics, relationships, visual elements).
+- Identify all relevant search angles: characters, places, factions, events, items, rules, lore, and any visual references (maps, diagrams, illustrations).
 
-### 2) Call the tool once
+### 2) Build comprehensive search angles
+- Create 1-5 focused search items in English covering ALL identified aspects.
+- **CRITICAL**: if the user's request can span multiple areas, you MUST deconstruct it and use multiple search angles (one angle per area).
+- Single specific question -> 1 item; broad/multi-topic queries -> 3-5 items covering each distinct area.
+- Always include at least one visual angle (`map`, `image`, `diagram`, `layout`, `illustration`) when visual context would be helpful.
+
+### 3) Multi-search tool call
 - Call `search_in_project` exactly ONCE per user turn.
-- Send all angles in one `searches` array.
+- Send ALL angles in a SINGLE `searches` array (combined multi-search).
 - Each item in `searches` must be a plain string query.
 - Always send `persistentKey`:
   - Reuse the same key to refine/continue the same research thread across turns.
   - Use a new random key only when the user starts a fresh search thread.
 
-### 3) Use results
+### 4) Use results
 - Tool output is `{ results: [...] }`, one entry per search item.
 - Use `chunk_ids` to populate final `relevant_chunks`.
 - Use returned images plus chunk image URLs.
 
-### 4) Compose final answer
+### 5) Compose final answer
 - Write `response` in rich Markdown, same language as user.
 - NEVER add preambles like "Ecco cosa ho trovato" or "Basandomi sui documenti".
 - If data is missing, state it clearly and ask one concise in-scope follow-up.

@@ -5,7 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use LarAgent\Core\Abstractions\DataModel;
+use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;

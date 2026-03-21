@@ -3,7 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Str;
-use LarAgent\Core\Abstractions\DataModel;
+use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 
 class SaveResponseData extends Tool

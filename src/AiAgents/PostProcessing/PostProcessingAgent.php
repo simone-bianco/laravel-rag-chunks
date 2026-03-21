@@ -361,6 +361,7 @@ Preserve `figure_path` if present. If merging chunks with different figures, kee
 
 ### CHUNKS OUTPUT (CRITICAL)
 - For dirty chunks are dirty (non-UTF-8 characters that don't have meaning or new line in the middle of a sentence), you MUST produce a clean output instead with a well formatted text; don't put unnecessary dirty characters and unnecessary new lines
+- If some chunks are clearly full of dirty stuff (like "chapter4chapterdirtystuff towers dirtystuff chapter" or "(8f3j2gxxZZ): layout data real information") you are free to fix them ("chapter 4 - towers" or "real information")
 
 $boundaryBlock
 $iterativeUsefulInfoBlock

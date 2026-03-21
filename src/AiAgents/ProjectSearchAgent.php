@@ -104,10 +104,10 @@ class ProjectSearchAgent extends RotableAgent
 
         $this->document = $this->project['documents']?->where('alias', $documentAlias)->first();
 
+        parent::__construct($key, $usesUserId, $group);
+
         $this->withTool(new SearchChunks($this->project, $this->document));
         $this->withTool(new GetChunksByAliases($this->project, $this->document));
-
-        parent::__construct($key, $usesUserId, $group);
 
         $this->logger()->debug('[Agent] ProjectSearchAgent initialized', [
             'project' => $this->project->alias,

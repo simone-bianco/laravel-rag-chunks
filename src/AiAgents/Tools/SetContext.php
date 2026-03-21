@@ -4,7 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
-use LarAgent\Core\Abstractions\DataModel;
+use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 
