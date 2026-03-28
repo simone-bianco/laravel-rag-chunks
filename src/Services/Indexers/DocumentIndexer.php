@@ -10,10 +10,16 @@ use SimoneBianco\LaravelRagChunks\Models\Document;
 
 class DocumentIndexer
 {
-    public function indexDocument(Document $document): array
+    public function indexDocument(Document $document, ?array $chunkIds = null, array $initialIndex = []): array
     {
-        $currentIndex = [];
-        $document->chunks()->chunkById(20, function (Collection $chunks) use (&$currentIndex, $document) {
+        $currentIndex = $initialIndex;
+
+        $query = $document->chunks();
+        if (! empty($chunkIds)) {
+            $query->whereIn('id', $chunkIds);
+        }
+
+        $query->chunkById(20, function (Collection $chunks) use (&$currentIndex, $document) {
             $mappedChunks = $chunks->map(function (Chunk $chunk) {
                 return [
                     'uuid' => $chunk->id,
