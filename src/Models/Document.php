@@ -40,6 +40,8 @@ class Document extends Model
         'cached_has_indexed_chunks',
         'cached_has_active_processes',
         'cached_at',
+        'original_file_path',
+        'original_extension',
     ];
 
     protected function casts()
