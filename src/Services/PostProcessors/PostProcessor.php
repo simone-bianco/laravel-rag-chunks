@@ -105,6 +105,7 @@ class PostProcessor
         ?string $activeContextFromPreviousChunking = null,
         ?string $usefulInfoFromPreviousChunking = null,
         array &$currentIndex = [],
+        int $processedChunksCount = 0,
     ): array {
         if (empty($pendingItems)) {
             return [];
@@ -112,6 +113,7 @@ class PostProcessor
 
         Log::channel('document-queue')->debug('[PostProcessor] iteration input', [
             'pending_items_count' => count($pendingItems),
+            'processed_chunks_count' => $processedChunksCount,
             'create_index' => !empty($agentOptions['create_index']),
             'current_index_count' => count($currentIndex),
             'current_index_values' => $currentIndex,
@@ -147,6 +149,7 @@ class PostProcessor
             ->withActiveContextFromPreviousChunking($activeContextFromPreviousChunking)
             ->withBatchBoundaryContext($batchContextBefore, $batchContextAfter)
             ->withUsefulInfoFromPreviousChunking($usefulInfoFromPreviousChunking)
+            ->withProcessedChunksCount($processedChunksCount)
             ->respond();
 
         $chunksResponse = $agentResponse['chunks'] ?? $agentResponse;
@@ -348,6 +351,7 @@ class PostProcessor
             $activeContextForNextChunking = null;
             $usefulInfoForNextChunking = null;
             $currentIndex = [];
+            $processedChunksCount = 0; // cumulative count of already-processed input chunks
 
             while (($line = fgets($readStream)) !== false) {
                 $currentInputLine++;
@@ -396,11 +400,15 @@ class PostProcessor
 
                     $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                         $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                        $previousTailContext, $suffixContext, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex
+                        $previousTailContext, $suffixContext, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex,
+                        $processedChunksCount
                     );
                     $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
                     $activeContextForNextChunking = $agentProcessingResult['active_context_for_next_chunking'] ?? null;
                     $usefulInfoForNextChunking = $agentProcessingResult['useful_info_for_next_chunking'] ?? null;
+
+                    // Increment cumulative count by the number of input chunks processed in this batch
+                    $processedChunksCount += count($pendingBatch);
 
                     $previousTailContext = $tailContext;
                     // Inizia il prossimo batch con il lookahead già letto, se disponibile
@@ -415,9 +423,12 @@ class PostProcessor
             if (!empty($pendingBatch)) {
                 $agentProcessingResult = $this->runAgentAndPrepareBuffer(
                     $pendingBatch, $relativeDirPath, $documentContext, $agentOptions,
-                    $previousTailContext, null, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex
+                    $previousTailContext, null, $activeContextForNextChunking, $usefulInfoForNextChunking, $currentIndex,
+                    $processedChunksCount
                 );
                 $this->processPostProcessingBuffer($agentProcessingResult['buffer'], $writeStream, $embedder);
+                // Increment cumulative count for the final batch as well
+                $processedChunksCount += count($pendingBatch);
                 if ($onBatchComplete) {
                     $onBatchComplete($currentInputLine);
                 }

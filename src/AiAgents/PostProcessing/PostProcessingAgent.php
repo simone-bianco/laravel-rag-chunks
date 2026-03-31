@@ -29,6 +29,7 @@ class PostProcessingAgent extends RotableAgent
     protected ?string $batchContextBefore = null;
     protected ?string $batchContextAfter = null;
     protected ?string $usefulInfoFromPreviousChunking = null;
+    protected int $processedChunksCount = 0;
 
     public function __construct(
         string $key,
@@ -137,6 +138,17 @@ class PostProcessingAgent extends RotableAgent
     public function withUsefulInfoFromPreviousChunking(?string $usefulInfo): self
     {
         $this->usefulInfoFromPreviousChunking = !empty($usefulInfo) ? trim($usefulInfo) : null;
+        return $this;
+    }
+
+    public function withProcessedChunksCount(int $count): self
+    {
+        $this->processedChunksCount = max(0, $count);
+
+        Log::channel('document-queue')->debug('[PostProcessingAgent] withProcessedChunksCount', [
+            'processed_chunks_count' => $this->processedChunksCount,
+        ]);
+
         return $this;
     }
 
@@ -305,7 +317,9 @@ class PostProcessingAgent extends RotableAgent
             $existingIndex = !empty($this->currentIndex)
                 ? implode(', ', $this->currentIndex)
                 : 'none';
-            $indexingBlock = "\n### DYNAMIC INDEXING (ENABLED)\nAssign one `chapter_title` to every output chunk.\n\nYou have the current index titles from previous batches: {$existingIndex}\n\nINDEX RULES\n- The goal is clustering, not summarizing each chunk.\n- Multiple chunks should share the exact same chapter title when they belong to the same broader section.\n- Prefer reusing the same chapter title whenever the fit is reasonable.\n- Minimize the number of distinct chapter titles.\n- Do not create a new title just because a chunk is more specific, uses different wording, or covers a sub-point of the same topic.\n- Create a different title only when using the same one would be clearly wrong.\n- Prefer broader but still accurate chapter titles over narrow per-chunk titles.\n- Use the existing index for naming consistency when helpful.\n- Keep titles short, clear, specific, and section-level.\n- Do not use vague titles like \"Miscellaneous\", \"Other\", \"Notes\", or \"General\".\n- Do not include the document name in the title.\n- Use natural words separated by spaces for `chapter_title`. Do not use snake_case or kebab-case.\n\nINDEX OUTPUT RULES\n- Assign exactly one `chapter_title` to every output chunk.\n- Do not omit any output chunk.\n- Do not add extra properties.\n";
+            $currentBatchSize = count($this->chunks);
+            $totalConsidered = $this->processedChunksCount + $currentBatchSize;
+            $indexingBlock = "\n### DYNAMIC INDEXING (ENABLED)\nAssign one `chapter_title` to every output chunk.\n\nPROGRESSION CONTEXT\n- Input chunks already processed before this batch: {$this->processedChunksCount}\n- Input chunks in current batch: {$currentBatchSize}\n- Total input chunks considered so far: {$totalConsidered}\n\nYou have the current index titles from previous batches: {$existingIndex}\n\nINDEX RULES\n- The goal is clustering, not summarizing each chunk.\n- Multiple chunks should share the exact same chapter title when they belong to the same broader section.\n- Prefer reusing the same chapter title whenever the fit is reasonable.\n- Minimize the number of distinct chapter titles.\n- Do not create a new title just because a chunk is more specific, uses different wording, or covers a sub-point of the same topic.\n- Create a different title only when using the same one would be clearly wrong.\n- Prefer broader but still accurate chapter titles over narrow per-chunk titles.\n- Use the existing index for naming consistency when helpful.\n- Keep titles short, clear, specific, and section-level.\n- Do not use vague titles like \"Miscellaneous\", \"Other\", \"Notes\", or \"General\".\n- Do not include the document name in the title.\n- Use natural words separated by spaces for `chapter_title`. Do not use snake_case or kebab-case.\n\nINDEX OUTPUT RULES\n- Assign exactly one `chapter_title` to every output chunk.\n- Do not omit any output chunk.\n- Do not add extra properties.\n";
         }
 
         $estimatedWords = (int)($this->preferredChunkLength / 6);
