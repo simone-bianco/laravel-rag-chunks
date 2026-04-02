@@ -64,4 +64,22 @@ abstract class BaseDocumentParsingJob extends BaseProcessJob
 
         return true;
     }
+
+    protected function resolveParserExtension(Process $process, string $fallbackExtension): string
+    {
+        $sourceExtension = strtolower((string) ($process->context['source_extension'] ?? ''));
+        return $sourceExtension !== '' ? $sourceExtension : strtolower($fallbackExtension);
+    }
+
+    protected function resolveParserAbsolutePath(Process $process, string $fallbackPath, string $fallbackDisk = 'local'): string
+    {
+        $sourcePath = (string) ($process->context['source_file_path'] ?? '');
+        $disk = $process->processable?->disk ?? $fallbackDisk;
+
+        if ($sourcePath !== '') {
+            return \Illuminate\Support\Facades\Storage::disk($disk)->path($sourcePath);
+        }
+
+        return $fallbackPath;
+    }
 }

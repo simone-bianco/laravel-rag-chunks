@@ -65,9 +65,21 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
             if ($this->handleStopSignal($process, ParsingPhase::POST_PROCESSING->value)) return;
 
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($document->extension);
+            $parser = DocumentParserFactory::make($this->resolveParserExtension($process, (string) $document->extension));
 
             $postprocessorOptions = $process->context['postprocessor'] ?? [];
+
+            if (!empty($postprocessorOptions['parse_by_image'])) {
+                $postprocessorOptions['parse_by_image_dir'] ??= 'parse-by-image-process-' . $process->id;
+            }
+            $postprocessorOptions['source_pdf_path'] = (string) ($process->context['source_file_path'] ?? '');
+
+            $this->logger()->info('Post-processing mode selected', [
+                'document_id' => (string) $document->id,
+                'process_id' => (string) $process->id,
+                'parse_by_image' => (bool) ($postprocessorOptions['parse_by_image'] ?? false),
+                'source_pdf_path' => $postprocessorOptions['source_pdf_path'],
+            ]);
 
             // Inject project-level post-processor instructions
             $projectInstructions = $document->project?->settings?->post_processor_agent_instructions;
@@ -95,6 +107,14 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
 
             // Riprendi dall'ultima riga input processata con successo (0 = partenza fresca)
             $resumeFromLine = (int) ($process->context['postprocessor_last_input_line'] ?? 0);
+
+            $this->logger()->info('Post-processing execution context', [
+                'process_id' => (string) $process->id,
+                'document_id' => (string) $document->id,
+                'parse_by_image' => (bool) ($postprocessorOptions['parse_by_image'] ?? false),
+                'batch_size' => (int) config('rag_chunks.agents.postprocessor.batch_size', 8),
+                'resume_from_line' => $resumeFromLine,
+            ]);
 
             try {
                 $postProcessedContext = $parser->postProcess(

@@ -66,7 +66,7 @@ class PollParsingJob extends BaseDocumentParsingJob
             }
 
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($document->extension);
+            $parser = DocumentParserFactory::make($this->resolveParserExtension($process, (string) $document->extension));
             $status = $parser->pollParsing($parser->contextFromArray($process->context));
 
             match ($status) {

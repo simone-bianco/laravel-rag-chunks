@@ -80,18 +80,18 @@ class DocumentService
         }
 
         $keepChunksWithImages = (bool) ($options['keep_chunks_with_images'] ?? false);
+        $keepTextChunks = (bool) ($options['keep_text_chunks'] ?? false);
         $now = now();
 
-        if ($keepChunksWithImages) {
+        if (! $keepChunksWithImages) {
+            $document->purgeChunks();
+        } elseif (! $keepTextChunks) {
             $document->chunks()
                 ->where(function (Builder $query) {
                     $query->where('is_image', false)
                         ->orWhereNull('is_image');
                 })
-                ->whereDoesntHave('dedupMedia')
                 ->delete();
-        } else {
-            $document->purgeChunks();
         }
 
         $maxExistingOrder = (int) ($document->chunks()->max('order') ?? 0);

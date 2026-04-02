@@ -56,12 +56,13 @@ class SaveParsingJob extends BaseDocumentParsingJob
             $this->enrichContext();
 
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($document->extension);
+            $parser = DocumentParserFactory::make($this->resolveParserExtension($process, (string) $document->extension));
             $parser->saveDocument(
                 $document,
                 $parser->contextFromArray($process->context),
                 [
                     'keep_chunks_with_images' => (bool) ($process->context['keep_chunks_with_images'] ?? false),
+                    'keep_text_chunks' => (bool) ($process->context['keep_text_chunks'] ?? false),
                 ]
             );
 

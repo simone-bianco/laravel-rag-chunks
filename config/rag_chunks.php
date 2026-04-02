@@ -16,6 +16,11 @@ return [
             'batch_size' => 8,
             'chunks_in_schema' => false
         ],
+        'image_postprocessor' => [
+            'provider' => 'openai',
+            'model' => 'gpt-5-mini',
+            'preferred_chunk_length' => 600,
+        ],
     ],
 
     'embedding' => 'openai',

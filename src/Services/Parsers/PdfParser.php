@@ -3,6 +3,8 @@
 namespace SimoneBianco\LaravelRagChunks\Services\Parsers;
 
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\ParsingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\Pdf\PdfParsingContextDTO;
 use SimoneBianco\LaravelRagChunks\DTOs\Parsing\RefinedItemDTO;
@@ -194,12 +196,60 @@ class PdfParser implements DocumentParserInterface
         int $startFromInputLine = 0,
         ?callable $onBatchComplete = null
     ): ParsingContextDTO {
+        if (!empty($agentOptions['parse_by_image'])) {
+            $sourcePdfPath = (string) ($agentOptions['source_pdf_path'] ?? '');
+            if ($sourcePdfPath === '') {
+                throw new InvalidFileException('parse_by_image requested but source_pdf_path is missing.');
+            }
+
+            if (!$this->fileService->exists($sourcePdfPath)) {
+                throw new InvalidFileException("$sourcePdfPath does not exist");
+            }
+
+            $parseByImageDir = (string) ($agentOptions['parse_by_image_dir'] ?? '');
+            if ($parseByImageDir === '') {
+                $parseByImageDir = 'parse-by-image-' . Str::uuid()->toString();
+            }
+
+            $relativeDirPath = $context->relativeDirPath ?: $this->fileService->generateTempDirPath($parseByImageDir);
+            $this->fileService->createDirectoryIfNotExists($relativeDirPath);
+
+            $relativePostProcessedOutputPath = "$relativeDirPath/post_processed.jsonl";
+            if ($startFromInputLine <= 0) {
+                $this->fileService->put($relativePostProcessedOutputPath, '');
+            } elseif (!$this->fileService->exists($relativePostProcessedOutputPath)) {
+                $this->fileService->put($relativePostProcessedOutputPath, '');
+            }
+
+            Log::channel('document-queue')->info('[PdfParser] direct image post-process path selected', [
+                'source_pdf_path' => $sourcePdfPath,
+                'relative_dir_path' => $relativeDirPath,
+                'output_path' => $relativePostProcessedOutputPath,
+            ]);
+
+            $this->postProcessor->postProcessByImage(
+                $sourcePdfPath,
+                $relativePostProcessedOutputPath,
+                $documentContext,
+                $agentOptions,
+                $startFromInputLine,
+                $onBatchComplete,
+            );
+
+            $context->relativeDirPath = $relativeDirPath;
+            $context->relativePostProcessedPath = $relativePostProcessedOutputPath;
+
+            return $context;
+        }
+
         if (!$this->fileService->exists($context->relativeRefinedPath)) {
             throw new InvalidFileException("$context->relativeRefinedPath does not exist");
         }
 
         $relativePostProcessedOutputPath = "$context->relativeDirPath/post_processed.jsonl";
-        if (!$this->fileService->exists($relativePostProcessedOutputPath)) {
+        if ($startFromInputLine <= 0) {
+            $this->fileService->put($relativePostProcessedOutputPath, '');
+        } elseif (!$this->fileService->exists($relativePostProcessedOutputPath)) {
             $this->fileService->put($relativePostProcessedOutputPath, '');
         }
 
@@ -208,7 +258,9 @@ class PdfParser implements DocumentParserInterface
             $relativePostProcessedOutputPath,
             $documentContext,
             $batchSize,
-            $agentOptions
+            $agentOptions,
+            $startFromInputLine,
+            $onBatchComplete,
         );
 
         $context->relativePostProcessedPath = $relativePostProcessedOutputPath;

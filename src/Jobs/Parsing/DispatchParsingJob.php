@@ -57,8 +57,10 @@ class DispatchParsingJob extends BaseDocumentParsingJob
             $document = $process->processable;
             $this->documentId = $document->id;
             /** @var PdfParser $parser */
-            $parser = DocumentParserFactory::make($document->extension);
-            $dispatchContext = $parser->dispatchParsing($document->getAbsolutePath());
+            $parser = DocumentParserFactory::make($this->resolveParserExtension($process, (string) $document->extension));
+            $dispatchContext = $parser->dispatchParsing(
+                $this->resolveParserAbsolutePath($process, $document->getAbsolutePath(), (string) ($document->disk ?? 'local'))
+            );
             $dispatchData = $dispatchContext->toArray();
             $process->mergeContextAndSave([...$dispatchData, ...['phase' => ParsingPhase::DISPATCHED->value]]);
 

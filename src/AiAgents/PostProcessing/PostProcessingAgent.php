@@ -30,6 +30,7 @@ class PostProcessingAgent extends RotableAgent
     protected ?string $batchContextAfter = null;
     protected ?string $usefulInfoFromPreviousChunking = null;
     protected int $processedChunksCount = 0;
+    protected int $totalDocumentChunks = 0;
 
     public function __construct(
         string $key,
@@ -152,6 +153,17 @@ class PostProcessingAgent extends RotableAgent
         return $this;
     }
 
+    public function withTotalDocumentChunks(int $count): self
+    {
+        $this->totalDocumentChunks = max(0, $count);
+
+        Log::channel('document-queue')->debug('[PostProcessingAgent] withTotalDocumentChunks', [
+            'total_document_chunks' => $this->totalDocumentChunks,
+        ]);
+
+        return $this;
+    }
+
     public function structuredOutput(): array
     {
         return [
@@ -171,7 +183,7 @@ class PostProcessingAgent extends RotableAgent
             $contentDescription = 'The exact text of the chunk, BUT with corrected formatting. You MUST fix broken encoding (e.g., unicode artifacts), repair garbled characters, and join mid-sentence line breaks. ABSOLUTELY FORBIDDEN to omit, condense, or change the underlying information. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
         }
 
-        $contentDescription .= ' CRITICAL FIDELITY: NEVER invent entities, objects, characters, events, relationships, or mechanics that are not in the source. NEVER swap object/entity type (example: chest -> person). Preserve polarity and intent exactly (example: rivalry must not become camaraderie). Preserve numbers, DCs, dice expressions, units, and constraints exactly as written.';
+        $contentDescription .= ' CRITICAL FIDELITY: NEVER invent entities, objects, characters, events, relationships, or mechanics that are not in the source. NEVER swap object/entity type (example: chest -> person). Preserve polarity and intent exactly (example: rivalry must not become camaraderie). Preserve numbers, DCs, dice expressions, units, and constraints exactly as written. Preserve concrete flavor details and direct quotes/slogans whenever present. Do not merge separate artifacts (letters, flyers, side notes, handouts) into one invented narrative block.';
 
         if ($this->contextInjection) {
             $contentDescription .= ' May include a brief injected context at the very beginning if the data is highly abstract.';
@@ -179,46 +191,11 @@ class PostProcessingAgent extends RotableAgent
             $contentDescription .= ' STRICTLY FORBIDDEN to include meta-commentary like "These chunks describe...", "Here is...", or "This text covers...". Start IMMEDIATELY with the source text.';
         }
 
-        $deterministicTagProperties = [];
-        $deterministicTagRequired = [];
         $allowedFigurePaths = array_values(array_filter(array_unique(array_map(function (array $chunk): string {
             return isset($chunk['figure_path']) && is_string($chunk['figure_path'])
                 ? trim($chunk['figure_path'])
                 : '';
         }, $this->chunks))));
-        $figurePathProperty = [
-            'type' => 'string',
-            'description' => 'The path to the figure/image. MUST be exactly one of the provided input figure_path values, or empty string "" when there is no relevant figure.',
-        ];
-        if (!empty($allowedFigurePaths)) {
-            $figurePathProperty['enum'] = [...$allowedFigurePaths, ''];
-        }
-
-        if (!empty($this->tagsByType)) {
-            foreach ($this->tagsByType as $type => $tags) {
-                $deterministicTagProperties["tags_$type"] = [
-                    'type' => 'array',
-                    'description' => "Deterministic tags of type '$type'. MUST pick ONLY from the provided slug enum values (kebab-case identifiers). Leave empty if none apply.",
-                    'items' => [
-                        'type' => 'string',
-                        'enum' => $tags,
-                    ],
-                ];
-                $deterministicTagRequired[] = "tags_$type";
-            }
-        }
-
-        $chapterProperty = [];
-        $chapterRequired = [];
-        if ($this->createIndex) {
-            $chapterProperty = [
-                'chapter_title' => [
-                    'type' => 'string',
-                    'description' => 'Title of the chapter',
-                ],
-            ];
-            $chapterRequired = ['chapter_title'];
-        }
 
         Log::channel('document-queue')->debug('POSTPROCESSING SETTINGS', [
             'summarization' => $this->summarization,
@@ -226,52 +203,12 @@ class PostProcessingAgent extends RotableAgent
             'contextInjection' => $this->contextInjection,
         ]);
 
-        return [
-            'type' => 'object',
-            'description' => 'List of dynamically sized, ordered chunks with questions and tags',
-            'properties' => [
-                'active_context_for_next_chunking' => [
-                    'type' => 'string',
-                    'description' => 'Short high-level context label to help the next batch keep continuity (for example current section/chapter topic). Keep it concise; return empty string if not useful.',
-                ],
-                'useful_info_for_next_chunking' => [
-                    'type' => 'string',
-                    'description' => 'Put there useful information for next chunking, for instance if the last chunk you received is cut and the next part will be handled by the next agent; keep as short as possible'
-                ],
-                'chunks' => [
-                    'type' => 'array',
-                    'description' => 'Dynamically processed chunks, forming highly cohesive atomic semantic units.',
-                    'items' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'content' => [
-                                'type' => 'string',
-                                'description' => $contentDescription,
-                            ],
-                            'tags' => [
-                                'type' => 'array',
-                                'description' => 'List of 5 to 10 semantic tags for RAG retrieval. CRITICAL: The main subject/entity of the chunk MUST be included as a tag. Must be strictly LOWERCASE and SLUG_CASE. Tag both the subject and the action/event. Do not generate fewer than 5 tags.',
-                                'items' => ['type' => 'string'],
-                            ],
-                            'questions' => [
-                                'type' => 'array',
-                                'description' => 'List of 3 to 5 reverse-engineered questions that this specific chunk answers perfectly. CRITICAL: Every single question MUST explicitly include the subject or entity name of the chunk. Do not generate fewer than 3 questions.',
-                                'items' => ['type' => 'string'],
-                            ],
-                            'figure_path' => [
-                                ...$figurePathProperty,
-                            ],
-                            ...$chapterProperty,
-                            ...$deterministicTagProperties,
-                        ],
-                        'required' => ['content', 'tags', 'questions', 'figure_path', ...$chapterRequired, ...$deterministicTagRequired],
-                        'additionalProperties' => false,
-                    ],
-                ],
-            ],
-            'required' => ['active_context_for_next_chunking', 'useful_info_for_next_chunking', 'chunks'],
-            'additionalProperties' => false,
-        ];
+        return PostProcessingResponseSchemaFactory::build(
+            contentDescription: $contentDescription,
+            tagsByType: $this->tagsByType,
+            createIndex: $this->createIndex,
+            allowedFigurePaths: $allowedFigurePaths,
+        );
     }
 
     public function instructions(): string
@@ -319,7 +256,11 @@ class PostProcessingAgent extends RotableAgent
                 : 'none';
             $currentBatchSize = count($this->chunks);
             $totalConsidered = $this->processedChunksCount + $currentBatchSize;
-            $indexingBlock = "\n### DYNAMIC INDEXING (ENABLED)\nAssign one `chapter_title` to every output chunk.\n\nPROGRESSION CONTEXT\n- Input chunks already processed before this batch: {$this->processedChunksCount}\n- Input chunks in current batch: {$currentBatchSize}\n- Total input chunks considered so far: {$totalConsidered}\n\nYou have the current index titles from previous batches: {$existingIndex}\n\nINDEX RULES\n- The goal is clustering, not summarizing each chunk.\n- Multiple chunks should share the exact same chapter title when they belong to the same broader section.\n- Prefer reusing the same chapter title whenever the fit is reasonable.\n- Minimize the number of distinct chapter titles.\n- Do not create a new title just because a chunk is more specific, uses different wording, or covers a sub-point of the same topic.\n- Create a different title only when using the same one would be clearly wrong.\n- Prefer broader but still accurate chapter titles over narrow per-chunk titles.\n- Use the existing index for naming consistency when helpful.\n- Keep titles short, clear, specific, and section-level.\n- Do not use vague titles like \"Miscellaneous\", \"Other\", \"Notes\", or \"General\".\n- Do not include the document name in the title.\n- Use natural words separated by spaces for `chapter_title`. Do not use snake_case or kebab-case.\n\nINDEX OUTPUT RULES\n- Assign exactly one `chapter_title` to every output chunk.\n- Do not omit any output chunk.\n- Do not add extra properties.\n";
+            $isSmallDocument = $this->totalDocumentChunks > 0 && $this->totalDocumentChunks <= 200;
+            $indexGranularityRules = $isSmallDocument
+                ? "- SMALL DOCUMENT MODE: the document is short, so avoid over-collapsing into one chapter.\n- If the batch contains clearly distinct topics/sections, you MUST use multiple chapter titles (at least 2 when distinction is clear).\n- Reuse an existing title only when semantic fit is genuinely strong, not just vaguely related.\n- Preserve meaningful section boundaries even when minimizing chapter count."
+                : "- STANDARD DOCUMENT MODE: minimize number of distinct chapter titles while preserving correctness.\n- Prefer reusing the same chapter title whenever the fit is reasonable.\n- Create a different title only when using the same one would be clearly wrong.";
+            $indexingBlock = "\n### DYNAMIC INDEXING (ENABLED)\nAssign one `chapter_title` to every output chunk.\n\nPROGRESSION CONTEXT\n- Input chunks already processed before this batch: {$this->processedChunksCount}\n- Input chunks in current batch: {$currentBatchSize}\n- Total input chunks considered so far: {$totalConsidered}\n\nYou have the current index titles from previous batches: {$existingIndex}\n\nINDEX RULES\n- The goal is clustering, not summarizing each chunk.\n- Multiple chunks should share the exact same chapter title when they belong to the same broader section.\n- Do not create a new title just because a chunk is more specific, uses different wording, or covers a sub-point of the same topic.\n- Prefer broader but still accurate chapter titles over narrow per-chunk titles.\n- Use the existing index for naming consistency when helpful.\n- Keep titles short, clear, specific, and section-level.\n- Do not use vague titles like \"Miscellaneous\", \"Other\", \"Notes\", or \"General\".\n- Do not include the document name in the title.\n- Use natural words separated by spaces for `chapter_title`. Do not use snake_case or kebab-case.\n{$indexGranularityRules}\n\nINDEX OUTPUT RULES\n- Assign exactly one `chapter_title` to every output chunk.\n- Do not omit any output chunk.\n- Do not add extra properties.\n";
         }
 
         $estimatedWords = (int)($this->preferredChunkLength / 6);
@@ -357,6 +298,11 @@ $contextRule
 10. **PRESERVE TECHNICAL LITERALS**: Keep all numerical values and mechanical literals unchanged (DC values, dice notation like `3d10`, distances, durations, requirements, constraints).
 11. **PRESERVE VOICE WHEN POSSIBLE**: Keep stylistic tone (ironic, theatrical, dark humor) if present in source; do not neutralize tone into generic exposition.
 12. **SELF-INTEGRITY CHECK (CRITICAL)**: Before returning JSON, ensure there are no broken/fused token artifacts (e.g., `word...word`, orphan fragments, accidental token collisions). If uncertain, keep the original local wording.
+13. **DETAIL COMPLETENESS (CRITICAL)**: Do not drop concrete setup hooks, sensory details, named roles/traits, or procedural prep details that are explicitly present.
+14. **QUOTES & SLOGANS**: Preserve direct speech lines and quoted slogans as written when readable; avoid paraphrasing those lines.
+15. **DOCUMENT BOUNDARY FIDELITY**: Keep distinct source artifacts distinct (example: letter text must not be fused with narrator exposition unless source already fuses them).
+16. **AMBIGUOUS MARKERS**: Tokens like `(4)` may be map/label markers, not quantities; do not reinterpret as counts unless source explicitly says so.
+17. **PRONOUN/REFERENCE SAFETY**: Resolve references conservatively; if antecedent is unclear, preserve original wording rather than guessing a named entity.
 
 ### FIGURE RULES
 Preserve `figure_path` if present. If merging chunks with different figures, keep the most relevant or split the chunks to preserve both. Return "" if no figure.

@@ -80,6 +80,11 @@ class FileService
         return $this->storage->files($relativePath);
     }
 
+    public function allFiles(string $relativePath): array
+    {
+        return $this->storage->allFiles($relativePath);
+    }
+
     public function exists(string $relativePath): bool
     {
         return $this->storage->exists($relativePath);

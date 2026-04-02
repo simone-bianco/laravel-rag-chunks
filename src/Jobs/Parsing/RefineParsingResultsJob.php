@@ -55,7 +55,7 @@ class RefineParsingResultsJob extends BaseDocumentParsingJob
         $this->enrichContext();
 
         /** @var PdfParser $parser */
-        $parser = DocumentParserFactory::make($document->extension);
+        $parser = DocumentParserFactory::make($this->resolveParserExtension($process, (string) $document->extension));
 
         $refinedContext = $parser->refineOutputJson($parser->contextFromArray($process->context));
         $process->mergeContextAndSave([...$refinedContext->toArray(), ...['phase' => ParsingPhase::REFINED->value]]);
