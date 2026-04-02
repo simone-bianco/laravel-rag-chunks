@@ -13,12 +13,21 @@ use TypeError;
 
 class ImagePostProcessingAgent extends RotableAgent
 {
+    protected const ESTIMATED_CHARS_PER_WORD = 6;
+
     protected $history = InMemoryStorage::class;
     protected array $config = [];
     protected string $documentContext = '';
     protected string $pageImageDataUrl = '';
     protected int $pageNumber = 1;
+
+    /**
+     * Backward compatibility:
+     * this legacy value is still accepted through config/injection/public API,
+     * but every limit sent to the model is normalized and expressed in words.
+     */
     protected int $preferredChunkLength = 600;
+
     protected string $extraInstruction = '';
     protected array $tagsByType = [];
     protected bool $createIndex = false;
@@ -35,15 +44,18 @@ class ImagePostProcessingAgent extends RotableAgent
         parent::__construct($key);
 
         $config = config('rag_chunks.agents.image_postprocessor', []);
+
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
         $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-5-mini';
-        $this->preferredChunkLength = $injectConfig['preferred_chunk_length'] ?? $config['preferred_chunk_length'] ?? 600;
+        $this->preferredChunkLength = $injectConfig['preferred_chunk_length']
+            ?? $config['preferred_chunk_length']
+            ?? 600;
     }
 
     public function withDocumentContext(?string $context): self
     {
         if (!empty($context)) {
-            $this->documentContext = "\n### DOCUMENT CONTEXT\n$context";
+            $this->documentContext = "\n### DOCUMENT CONTEXT\n{$context}";
         }
 
         return $this;
@@ -52,36 +64,42 @@ class ImagePostProcessingAgent extends RotableAgent
     public function withPageImageDataUrl(string $dataUrl): self
     {
         $this->pageImageDataUrl = $dataUrl;
+
         return $this;
     }
 
     public function withPageNumber(int $pageNumber): self
     {
         $this->pageNumber = max(1, $pageNumber);
+
         return $this;
     }
 
     public function withPreferredChunkLength(int $length): self
     {
         $this->preferredChunkLength = max(100, $length);
+
         return $this;
     }
 
     public function withExtraInstructions(?string $extraInstructions = ''): self
     {
         $this->extraInstruction = $extraInstructions ?: '';
+
         return $this;
     }
 
     public function withTagsByType(array $tagsByType = []): self
     {
         $this->tagsByType = $tagsByType;
+
         return $this;
     }
 
     public function withCreateIndex(bool $createIndex = false): self
     {
         $this->createIndex = $createIndex;
+
         return $this;
     }
 
@@ -98,24 +116,28 @@ class ImagePostProcessingAgent extends RotableAgent
     public function withActiveContextFromPreviousChunking(?string $activeContext): self
     {
         $this->activeContextFromPreviousChunking = !empty($activeContext) ? trim($activeContext) : null;
+
         return $this;
     }
 
     public function withUsefulInfoFromPreviousChunking(?string $usefulInfo): self
     {
         $this->usefulInfoFromPreviousChunking = !empty($usefulInfo) ? trim($usefulInfo) : null;
+
         return $this;
     }
 
     public function withProcessedChunksCount(int $count): self
     {
         $this->processedChunksCount = max(0, $count);
+
         return $this;
     }
 
     public function withTotalDocumentChunks(int $count): self
     {
         $this->totalDocumentChunks = max(0, $count);
+
         return $this;
     }
 
@@ -133,7 +155,25 @@ class ImagePostProcessingAgent extends RotableAgent
      */
     protected function getResponseSchema(): array
     {
-        $contentDescription = 'NEAR-VERBATIM transcription of readable text visible on the current page image only. TRANSCRIPTION-ONLY MODE: do not summarize, do not paraphrase, do not compress, do not expand, do not infer missing glue text, do not restate page meaning. You may perform only tiny OCR corruption repair when unambiguous. Preserve visible reading order, headings, bullets, numbered items, quotes, notes, boxed text, letters, tables, and stat/rule values with maximal fidelity. For structured content, do NOT normalize into a canonical template and do NOT use domain knowledge to reconstruct missing parts. Keep separate visual/textual artifacts as separate chunks when appropriate. NEVER end a chunk mid-sentence. Target about 600 chars per chunk as a soft limit; slight overrun is allowed. If a block is too large, split it into multiple faithful chunks rather than compressing or omitting content. STRICTLY FORBIDDEN to include words like "Tags:" or "Questions:" inside this field.';
+        $targetChunkWords = $this->getTargetChunkWordCount();
+        $softMinChunkWords = $this->getSoftChunkWordMinimum();
+        $singleChunkThresholdWords = $this->getSingleChunkThresholdWords();
+        $hardChunkWordLimit = $this->getHardChunkWordLimit();
+
+        $contentDescription = "NEAR-VERBATIM transcription of readable text visible on the current page image only. "
+            . "TRANSCRIPTION-ONLY MODE: do not summarize, do not paraphrase, do not compress, do not expand, do not infer missing glue text, do not restate page meaning. "
+            . "You may perform only tiny OCR corruption repair when unambiguous. "
+            . "Preserve visible reading order, headings, bullets, numbered items, quotes, notes, boxed text, letters, tables, and stat/rule values with maximal fidelity. "
+            . "For structured content, do NOT normalize into a canonical template and do NOT use domain knowledge to reconstruct missing parts. "
+            . "Keep separate visual/textual artifacts as separate chunks when appropriate. "
+            . "Chunk sizing is WORD-BASED ONLY. "
+            . "Target about {$targetChunkWords} words per chunk. "
+            . "SOFT MINIMUM: keep chunks at or above {$softMinChunkWords} words whenever possible; you may go shorter only when the visible text block is naturally shorter or a clean artifact boundary requires it. "
+            . "If page text clearly exceeds {$singleChunkThresholdWords} words, you MUST output multiple chunks and MUST NOT return a single chunk. "
+            . "ABSOLUTE UPPER BOUND: each chunk must stay at or below {$hardChunkWordLimit} words. "
+            . "NEVER end a chunk mid-sentence unless no earlier safe boundary exists before {$hardChunkWordLimit} words, in which case split at the nearest whitespace before exceeding the limit. "
+            . "If a block is too large, split it into multiple faithful chunks rather than compressing or omitting content. "
+            . "STRICTLY FORBIDDEN to include words like \"Tags:\" or \"Questions:\" inside this field.";
 
         return PostProcessingResponseSchemaFactory::build(
             contentDescription: $contentDescription,
@@ -147,6 +187,11 @@ class ImagePostProcessingAgent extends RotableAgent
     {
         $currentActiveContext = $this->activeContextFromPreviousChunking ?? 'none';
         $usefulInfo = $this->usefulInfoFromPreviousChunking ?? '';
+        $targetChunkWords = $this->getTargetChunkWordCount();
+        $softMinChunkWords = $this->getSoftChunkWordMinimum();
+        $singleChunkThresholdWords = $this->getSingleChunkThresholdWords();
+        $hardChunkWordLimit = $this->getHardChunkWordLimit();
+
         $extraInstructionsBlock = !empty($this->extraInstruction)
             ? "\n### EXTRA INSTRUCTIONS\n{$this->extraInstruction}\n"
             : '';
@@ -174,6 +219,7 @@ You are a STRICT TEXT TRANSCRIBER with chunking for PDF page images.
 - You are NOT a summarizer.
 - You are NOT a paraphraser.
 - You are NOT a visual describer unless explicitly instructed otherwise.
+- All chunk-size constraints below are expressed in WORDS only, never in characters.
 {$this->documentContext}
 
 ### PAGE CONTEXT
@@ -213,25 +259,84 @@ You are a STRICT TEXT TRANSCRIBER with chunking for PDF page images.
    - preserve one item or row per line whenever possible
    - do not infer missing rows or numbers
    - do not reorder fields into a canonical schema
-14. NEVER end chunk content mid-sentence.
-15. Target about {$this->preferredChunkLength} characters per chunk as a SOFT limit.
-16. Slight overrun is allowed when needed to preserve fidelity and avoid bad cuts.
-17. If a text block is too large, you MUST split it into multiple faithful chunks rather than compressing, omitting, or fusing content.
-18. Keep tags/questions OUT of chunk content.
-19. CRITICAL ABSOLUTE PROHIBITION: no visual/page-description language. Forbidden examples:
-   - "this page contains"
-   - "the image shows"
-   - "the map depicts"
-   - "this likely represents"
-20. Ignore non-text image content completely: illustrations, map geometry, icons, scene composition, colors, and layout narration.
-21. Do not duplicate information across chunks.
-22. Do not copy previous continuity context into current chunk content.
-23. `active_context_for_next_chunking` and `useful_info_for_next_chunking` must be minimal boundary metadata only, never summaries of the page.
-24. If page has no readable text, return empty chunks and empty continuity fields.
-25. When a new major heading or a clearly separate text artifact begins, prefer starting a new chunk there.
-$indexingBlock
-$extraInstructionsBlock
+
+--- CHUNKING RULES (CRITICAL) ---
+14. TARGET SIZE: aim for approximately {$targetChunkWords} words per chunk.
+15. SOFT MINIMUM: when possible, keep each chunk at or above {$softMinChunkWords} words.
+16. You may go below {$softMinChunkWords} words ONLY when:
+   - the visible text block is naturally shorter
+   - a new major heading or separate artifact begins
+   - the final remainder is shorter
+   - forcing the minimum would require merging unrelated blocks or inventing glue text
+17. STRICT MAXIMUM: a chunk MUST NEVER exceed {$hardChunkWordLimit} words. There are NO exceptions to this rule.
+18. If the page text clearly exceeds {$singleChunkThresholdWords} words in total, you are FORBIDDEN from returning a single chunk. You MUST split it into multiple chunks.
+19. Split priority for long text:
+    (a) Paragraph boundary
+    (b) Sentence punctuation boundary (e.g. period, question mark)
+    (c) If a single paragraph is extremely long, split it mid-paragraph at the nearest sentence end before hitting the limit
+    (d) If no sentence boundary exists before the limit, split at the nearest whitespace before exceeding {$hardChunkWordLimit} words
+20. Do not compress or omit text to avoid splitting. If it's too long, split it.
+21. Keep tags/questions OUT of chunk content.
+22. NO visual/page-description language (e.g., "the image shows"). Ignore illustrations.
+23. Do not duplicate information across chunks.
+24. Do not copy previous continuity context into current chunk content.
+25. Metadata handoff notes must be minimal.
+26. If page has no readable text, return empty chunks.
+27. Always start a new chunk when a new major heading or clearly separate text artifact begins.
+{$indexingBlock}
+{$extraInstructionsBlock}
+
+### MOST CRITICAL CHUNKING DIRECTIVE
+DO NOT OUTPUT GIANT CHUNKS.
+DO NOT OUTPUT TINY CHUNKS.
+Operate within this WORD-BASED window whenever possible:
+- target: about {$targetChunkWords} words per chunk
+- soft minimum: {$softMinChunkWords} words
+- hard maximum: {$hardChunkWordLimit} words
+
+If the total extracted text clearly exceeds {$singleChunkThresholdWords} words, YOU MUST CREATE MULTIPLE CHUNKS.
+Use chunks shorter than {$softMinChunkWords} words only when the visible text block is naturally shorter, when a new heading/artifact begins, or when the final remainder would otherwise force merging unrelated blocks, omission, duplication, or invention.
+Returning a single chunk for a whole dense page will cause a critical system failure.
+RESPECT THE LIMITS.
 INSTRUCTIONS;
+    }
+
+    protected function getTargetChunkWordCount(): int
+    {
+        return max(
+            15,
+            (int) ceil($this->preferredChunkLength / self::ESTIMATED_CHARS_PER_WORD)
+        );
+    }
+
+    protected function getSingleChunkThresholdWords(): int
+    {
+        $threshold = (int) ceil(
+            ($this->preferredChunkLength + 200) / self::ESTIMATED_CHARS_PER_WORD
+        );
+
+        return max($this->getTargetChunkWordCount() + 1, $threshold);
+    }
+
+    protected function getHardChunkWordLimit(): int
+    {
+        $hardLengthLimit = max(
+            $this->preferredChunkLength + 300,
+            (int) ceil($this->preferredChunkLength * 1.5)
+        );
+
+        return max(
+            $this->getTargetChunkWordCount() + 1,
+            (int) ceil($hardLengthLimit / self::ESTIMATED_CHARS_PER_WORD)
+        );
+    }
+
+    protected function getSoftChunkWordMinimum(): int
+    {
+        return max(
+            15,
+            (int) floor($this->getTargetChunkWordCount() * 0.5)
+        );
     }
 
     public function respond(?string $message = null): string|array|DataModel|MessageInterface
@@ -244,25 +349,37 @@ INSTRUCTIONS;
         }
 
         try {
-            $response = parent::respond("Transcribe and chunk this page image (page {$this->pageNumber}) in strict transcription-only mode.");
+            $response = parent::respond(
+                "Transcribe and chunk this page image (page {$this->pageNumber}) in strict transcription-only mode."
+            );
         } catch (TypeError $e) {
-            throw new RuntimeException('AI provider returned null content (transient error or refusal): ' . $e->getMessage(), 0, $e);
+            throw new RuntimeException(
+                'AI provider returned null content (transient error or refusal): ' . $e->getMessage(),
+                0,
+                $e
+            );
         }
 
         $chunks = is_array($response['chunks'] ?? null) ? $response['chunks'] : [];
-        $chunkPreviews = array_values(array_filter(array_map(static function (mixed $chunk): string {
-            if (!is_array($chunk)) {
-                return '';
-            }
 
-            $content = is_string($chunk['content'] ?? null) ? $chunk['content'] : '';
-            $normalized = preg_replace('/\s+/', ' ', trim($content)) ?? '';
+        $chunkPreviews = array_values(array_filter(array_map(
+            static function (mixed $chunk): string {
+                if (!is_array($chunk)) {
+                    return '';
+                }
 
-            return Str::limit($normalized, 50);
-        }, $chunks)));
+                $content = is_string($chunk['content'] ?? null) ? $chunk['content'] : '';
+                $normalized = preg_replace('/\s+/', ' ', trim($content)) ?? '';
+
+                return Str::limit($normalized, 50);
+            },
+            $chunks
+        )));
+
         $activeContext = is_string($response['active_context_for_next_chunking'] ?? null)
             ? trim($response['active_context_for_next_chunking'])
             : '';
+
         $usefulInfo = is_string($response['useful_info_for_next_chunking'] ?? null)
             ? trim($response['useful_info_for_next_chunking'])
             : '';
