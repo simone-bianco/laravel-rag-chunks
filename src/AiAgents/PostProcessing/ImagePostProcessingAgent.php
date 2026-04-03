@@ -339,6 +339,114 @@ INSTRUCTIONS;
         );
     }
 
+    protected function getHardChunkLengthLimit(): int
+    {
+        return max(
+            $this->preferredChunkLength + 300,
+            (int) ceil($this->preferredChunkLength * 1.5)
+        );
+    }
+
+    /**
+     * @param array<int, mixed> $chunks
+     * @return array{0: array<int, mixed>, 1: int}
+     */
+    protected function enforceHardChunkLimit(array $chunks): array
+    {
+        $hardChunkLengthLimit = $this->getHardChunkLengthLimit();
+        $pendingChunks = array_values($chunks);
+        $normalizedChunks = [];
+        $splitCount = 0;
+
+        while (!empty($pendingChunks)) {
+            $chunk = array_shift($pendingChunks);
+            if (!is_array($chunk)) {
+                $normalizedChunks[] = $chunk;
+                continue;
+            }
+
+            $content = is_string($chunk['content'] ?? null) ? trim($chunk['content']) : '';
+            if ($content === '' || mb_strlen($content) <= $hardChunkLengthLimit) {
+                $normalizedChunks[] = $chunk;
+                continue;
+            }
+
+            [$firstPart, $secondPart] = $this->splitContentInTwo($content);
+            if ($firstPart === '' || $secondPart === '' || $firstPart === $content || $secondPart === $content) {
+                $normalizedChunks[] = $chunk;
+                continue;
+            }
+
+            $firstChunk = $chunk;
+            $firstChunk['content'] = $firstPart;
+
+            $secondChunk = $chunk;
+            $secondChunk['content'] = $secondPart;
+
+            array_unshift($pendingChunks, $secondChunk, $firstChunk);
+            $splitCount++;
+        }
+
+        return [$normalizedChunks, $splitCount];
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    protected function splitContentInTwo(string $content): array
+    {
+        $length = mb_strlen($content);
+        if ($length <= 1) {
+            return [$content, ''];
+        }
+
+        $midpoint = (int) floor($length / 2);
+        $window = max((int) floor($length * 0.2), 80);
+        $leftBound = max(1, $midpoint - $window);
+        $rightBound = min($length - 1, $midpoint + $window);
+
+        $bestSplitPos = null;
+        $bestScore = null;
+
+        for ($i = $leftBound; $i <= $rightBound; $i++) {
+            $prev = mb_substr($content, $i - 1, 1);
+            $curr = mb_substr($content, $i, 1);
+            $boundaryRank = null;
+
+            if ($prev === "\n" && $curr === "\n") {
+                $boundaryRank = 3;
+            } elseif (in_array($prev, ['.', '!', '?', ';', ':'], true) && preg_match('/\s/u', $curr) === 1) {
+                $boundaryRank = 2;
+            } elseif (preg_match('/\s/u', $curr) === 1) {
+                $boundaryRank = 1;
+            }
+
+            if ($boundaryRank === null) {
+                continue;
+            }
+
+            $distance = abs($i - $midpoint);
+            $score = ($boundaryRank * 100000) - $distance;
+
+            if ($bestSplitPos === null || $score > $bestScore) {
+                $bestSplitPos = $i;
+                $bestScore = $score;
+            }
+        }
+
+        $splitPos = $bestSplitPos ?? $midpoint;
+        $first = trim(mb_substr($content, 0, $splitPos));
+        $second = trim(mb_substr($content, $splitPos));
+
+        if ($first === '' || $second === '') {
+            $splitPos = $midpoint;
+            $first = trim(mb_substr($content, 0, $splitPos));
+            $second = trim(mb_substr($content, $splitPos));
+        }
+
+        return [$first, $second];
+    }
+
     public function respond(?string $message = null): string|array|DataModel|MessageInterface
     {
         $this->changeProvider($this->config['provider']);
@@ -361,6 +469,7 @@ INSTRUCTIONS;
         }
 
         $chunks = is_array($response['chunks'] ?? null) ? $response['chunks'] : [];
+        [$chunks, $hardLimitSplitCount] = $this->enforceHardChunkLimit($chunks);
 
         $chunkPreviews = array_values(array_filter(array_map(
             static function (mixed $chunk): string {
@@ -386,6 +495,8 @@ INSTRUCTIONS;
 
         Log::channel('document-queue')->debug('[ImagePostProcessingAgent] response summary', [
             'page_number' => $this->pageNumber,
+            'hard_chunk_length_limit' => $this->getHardChunkLengthLimit(),
+            'hard_limit_splits_applied' => $hardLimitSplitCount,
             'response_chunks_count' => count($chunks),
             'response_chunks_preview_50' => $chunkPreviews,
             'response_active_context' => $activeContext,

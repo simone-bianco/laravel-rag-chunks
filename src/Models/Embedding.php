@@ -49,7 +49,7 @@ class Embedding extends Model
     {
         $embeds = EmbeddingFactory::make()->multiEmbed($texts);
 
-        $dataToInsert = [];
+        $dataToInsertByHash = [];
         $now = now();
 
         foreach ($texts as $index => $text) {
@@ -59,14 +59,18 @@ class Embedding extends Model
 
             $hash = HashService::hash($text);
 
-            $dataToInsert[] = [
-                'id'         => (string) Str::uuid(),
-                'hash'       => $hash,
-                'embedding'  => json_encode($embeds[$index]),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ];
+            if (!isset($dataToInsertByHash[$hash])) {
+                $dataToInsertByHash[$hash] = [
+                    'id'         => (string) Str::uuid(),
+                    'hash'       => $hash,
+                    'embedding'  => json_encode($embeds[$index]),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
         }
+
+        $dataToInsert = array_values($dataToInsertByHash);
 
         if (!empty($dataToInsert)) {
             static::upsert($dataToInsert, ['hash'], ['updated_at']);

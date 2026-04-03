@@ -82,16 +82,16 @@ class ImageDescriptorAgent extends RotableAgent
             'properties' => [
                 'content' => [
                     'type'        => 'string',
-                    'description' => 'A thorough, detailed textual description of the image for RAG retrieval. Describe all visible elements, text, labels, data, diagrams, and relationships. Be specific and exhaustive. Do NOT start with phrases like "The image shows" or "This image depicts" — begin immediately with the content.',
+                    'description' => 'Concise description of the image for RAG retrieval. Cover key elements, text, labels, and relationships. Be specific but brief — 2 to 4 sentences max. Do NOT start with "The image shows" or "This depicts" — begin immediately with the content.',
                 ],
                 'tags' => [
                     'type'        => 'array',
-                    'description' => 'List of 5 to 10 semantic tags for RAG retrieval. Must be strictly LOWERCASE and SLUG_CASE (e.g., combat-map, skill-tree). Tag the main subject, all depicted entities, and key concepts. The primary subject MUST be included.',
+                    'description' => 'List of 3 to 6 semantic tags for RAG retrieval. Must be LOWERCASE and SLUG_CASE (e.g., combat-map, skill-tree). Tag the main subject and key concepts.',
                     'items'       => ['type' => 'string'],
                 ],
                 'questions' => [
                     'type'        => 'array',
-                    'description' => 'List of 3 to 5 reverse-engineered questions that this image answers perfectly. CRITICAL: every question MUST explicitly name the main subject or entity depicted — never use pronouns like "it" or "they".',
+                    'description' => 'List of 2 to 3 questions this image answers. Each must explicitly name the subject — no pronouns.',
                     'items'       => ['type' => 'string'],
                 ],
                 ...$deterministicTagProperties,
@@ -124,20 +124,18 @@ class ImageDescriptorAgent extends RotableAgent
 
         return <<<INSTRUCTIONS
 ### ROLE
-Expert image analyst for RAG systems. Generate dense, precise metadata for semantic retrieval.
+Image analyst for RAG systems. Generate concise, precise metadata for semantic retrieval.
 $contextBlock$existingBlock
 ### OUTPUT
-1. **content** — Exhaustive description: all visible text, numbers, labels, diagrams, relationships, entities. No filler, no preamble. Every sentence must convey concrete information from the image.
-2. **tags** — 5–10 lowercase slug-case tags (e.g. combat-map, skill-tree). Cover subject, entities, actions, key concepts.
-3. **questions** — 3–5 questions this image answers perfectly. Each must name the subject explicitly — no pronouns.
+1. **content** — 2–4 sentences: key elements, visible text/labels, main subject. No filler, no preamble.
+2. **tags** — 3–6 lowercase slug-case tags (e.g. combat-map, skill-tree).
+3. **questions** — 2–3 questions this image answers. Name the subject explicitly — no pronouns.
 4. **Deterministic tags** — Pick only from the provided enum values. Empty array if none apply.
 
 ### RULES
 - `content` starts immediately with the subject — no "The image shows…" or "This depicts…"
-- Be specific: exact proper nouns, numbers, labels, technical terms as visible
-- Tags and questions stay out of `content`
-- DONT omit relevant information, BUT be as short as possible
-- Questions must name the subject; never use "it", "they", "this", or "the depicted"
+- Be specific but brief: proper nouns, key numbers, labels as visible
+- Questions must name the subject; never use "it", "they", "this"
 INSTRUCTIONS;
     }
 
