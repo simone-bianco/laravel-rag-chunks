@@ -36,10 +36,6 @@ class Document extends Model
         'questions_embedding',
         'metadata',
         'is_chunks_dirty',
-        'is_description_dirty',
-        'cached_has_indexed_chunks',
-        'cached_has_active_processes',
-        'cached_at',
         'original_file_path',
         'original_extension',
     ];
@@ -56,16 +52,26 @@ class Document extends Model
             'semantic_tags_embedding' => VectorArray::class,
             'questions_embedding' => VectorArray::class,
             'is_chunks_dirty' => 'boolean',
-            'is_description_dirty' => 'boolean',
-            'cached_has_indexed_chunks' => 'boolean',
-            'cached_has_active_processes' => 'boolean',
-            'cached_at' => 'datetime',
         ];
     }
 
     public function chunks(): HasMany
     {
         return $this->hasMany(Chunk::class);
+    }
+
+    /** Chunks that have been indexed (have a non-empty chapter). */
+    public function indexedChunks(): HasMany
+    {
+        return $this->hasMany(Chunk::class)
+            ->whereNotNull('chapter')
+            ->where('chapter', '!=', '');
+    }
+
+    /** Processes that are currently active (pending or processing). */
+    public function activeProcesses()
+    {
+        return $this->processes()->whereIn('status', ['pending', 'processing']);
     }
 
     public function project(): BelongsTo

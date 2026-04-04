@@ -148,9 +148,6 @@ class DocumentService
                 }
             });
 
-            // Update denormalized cache column
-            $this->updateDocumentIndexedCache($document);
-
             if (!empty($deterministicTagsBuffer)) {
                 $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
             }
@@ -172,9 +169,6 @@ class DocumentService
             if (!empty($deterministicTagsBuffer)) {
                 $this->attachDeterministicTagsToChunks($document, $deterministicTagsBuffer);
             }
-
-            // Update denormalized cache column
-            $this->updateDocumentIndexedCache($document);
         }
 
         // Apply inherited tags from document metadata (set at parse-time via ParseDocumentModal)
@@ -834,20 +828,4 @@ class DocumentService
         }
     }
 
-    /**
-     * Update the cached_has_indexed_chunks column for a document.
-     * Called after bulk chunk operations to ensure the cache stays in sync.
-     */
-    protected function updateDocumentIndexedCache(Document $document): void
-    {
-        $hasIndexedChunks = $document->chunks()
-            ->whereNotNull('chapter')
-            ->where('chapter', '!=', '')
-            ->exists();
-
-        $document->updateQuietly([
-            'cached_has_indexed_chunks' => $hasIndexedChunks,
-            'cached_at' => now(),
-        ]);
-    }
 }

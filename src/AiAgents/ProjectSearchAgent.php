@@ -27,7 +27,7 @@ class ProjectSearchAgent extends RotableAgent
 
 //    protected $model = 'gpt-4.1-nano';
 
-    protected $model = 'gpt-5.4';
+    protected $model = 'gpt-5-mini';
 
     protected $maxCompletionTokens = 16384;
 
@@ -197,6 +197,9 @@ RESULT EXTRACTION
 
 LANGUAGE
 - Default retrieval language is English, but adapt lexical choices to chunk/document language when useful.
+
+CRITICAL RULES
+- Try to return as many relevant chunks as possible, exclude them only if they are completely alien to the search
 $projectInstructionsBlock
 INSTRUCTIONS;
     }

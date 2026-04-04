@@ -25,7 +25,6 @@ class ProjectChatAgent extends RotableAgent
 
     protected ?Document $document = null;
 
-//    protected $model = 'gpt-5.2';
     protected $model = 'gpt-5.4';
 
     protected $maxCompletionTokens = 16384;

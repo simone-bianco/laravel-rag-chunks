@@ -52,4 +52,11 @@ return [
      * Set to 0 to disable overlap entirely.
      */
     'chunk_overlap' => 50,
+
+    'knowledge_graph' => [
+        'projection_url'  => env('MULTI_EMBEDDER_URL', 'http://localhost:5000'),
+        'projection_key'  => env('MULTI_EMBEDDER_API_TOKEN'),
+        'max_graph_edges' => 15000,
+        'cache_ttl'       => 3600,
+    ],
 ];
