@@ -13,6 +13,11 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInAllowedProjects;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\ProjectGroup;
 
+/**
+ * @deprecated Use {@see \SimoneBianco\LaravelAiAgents\Services\AgentInstantiationService}
+ *             with the seeded slug `project-group-chat-default`. This hand-written agent will
+ *             be removed once all consumers have migrated to the database-driven agent pipeline.
+ */
 class ProjectGroupChatAgent extends RotableAgent
 {
     use NormalizesChunkIds;

@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
@@ -47,6 +48,36 @@ use SimoneBianco\LaravelSimpleTags\TagType;
  */
 class SearchChunks extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        $base = [
+            'page' => ['type' => 'integer', 'description' => 'Pagination page', 'default' => 1, 'toggleable' => false, 'default_enabled' => true],
+            'perPage' => ['type' => 'integer', 'description' => 'Results per page (8/10/12)', 'default' => 10, 'toggleable' => false, 'default_enabled' => true],
+            'textSearch' => ['type' => 'string', 'description' => 'Semantic text query (3-5 English keywords)', 'default' => null, 'toggleable' => true, 'default_enabled' => true],
+            'questionsSearch' => ['type' => 'string', 'description' => 'Pseudo-question to match indexed questions', 'default' => null, 'toggleable' => true, 'default_enabled' => true],
+            'semanticTagsSearch' => ['type' => 'string', 'description' => 'Comma-separated semantic tags', 'default' => null, 'toggleable' => true, 'default_enabled' => true],
+            'keywordsSearch' => ['type' => 'object', 'description' => 'Hard lexical filter (refinement only)', 'default' => null, 'toggleable' => true, 'default_enabled' => true],
+            'chapters' => ['type' => 'array', 'description' => 'Chapter alias hard filter', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
+            'hasImage' => ['type' => 'string', 'description' => 'Visual filter: with/without/mixed', 'default' => 'mixed', 'toggleable' => true, 'default_enabled' => true],
+            'allowRelaxTagFilters' => ['type' => 'boolean', 'description' => 'Allow retry without tag filters', 'default' => false, 'toggleable' => true, 'default_enabled' => false],
+            'tag_filters' => ['type' => 'array', 'description' => 'Per-type tag filters (tag_*)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
+            'documentsAliases' => ['type' => 'array', 'description' => 'Restrict to specific document aliases', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
+        ];
+
+        $manifest = [];
+        foreach ($base as $name => $entry) {
+            $manifest[] = array_merge([
+                'name' => $name,
+                'overridable' => true,
+                'variable_bindable' => false,
+            ], $entry);
+        }
+
+        return $manifest;
+    }
+
     protected ChunkService $chunkService;
 
     public function logger(): LoggerInterface

@@ -7,10 +7,49 @@ use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 use SimoneBianco\LaravelRagChunks\AiAgents\ProjectSearchAgent;
 
 class SearchInAllowedProjects extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        return [
+            [
+                'name' => 'projectAlias',
+                'type' => 'string',
+                'description' => 'Allowed project alias to search in.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+            [
+                'name' => 'persistentKey',
+                'type' => 'string',
+                'description' => 'Persistent key for thread continuity.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+            [
+                'name' => 'searches',
+                'type' => 'array',
+                'description' => 'Array of 1-5 parallel search queries.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+        ];
+    }
+
     /**
      * @param  array<int, string>  $allowedProjectAliases
      */

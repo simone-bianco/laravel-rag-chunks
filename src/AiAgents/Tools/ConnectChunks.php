@@ -6,11 +6,25 @@ use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 
 class ConnectChunks extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        return [
+            ['name' => 'fromChunkId', 'type' => 'string', 'description' => 'Source chunk ID', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+            ['name' => 'toChunkId', 'type' => 'string', 'description' => 'Destination chunk ID', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+            ['name' => 'relationName', 'type' => 'string', 'description' => 'Relation name', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+            ['name' => 'relationDescription', 'type' => 'string', 'description' => 'Relation description', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+            ['name' => 'relationType', 'type' => 'string', 'description' => 'unidirectional|bidirectional', 'default' => 'bidirectional', 'overridable' => true, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+        ];
+    }
+
     public function logger(): LoggerInterface
     {
         return Log::channel('search');

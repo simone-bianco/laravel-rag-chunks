@@ -15,6 +15,12 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 
+/**
+ * @deprecated Use {@see \SimoneBianco\LaravelAiAgents\Services\AgentInstantiationService}
+ *             with the seeded slug `project-chat-default` (or `document-chat-default` when a
+ *             document alias is provided). This hand-written agent will be removed once all
+ *             consumers have migrated to the database-driven agent pipeline.
+ */
 class ProjectChatAgent extends RotableAgent
 {
     use NormalizesChunkIds;

@@ -16,6 +16,7 @@
       "spatie/laravel-package-tools": "^1.92",
       "maestroerror/laragent": "*",
       "tpetry/laravel-postgresql-enhanced": "^3.5",
+      "simone-bianco/laravel-ai-agents": "*",
       "simone-bianco/laravel-processes": "*",
       "halaxa/json-machine": "*",
       "simone-bianco/laravel-dedup-media": "*",

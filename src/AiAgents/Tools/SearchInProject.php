@@ -6,10 +6,39 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 use SimoneBianco\LaravelRagChunks\AiAgents\ProjectSearchAgent;
 
 class SearchInProject extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        return [
+            [
+                'name' => 'persistentKey',
+                'type' => 'string',
+                'description' => 'Persistent key to preserve search-agent memory across turns.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+            [
+                'name' => 'searches',
+                'type' => 'array',
+                'description' => 'Array of 1-5 parallel search queries.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+        ];
+    }
+
     public function __construct(
         protected string $projectAlias,
         protected ?string $documentAlias = null,

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
@@ -14,6 +15,24 @@ use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class GetChunksByAliases extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        return [
+            [
+                'name' => 'chunksAliases',
+                'type' => 'array',
+                'description' => 'Chunk UUIDs to fetch.',
+                'default' => null,
+                'overridable' => false,
+                'variable_bindable' => false,
+                'toggleable' => false,
+                'default_enabled' => true,
+            ],
+        ];
+    }
+
     public function __construct(
         protected Project $project,
         protected ?Document $document = null,

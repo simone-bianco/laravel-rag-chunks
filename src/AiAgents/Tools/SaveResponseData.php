@@ -5,9 +5,21 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 use Illuminate\Support\Str;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
+use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
 
 class SaveResponseData extends Tool
 {
+    use ExposesEditableParameters;
+
+    public function editableParameters(): array
+    {
+        return [
+            ['name' => 'relevant_chunks', 'type' => 'array', 'description' => 'Relevant chunk UUIDs', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => false, 'default_enabled' => true],
+            ['name' => 'relevant_images', 'type' => 'array', 'description' => 'Relevant image objects', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => true, 'default_enabled' => true],
+            ['name' => 'proposed_connections', 'type' => 'array', 'description' => 'Proposed inter-chunk connections', 'default' => null, 'overridable' => false, 'variable_bindable' => false, 'toggleable' => true, 'default_enabled' => true],
+        ];
+    }
+
     protected static ?array $lastResponseData = null;
 
     public function __construct(
