@@ -65,6 +65,7 @@ class InstallRagChunksCommand extends Command
             'create_documents_table.php.stub' => 'create_documents_table',
             'create_document_project_shares_table.php.stub' => 'create_document_project_shares_table',
             'create_chunks_table.php.stub' => 'create_chunks_table',
+            'create_search_results_table.php.stub' => 'create_search_results_table',
         ];
 
         $stubPath = __DIR__.'/../../../stubs/migrations';

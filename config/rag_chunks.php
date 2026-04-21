@@ -20,6 +20,11 @@ return [
             'provider' => 'openai',
             'model' => 'gpt-5-mini',
             'preferred_chunk_length' => 600,
+            'pdftoppm_binary' => env('RAG_PDFTOPPM_BINARY', 'pdftoppm'),
+            'pdftotext_binary' => env('RAG_PDFTOTEXT_BINARY', 'pdftotext'),
+            'pdftocairo_binary' => env('RAG_PDFTOCAIRO_BINARY', 'pdftocairo'),
+            'pdf_render_dpi' => (int) env('RAG_PDF_RENDER_DPI', 150),
+            'pdf_render_timeout_seconds' => (int) env('RAG_PDF_RENDER_TIMEOUT_SECONDS', 2400),
         ],
     ],
 

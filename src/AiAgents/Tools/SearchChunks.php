@@ -2,14 +2,15 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Tools;
 
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
+use SimoneBianco\LaravelRagChunks\AiAgents\SearchScope;
 use SimoneBianco\LaravelRagChunks\DTOs\ChunkSearchDataDTO;
+use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Services\ChunkService;
@@ -61,7 +62,7 @@ class SearchChunks extends Tool
             'keywordsSearch' => ['type' => 'object', 'description' => 'Hard lexical filter (refinement only)', 'default' => null, 'toggleable' => true, 'default_enabled' => true],
             'chapters' => ['type' => 'array', 'description' => 'Chapter alias hard filter', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
             'hasImage' => ['type' => 'string', 'description' => 'Visual filter: with/without/mixed', 'default' => 'mixed', 'toggleable' => true, 'default_enabled' => true],
-            'allowRelaxTagFilters' => ['type' => 'boolean', 'description' => 'Allow retry without tag filters', 'default' => false, 'toggleable' => true, 'default_enabled' => false],
+            'allowRelaxTagFilters' => ['type' => 'boolean', 'description' => 'Allow retry without tag filters', 'default' => true, 'toggleable' => true, 'default_enabled' => true],
             'tag_filters' => ['type' => 'array', 'description' => 'Per-type tag filters (tag_*)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
             'documentsAliases' => ['type' => 'array', 'description' => 'Restrict to specific document aliases', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
         ];
@@ -87,22 +88,53 @@ class SearchChunks extends Tool
 
     protected array $tagsByType = [];
 
+    protected array $resolvedProjectIds = [];
+
+    protected string $resolvedProjectAlias = '';
+
+    protected string $resolvedDocumentAlias = '';
+
     public function __construct(
-        protected Project $project,
-        protected ?Document $document = null,
+        protected SearchScope $scope,
         ?string $name = 'search_chunks',
         ?string $description = 'RAG search chunks'
     ) {
-        $this->tagsByType = TagType::query()
-            ->where('project_id', $this->project->id)
-            ->where('ai_search', true)
-            ->with(['tags' => fn ($q) => $q->select('id', 'tag_type_id', 'slug', 'name')])
-            ->get()
-            ->mapWithKeys(fn ($tagType) => [
-                $tagType->alias => $tagType->tags->map(fn ($t) => $t->slug)->filter()->values()->toArray(),
-            ])
-            ->filter(fn ($slugs) => count($slugs) > 0)
-            ->toArray();
+        if ($this->scope->type === SearchScopeType::Document) {
+            $document = Document::query()
+                ->where('alias', $this->scope->alias)
+                ->with('project:id,alias')
+                ->first();
+
+            $this->resolvedDocumentAlias = $this->scope->alias;
+            $this->resolvedProjectAlias  = (string) ($document?->project?->alias ?? '');
+
+            if ($document?->project_id) {
+                $this->resolvedProjectIds = [$document->project_id];
+            }
+        } else {
+            $this->resolvedProjectAlias = $this->scope->alias;
+
+            $project = Project::query()
+                ->where('alias', $this->scope->alias)
+                ->first();
+
+            if ($project) {
+                $this->resolvedProjectIds = [$project->id];
+            }
+        }
+
+        if (!empty($this->resolvedProjectIds)) {
+            $this->tagsByType = TagType::query()
+                ->whereIn('project_id', $this->resolvedProjectIds)
+                ->where('ai_search', true)
+                ->with(['tags' => fn ($q) => $q->select('id', 'tag_type_id', 'slug', 'name')])
+                ->get()
+                ->mapWithKeys(fn ($tagType) => [
+                    $tagType->alias => $tagType->tags->map(fn ($t) => $t->slug)->filter()->values()->toArray(),
+                ])
+                ->filter(fn ($slugs) => count($slugs) > 0)
+                ->toArray();
+        }
 
         $this->chunkService = app(ChunkService::class);
         parent::__construct($name, $description);
@@ -130,7 +162,7 @@ class SearchChunks extends Tool
         }
 
         $documentsAliasesProperties = [];
-        if (empty($this->document)) {
+        if ($this->scope->type === SearchScopeType::Project) {
             $documentsAliasesProperties['documentsAliases'] = [
                 'type' => 'array',
                 'description' => 'Document hard scope. REFINEMENT ONLY: never set on first attempt unless the user explicitly asks to restrict to specific document aliases. Never guess aliases: use only explicit user-provided aliases or aliases surfaced by previous search results. On retry, combine with at most one deterministic filter family.',
@@ -231,9 +263,9 @@ class SearchChunks extends Tool
             unset($relaxedData['_chunkTagGroupsSlugsForLog']);
 
             $this->logger()->info('[Tool] SearchChunks retry without chunkTagGroups due low recall', [
-                'project' => $this->project->alias,
-                'document' => $this->document?->alias,
-                'query' => $relaxedData['textSearch'] ?? null,
+                'scope_type'  => $this->scope->type->value,
+                'scope_alias' => $this->scope->alias,
+                'query'       => $relaxedData['textSearch'] ?? null,
             ]);
 
             $relaxedRawResults = $this->searchRaw($relaxedData);
@@ -286,10 +318,12 @@ class SearchChunks extends Tool
             unset($data['has_image']);
         }
 
-        $data['projectsAliases'] = [$this->project->alias];
+        if ($this->resolvedProjectAlias !== '') {
+            $data['projectsAliases'] = [$this->resolvedProjectAlias];
+        }
 
-        if ($this->document) {
-            $data['documentsAliases'] = [$this->document->alias];
+        if ($this->resolvedDocumentAlias !== '') {
+            $data['documentsAliases'] = [$this->resolvedDocumentAlias];
         }
 
         return $data;
@@ -312,10 +346,11 @@ class SearchChunks extends Tool
                     $value
                 )));
 
-                $tagType = TagType::query()
-                    ->where('project_id', $this->project->id)
-                    ->where('alias', $alias)
-                    ->first();
+                $tagTypeQuery = TagType::query()->where('alias', $alias);
+                if (!empty($this->resolvedProjectIds)) {
+                    $tagTypeQuery->whereIn('project_id', $this->resolvedProjectIds);
+                }
+                $tagType = $tagTypeQuery->first();
 
                 if ($tagType) {
                     $ids = Tag::query()
@@ -420,10 +455,10 @@ class SearchChunks extends Tool
             $docAlias = $item['document']['alias'] ?? ($item['document_id'] ?? 'unknown');
 
             if (! isset($byDocument[$docAlias])) {
-                $byDocument[$docAlias] = [
-                    'description' => $item['document']['description'] ?? null,
+                $byDocument[$docAlias] = array_filter([
+                    'description' => Str::limit($item['document']['description'] ?? ''),
                     'chunks'      => [],
-                ];
+                ]);
             }
 
             $byDocument[$docAlias]['chunks'][$item['id']] = ChunkMapper::mapItem($item);

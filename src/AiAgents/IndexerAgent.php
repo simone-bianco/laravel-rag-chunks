@@ -16,7 +16,7 @@ class IndexerAgent extends RotableAgent
 //    protected $provider = 'ollama';
 //    protected $model = 'gemma3:12b';
 
-    protected $model = 'gpt-4.1-mini';
+    protected $model = 'gpt-5-mini';
 
     protected ?array $index = null;
     protected array $chunks = [];
@@ -136,6 +136,7 @@ RULES
 - Keep titles short, clear, specific, and section-level.
 - Do not use vague titles like "Miscellaneous", "Other", "Notes", or "General".
 - Do not include the document name in the title.
+- If there is an index, you can use it to get a starting point for the arguments that the document will contain
 
 OUTPUT RULES
 

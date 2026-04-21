@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use SimoneBianco\LaravelAiAgents\Models\AiAgentTool;
 use SimoneBianco\LaravelRagChunks\AiAgents\Factories\SearchInProjectFactory;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchInProject;
 
 return new class {
     public bool $transactional = true;
@@ -18,7 +17,7 @@ return new class {
                 'class' => SearchInProjectFactory::class,
                 'label' => 'Search in Project',
                 'description' => 'Semantic + keyword search within a specific project (parallel multi-query).',
-                'parameter_manifest' => (new SearchInProject('_'))->editableParameters(),
+                'parameter_manifest' => [],
                 'allowed_sub_agent_types' => null,
                 'is_enabled' => true,
             ],

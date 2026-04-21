@@ -12,8 +12,18 @@ final class ProjectScopeResolver implements ScopeBindingResolver
 {
     public function resolve(string $scopeKey, array $metadata): ScopeBindingSnapshot
     {
-        $project = Project::query()->find($scopeKey)
-            ?? Project::query()->where('alias', $scopeKey)->first();
+        $isUuid = (bool) preg_match(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+            $scopeKey,
+        );
+
+        $project = $isUuid
+            ? Project::query()->whereKey($scopeKey)->first()
+            : null;
+
+        if (! $project) {
+            $project = Project::query()->where('alias', $scopeKey)->first();
+        }
 
         if (! $project) {
             return new ScopeBindingSnapshot(false, [], '');
@@ -39,7 +49,7 @@ final class ProjectScopeResolver implements ScopeBindingResolver
             ->limit($limit)
             ->get()
             ->map(fn (Project $p): array => [
-                'key' => (string) $p->id,
+                'key' => (string) $p->alias,
                 'label' => (string) $p->name,
                 'sub_label' => (string) $p->alias,
                 'fields' => [

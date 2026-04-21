@@ -3,19 +3,26 @@
 namespace SimoneBianco\LaravelRagChunks\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
+use SimoneBianco\LaravelRagChunks\Database\Factories\DocumentFactory;
 use SimoneBianco\LaravelRagChunks\Traits\HasNearestNeighbors;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 use Tpetry\PostgresqlEnhanced\Eloquent\Casts\VectorArray;
 
 class Document extends Model
 {
-    use HasNearestNeighbors, HasTags, HasUuids, HasProcesses;
+    use HasFactory, HasNearestNeighbors, HasTags, HasUuids, HasProcesses;
+
+    protected static function newFactory(): DocumentFactory
+    {
+        return DocumentFactory::new();
+    }
 
     protected $fillable = [
         'project_id',

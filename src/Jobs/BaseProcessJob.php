@@ -8,6 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use Throwable;
@@ -43,12 +44,23 @@ abstract class BaseProcessJob implements ShouldQueue
         try {
             $this->enrichContext();
 
-            $this->logger()->error("[Job Failed] {$this->getJobName()}", [
+            $failureContext = [
                 'process_id' => $this->processId ?? 'unknown',
+                'document_id' => $this->documentId ?? 'unknown',
+                'job_name' => $this->getJobName(),
                 'exception_class' => get_class($exception),
                 'message' => $exception->getMessage(),
                 'trace' => $exception->getTraceAsString(),
                 'attempt' => $this->attempts(),
+            ];
+
+            $this->logger()->error("[Job Failed] {$this->getJobName()}", [
+                ...$failureContext,
+            ]);
+
+            // Mirror the failure on default stack log (laravel.log)
+            Log::error("[Job Failed] {$this->getJobName()}", [
+                ...$failureContext,
             ]);
 
             if (isset($this->processId)) {

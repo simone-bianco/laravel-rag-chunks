@@ -28,6 +28,7 @@ final class SearchAgentTypeDefinition extends AgentTypeDefinition
     {
         return [
             'search_chunks',
+            'get_searches_results',
             'get_chunks_by_aliases',
             'connect_chunks',
             'save_response_data',

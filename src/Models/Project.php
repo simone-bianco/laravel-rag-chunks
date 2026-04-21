@@ -33,6 +33,11 @@ class Project extends Model
         'settings' => ProjectSettingsCast::class,
     ];
 
+    public function getRouteKeyName(): string
+    {
+        return 'alias';
+    }
+
     public function getTagsSlugsKeyedByTypes(): array
     {
         return $this->tags()

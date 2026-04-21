@@ -3,8 +3,9 @@
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use App\Events\PostProcessingProgressEvent;
-use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Cache;
 use SimoneBianco\LaravelProcesses\Models\Process;
 use SimoneBianco\LaravelRagChunks\Enums\Process\ParsingPhase;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
@@ -15,10 +16,11 @@ use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUniqueUntilProcessing
+class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUnique
 {
     public int $tries = 12;
     public int $timeout = 7200;
+    public int $uniqueFor = 14400;
 
     public function backoff(): array
     {
@@ -46,10 +48,26 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
     public function handle(): void
     {
         $process = null;
+        $lock = null;
+
         try {
             $this->enrichContext();
 
             $this->logger()->debug('Post processing parsing job started');
+
+            $lockKey = "rag_chunks:post_process:{$this->processId}";
+            $lockTtl = $this->timeout + 300;
+            $lock = Cache::lock($lockKey, $lockTtl);
+
+            if (!$lock->get()) {
+                $this->logger()->warning('Post processing already running for this process, skipping duplicate execution', [
+                    'process_id' => (string) $this->processId,
+                    'lock_key' => $lockKey,
+                    'lock_ttl_seconds' => $lockTtl,
+                ]);
+
+                return;
+            }
 
             $process = Process::with('processable')->findOrFail($this->processId);
 
@@ -180,6 +198,10 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
                 'trace' => $e->getTraceAsString(),
             ]);
             $this->fail($e);
+        } finally {
+            if ($lock !== null) {
+                optional($lock)->release();
+            }
         }
     }
 }

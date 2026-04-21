@@ -8,10 +8,10 @@ use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Tool;
 use Psr\Log\LoggerInterface;
 use SimoneBianco\LaravelAiAgents\Concerns\ExposesEditableParameters;
+use SimoneBianco\LaravelRagChunks\AiAgents\SearchScope;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
+use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
-use SimoneBianco\LaravelRagChunks\Models\Document;
-use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class GetChunksByAliases extends Tool
 {
@@ -21,21 +21,20 @@ class GetChunksByAliases extends Tool
     {
         return [
             [
-                'name' => 'chunksAliases',
-                'type' => 'array',
-                'description' => 'Chunk UUIDs to fetch.',
-                'default' => null,
-                'overridable' => false,
+                'name'              => 'chunksAliases',
+                'type'              => 'array',
+                'description'       => 'Chunk UUIDs to fetch.',
+                'default'           => null,
+                'overridable'       => false,
                 'variable_bindable' => false,
-                'toggleable' => false,
-                'default_enabled' => true,
+                'toggleable'        => false,
+                'default_enabled'   => true,
             ],
         ];
     }
 
     public function __construct(
-        protected Project $project,
-        protected ?Document $document = null,
+        protected SearchScope $scope,
         ?string $name = 'get_chunks_by_aliases',
         ?string $description = 'Retrieve specific chunks by UUIDs with chapter, neighbors and relations.'
     ) {
@@ -58,9 +57,9 @@ class GetChunksByAliases extends Tool
     {
         return [
             'chunksAliases' => [
-                'type' => 'array',
+                'type'        => 'array',
                 'description' => 'Chunk UUIDs to fetch directly. Use this when you already know exact chunk IDs and need neighbors/relations.',
-                'items' => [
+                'items'       => [
                     'type' => 'string',
                 ],
             ],
@@ -83,11 +82,11 @@ class GetChunksByAliases extends Tool
 
         $chunks = Chunk::query()
             ->whereIn('id', $aliases->all())
-            ->whereHas('document.project', function (Builder $q) {
-                $q->where('alias', $this->project->alias);
+            ->when($this->scope->type === SearchScopeType::Project, function (Builder $q) {
+                $q->whereHas('document.project', fn (Builder $sq) => $sq->where('alias', $this->scope->alias));
             })
-            ->when($this->document, function (Builder $q) {
-                $q->whereHas('document', fn (Builder $sq) => $sq->where('alias', $this->document->alias));
+            ->when($this->scope->type === SearchScopeType::Document, function (Builder $q) {
+                $q->whereHas('document', fn (Builder $sq) => $sq->where('alias', $this->scope->alias));
             })
             ->with([
                 'dedupMedia',
@@ -106,7 +105,7 @@ class GetChunksByAliases extends Tool
         $missing = $aliases->diff($mapped->keys())->values()->all();
 
         return [
-            'chunks' => $mapped->toArray(),
+            'chunks'          => $mapped->toArray(),
             'missing_aliases' => $missing,
         ];
     }

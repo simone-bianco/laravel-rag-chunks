@@ -20,7 +20,19 @@ final class SearchInAllowedProjectsFactory implements AgentToolFactory
             $aliases = [];
         }
 
-        return new SearchInAllowedProjects($aliases);
+        $includeImages = (bool) ($context->get('include_images') ?? $config['include_images'] ?? true);
+
+        $callingAgentId = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
+        $callingAgentId = is_string($callingAgentId) && $callingAgentId !== '' ? $callingAgentId : null;
+
+        $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
+
+        return new SearchInAllowedProjects(
+            allowedProjectAliases: $aliases,
+            includeImages: $includeImages,
+            callingAgentId: $callingAgentId,
+            historyEnabled: $historyEnabled,
+        );
     }
 
     public function editableParameters(): array

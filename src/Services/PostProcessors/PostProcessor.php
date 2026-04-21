@@ -21,6 +21,7 @@ use SimoneBianco\LaravelRagChunks\Factories\EmbeddingFactory;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Services\FileService;
 use SimoneBianco\LaravelRagChunks\Services\StreamService;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
 use Throwable;
 
@@ -617,6 +618,7 @@ class PostProcessor
 
         $pdftoppm = (string) config('rag_chunks.agents.image_postprocessor.pdftoppm_binary', 'pdftoppm');
         $dpi = max(72, (int) config('rag_chunks.agents.image_postprocessor.pdf_render_dpi', 200));
+        $renderTimeoutSeconds = (int) config('rag_chunks.agents.image_postprocessor.pdf_render_timeout_seconds', 1800);
 
         $renderDir = $this->fileService->generateTempDirPath('parse-by-image-pages-' . Str::uuid()->toString());
         $this->fileService->createDirectoryIfNotExists($renderDir);
@@ -633,8 +635,37 @@ class PostProcessor
             $absolutePdfPath,
             $prefixAbsolutePath,
         ]);
-        $process->setTimeout(600);
-        $process->run();
+        $process->setTimeout($renderTimeoutSeconds > 0 ? $renderTimeoutSeconds : null);
+
+        Log::channel('document-queue')->info('[PostProcessor] starting pdftoppm render', [
+            'source_pdf_path' => $sourcePdfRelativePath,
+            'pdftoppm_binary' => $pdftoppm,
+            'dpi' => $dpi,
+            'timeout_seconds' => $renderTimeoutSeconds,
+        ]);
+
+        try {
+            $process->run();
+        } catch (ProcessTimedOutException $exception) {
+            Log::channel('document-queue')->error('[PostProcessor] pdftoppm render timeout', [
+                'source_pdf_path' => $sourcePdfRelativePath,
+                'pdftoppm_binary' => $pdftoppm,
+                'dpi' => $dpi,
+                'timeout_seconds' => $renderTimeoutSeconds,
+                'message' => $exception->getMessage(),
+            ]);
+
+            // Mirror on default stack for easier operational visibility.
+            Log::error('[PostProcessor] pdftoppm render timeout', [
+                'source_pdf_path' => $sourcePdfRelativePath,
+                'pdftoppm_binary' => $pdftoppm,
+                'dpi' => $dpi,
+                'timeout_seconds' => $renderTimeoutSeconds,
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         if (!$process->isSuccessful()) {
             throw new RuntimeException('pdftoppm failed: ' . $process->getErrorOutput());
@@ -665,6 +696,7 @@ class PostProcessor
             'render_dir' => $renderDir,
             'pages_count' => count($images),
             'dpi' => $dpi,
+            'timeout_seconds' => $renderTimeoutSeconds,
         ]);
 
         return $images;
@@ -914,11 +946,31 @@ class PostProcessor
                 $sourcePdfRelativePath,
                 0,
                 '',
-                str_contains($exception->getMessage(), 'timed out') || str_contains($exception->getMessage(), 'Connection refused') || str_contains($exception->getMessage(), 'cURL error')
+                $this->isRetryableImagePostProcessingFailure($exception)
             );
         } finally {
             $this->fileService->closeStreams(null, $writeStream);
         }
+    }
+
+    protected function isRetryableImagePostProcessingFailure(Throwable $exception): bool
+    {
+        if ($exception instanceof ProcessTimedOutException) {
+            return true;
+        }
+
+        $message = Str::lower($exception->getMessage());
+
+        return str_contains($message, 'timed out')
+            || str_contains($message, 'timeout')
+            || str_contains($message, 'connection refused')
+            || str_contains($message, 'curl error')
+            || str_contains($message, 'syntax error')
+            || str_contains($message, 'json')
+            || str_contains($message, 'rate limit')
+            || str_contains($message, 'server error')
+            || str_contains($message, '500')
+            || str_contains($message, '503');
     }
 
     /**
