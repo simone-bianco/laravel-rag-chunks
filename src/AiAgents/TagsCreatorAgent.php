@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use LarAgent\Context\Drivers\CacheStorage;
+use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class TagsCreatorAgent extends RotableAgent

@@ -8,7 +8,7 @@ use LarAgent\Context\Drivers\InMemoryStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use RuntimeException;
-use SimoneBianco\LaravelRagChunks\AiAgents\RotableAgent;
+use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use TypeError;
 
 class ImagePostProcessingAgent extends RotableAgent

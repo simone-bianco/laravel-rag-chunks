@@ -63,13 +63,23 @@ class SearchResultService
     {
         $vector = Embedding::embed($query);
 
-        return SearchResult::create([
+        $searchResult = SearchResult::create([
             'ai_agent_id' => $this->agent->id,
             'project_id'  => $projectId,
             'query'       => $query,
             'results'     => $results,
             'embedding'   => $vector,
         ]);
+
+        Log::channel('search')->info('[SearchResultService] Search result saved', [
+            'agent_id' => (string) $this->agent->id,
+            'project_id' => $projectId,
+            'search_result_id' => (string) $searchResult->id,
+            'query_preview' => mb_substr($query, 0, 200),
+            'chunks_count' => count($results['chunk_ids'] ?? []),
+        ]);
+
+        return $searchResult;
     }
 
     /**

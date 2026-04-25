@@ -4,6 +4,7 @@ namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use InvalidArgumentException;
 use RuntimeException;
+use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use TypeError;
 
 class GenerateDocumentMetadataAgent extends RotableAgent

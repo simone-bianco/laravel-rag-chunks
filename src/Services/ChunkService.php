@@ -17,36 +17,15 @@ class ChunkService
 {
     public function search(ChunkSearchDataDTO $searchData): LengthAwarePaginator
     {
-        $contentVector = null;
-        $questionsVector = null;
-        $tagsVector = null;
+        $vectors = $this->embedSemanticSearchTexts([
+            'content' => $searchData->textSearch,
+            'questions' => $searchData->questionsSearch,
+            'tags' => $searchData->semanticTagsSearch,
+        ]);
 
-        // Embed textSearch for content similarity
-        if (! empty($searchData->textSearch)) {
-            $contentVector = Embedding::embed($searchData->textSearch);
-        }
-
-        // Embed questionsSearch for questions similarity
-        if (! empty($searchData->questionsSearch)) {
-            // Reuse contentVector if same text
-            if ($searchData->questionsSearch === $searchData->textSearch && $contentVector !== null) {
-                $questionsVector = $contentVector;
-            } else {
-                $questionsVector = Embedding::embed($searchData->questionsSearch);
-            }
-        }
-
-        // Embed semanticTagsSearch for tags similarity
-        if (! empty($searchData->semanticTagsSearch)) {
-            // Reuse vectors if same text
-            if ($searchData->semanticTagsSearch === $searchData->textSearch && $contentVector !== null) {
-                $tagsVector = $contentVector;
-            } elseif ($searchData->semanticTagsSearch === $searchData->questionsSearch && $questionsVector !== null) {
-                $tagsVector = $questionsVector;
-            } else {
-                $tagsVector = Embedding::embed($searchData->semanticTagsSearch);
-            }
-        }
+        $contentVector = $vectors['content'] ?? null;
+        $questionsVector = $vectors['questions'] ?? null;
+        $tagsVector = $vectors['tags'] ?? null;
 
         $paginator = Chunk::query()
             ->select('*')
@@ -106,19 +85,15 @@ class ChunkService
 
     public function filter(ChunkFilterDataDTO $filterData): LengthAwarePaginator
     {
-        $contentVector   = null;
-        $tagsVector      = null;
-        $questionsVector = null;
+        $vectors = $this->embedSemanticSearchTexts([
+            'content' => $filterData->semanticText,
+            'tags' => $filterData->semanticTags,
+            'questions' => $filterData->semanticQuestions,
+        ]);
 
-        if (! empty($filterData->semanticText)) {
-            $contentVector = Embedding::embed($filterData->semanticText);
-        }
-        if (! empty($filterData->semanticTags)) {
-            $tagsVector = Embedding::embed($filterData->semanticTags);
-        }
-        if (! empty($filterData->semanticQuestions)) {
-            $questionsVector = Embedding::embed($filterData->semanticQuestions);
-        }
+        $contentVector = $vectors['content'] ?? null;
+        $tagsVector = $vectors['tags'] ?? null;
+        $questionsVector = $vectors['questions'] ?? null;
 
         $hasSemanticSearch = $contentVector !== null || $tagsVector !== null || $questionsVector !== null;
 
@@ -269,6 +244,27 @@ class ChunkService
         } else {
             $chunk->classic_tags = [];
         }
+    }
+
+    /**
+     * @param array<string, string|null> $textsByPurpose
+     * @return array<string, array>
+     */
+    private function embedSemanticSearchTexts(array $textsByPurpose): array
+    {
+        $textsToEmbed = array_filter(
+            $textsByPurpose,
+            static fn (?string $text): bool => is_string($text) && trim($text) !== '',
+        );
+
+        if (empty($textsToEmbed)) {
+            return [];
+        }
+
+        return Embedding::multiEmbed(array_map(
+            static fn (string $text): string => trim($text),
+            $textsToEmbed,
+        ));
     }
 
     private function serializeRelationEntity(Model $entity): array

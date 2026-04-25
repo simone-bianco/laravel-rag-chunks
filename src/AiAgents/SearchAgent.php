@@ -12,12 +12,14 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\NormalizesChunkIds;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetChunksByAliases;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\Memory\GetSearchesResultsTool;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\Memory\SaveSearchesResultsTool;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Enums\SearchDepth;
 use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
+use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use Throwable;
 
@@ -86,6 +88,7 @@ class SearchAgent extends RotableAgent
 
         if ($this->searchResultsActive() && $this->historyProjectId !== null) {
             $this->withTool(new GetSearchesResultsTool($this->callingAgentId, $this->historyProjectId));
+            $this->withTool(new SaveSearchesResultsTool($this->callingAgentId, $this->historyProjectId));
         }
 
         $this->logger()->debug('[Agent] SearchAgent initialized', [
@@ -171,6 +174,7 @@ class SearchAgent extends RotableAgent
             : '- Each result item must include `relevant_chunks`.';
         $searchRetryBlock    = $this->buildSearchRetryBlock();
         $scopeTagsBlock      = $this->buildScopeTagsBlock();
+        $searchResultsMemoryBlock = $this->buildSearchResultsMemoryBlock();
 
         $withImagesInstruct = $this->includeImages ? ' + images' : '';
         $includeImagesInstruct = $this->includeImages ? '- Include chunk images in `relevant_images` when present.' : '- Ignore image fields; do not include them in your response.';
@@ -229,59 +233,61 @@ class SearchAgent extends RotableAgent
         }
 
         return <<<INSTRUCTIONS
-You are a restricted retrieval agent.
+You are a restricted retrieval agent
 {$scopeBlock}
-Return structured data only (UUIDs{$withImagesInstruct}). No prose.
+Return structured data only (UUIDs{$withImagesInstruct}). No prose
 
 OBJECTIVE
-- Execute retrieval with tools and output `{ results: [...] }`.
+- Execute retrieval with tools and output `{ results: [...] }`
 {$schemaRequirement}
-- Include ALL relevant chunk UUIDs; do not truncate.
+- Include ALL relevant chunk UUIDs; do not truncate
 
 DEFAULT TOOLING
-- First attempt: use `search_chunks`.
-- Use `get_chunks_by_aliases` only when exact chunk UUIDs are already known.
+- First attempt: use `search_chunks`
+- Use `get_chunks_by_aliases` only when exact chunk UUIDs are already known
 
 SEARCH INPUT POLICY
-- Always provide: `textSearch`, `semanticTagsSearch`, `questionsSearch`.
+- Always provide: `textSearch`, `semanticTagsSearch`, `questionsSearch`
 {$imagePolicy}
 {$scopeTagsBlock}
-- If the query text contains explicit inline constraints (e.g. `constraints: documentsAliases=[...]; chapters=[...]; keywords=[...]; keywordMode=OR|AND; hasImage=...; tag_<typeAlias>=[...]`), you MUST map them to the corresponding `search_chunks` fields.
-- Inline constraints and explicit user constraints are authoritative.
+- If the query text contains explicit inline constraints (e.g. `constraints: documentsAliases=[...]; chapters=[...]; keywords=[...]; keywordMode=OR|AND; hasImage=...; tag_<typeAlias>=[...]`), you MUST map them to the corresponding `search_chunks` fields
+- Inline constraints and explicit user constraints are authoritative
 - ATTEMPT 1 MUST be broad:
-  - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, or any deterministic tag/document narrowing.
-  - MUST NOT send `documentsAliases` on attempt 1 unless the user explicitly asks to restrict to specific document aliases, or explicit inline constraints require it.
-  - If this agent is already document-scoped by constructor, keep that scope (tool will inject it).
+  - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, or any deterministic tag/document narrowing
+  - MUST NOT send `documentsAliases` on attempt 1 unless the user explicitly asks to restrict to specific document aliases, or explicit inline constraints require it
+  - If this agent is already document-scoped by constructor, keep that scope (tool will inject it)
 
 CONSTRAINT EXTRACTION RULES
-- Before each `search_chunks` call, extract any explicit constraints from the user query text and from inline `constraints:` blocks.
-- Allowed explicit fields to extract: `documentsAliases`, `chapters`, `keywords`, `keywordMode`, `hasImage`, `tag_*`.
-- `keywords` + `keywordMode` MUST be translated to `keywordsSearch = { keywords: [...], mode: OR|AND }`.
-- Never invent aliases, chapter values, tag keys, or tag values; use only explicit user text or values surfaced in prior tool results.
+- Before each `search_chunks` call, extract any explicit constraints from the user query text and from inline `constraints:` blocks
+- Allowed explicit fields to extract: `documentsAliases`, `chapters`, `keywords`, `keywordMode`, `hasImage`, `tag_*`
+- `keywords` + `keywordMode` MUST be translated to `keywordsSearch = { keywords: [...], mode: OR|AND }`
+- Never invent aliases, chapter values, tag keys, or tag values; use only explicit user text or values surfaced in prior tool results
 
 REFINEMENT-ONLY FIELDS
-- `keywordsSearch`, `chapters`, and `tag_*` are NEVER first-attempt fields.
-- Use them from attempt 2 only.
-- `keywordsSearch`: MUST use object form `{ keywords: [...], mode: OR|AND }`; prefer `OR` first, `AND` only for stricter disambiguation.
-- `chapters`: use only chapter aliases discovered in prior results.
-- `tag_*`: never guess values; use exact enum values only; prefer one filter unless strict intersection is required.
-- `tag_*` only works when paired with `keywordsSearch` or `chapters`; never send `tag_*` alone.
+- `keywordsSearch`, `chapters`, and `tag_*` are NEVER first-attempt fields
+- Use them from attempt 2 only
+- `keywordsSearch`: MUST use object form `{ keywords: [...], mode: OR|AND }`; prefer `OR` first, `AND` only for stricter disambiguation
+- `chapters`: use only chapter aliases discovered in prior results
+- `tag_*`: never guess values; use exact enum values only; prefer one filter unless strict intersection is required
+- `tag_*` only works when paired with `keywordsSearch` or `chapters`; never send `tag_*` alone
 - On attempt 2, add deterministic narrowing progressively:
-  - first choice: rewrite/broaden semantic fields,
-  - then optional `keywordsSearch`,
-  - then optional ONE deterministic filter family (`chapters` OR one `tag_*`).
+  - first choice: rewrite/broaden semantic fields
+  - then optional `keywordsSearch`
+  - then optional ONE deterministic filter family (`chapters` OR one `tag_*`)
 
 {$searchRetryBlock}
 
 RESULT EXTRACTION
-- Collect UUIDs from relevant chunks across all returned documents.
+- Collect UUIDs from relevant chunks across all returned documents
 {$includeImagesInstruct}
 
+{$searchResultsMemoryBlock}
+
 LANGUAGE
-- Default retrieval language is English, but adapt lexical choices to chunk/document language when useful.
+- Default retrieval language is English, but adapt lexical choices to chunk/document language when useful
 
 CRITICAL RULES
-- Return as many relevant chunks as possible; exclude only those completely alien to the search.
+- Return as many relevant chunks as possible; exclude only those completely alien to the search
 
 $historyBlock
 INSTRUCTIONS;
@@ -437,16 +443,25 @@ SECTION,
             )),
         ]);
 
-        if ($this->searchResultsActive()) {
-            foreach ($resolvedResults as $i => $resolvedResult) {
-                $itemQuery = $decoded['results'][$i]['query'] ?? null;
-                if (is_string($itemQuery) && trim($itemQuery) !== '') {
-                    $this->saveSearchResult($itemQuery, $resolvedResult);
-                }
-            }
+        return ['results' => $resolvedResults];
+    }
+
+    private function buildSearchResultsMemoryBlock(): string
+    {
+        if (! $this->searchResultsActive()) {
+            return '';
         }
 
-        return ['results' => $resolvedResults];
+        return <<<'SECTION'
+SEARCH-RESULT MEMORY
+- `save_searches_results` is the ONLY way to persist search results. Do not assume results are saved automatically.
+- Call `save_searches_results` exactly once, at the end of the whole search workflow, and only if the final retrieval was fruitful.
+- A fruitful retrieval has at least one on-topic chunk that should be reusable for a future similar query.
+- Do NOT save empty results, weak/tangential results, failed attempts, exploratory intermediate attempts, or duplicates of a reused history result.
+- Save only final curated groups: each item must include `query` plus `chunk_ids`. The `query` is a concise reusable description of what those chunks answer.
+- If images materially help the result, include them in `relevant_images` on the saved item.
+- After saving, still return the required structured `{ results: [...] }` response.
+SECTION;
     }
 
     private function resolveResults(array $results): array

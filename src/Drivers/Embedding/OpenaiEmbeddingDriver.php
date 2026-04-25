@@ -5,7 +5,7 @@ namespace SimoneBianco\LaravelRagChunks\Drivers\Embedding;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
-use SimoneBianco\LaravelRagChunks\AiAgents\Traits\InjectsRotatedOpenAIKey;
+use SimoneBianco\LaravelAiAgents\Concerns\InjectsRotatedOpenAIKey;
 use SimoneBianco\LaravelRagChunks\Drivers\Embedding\Contracts\EmbeddingDriverInterface;
 use SimoneBianco\LaravelRagChunks\Exceptions\ClientException;
 use Throwable;
@@ -34,6 +34,20 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
      */
     public function embed(string $text): array
     {
+        return $this->multiEmbed([$text])[0] ?? [];
+    }
+
+    /**
+     * @param array $texts
+     * @return array
+     * @throws ClientException
+     */
+    public function multiEmbed(array $texts): array
+    {
+        if (empty($texts)) {
+            return [];
+        }
+
         try {
             $this->injectRotatedOpenAIKey();
 
@@ -46,12 +60,12 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
             $response = Http::withToken($this->apiKey)
                 ->post($this->baseUrl, [
                     'model' => $this->model,
-                    'input' => $text,
+                    'input' => array_values($texts),
                 ]);
 
             if ($response->failed()) {
                 throw new ClientException(
-                    'OpenAI Embedding Error: ' . $response->body(),
+                    'OpenAI Batch Embedding Error: ' . $response->body(),
                     $response->status(),
                     null,
                     null,
@@ -59,46 +73,51 @@ class OpenaiEmbeddingDriver implements EmbeddingDriverInterface
                 );
             }
 
-            $embedding = $response->json('data.0.embedding');
-            if (empty($embedding)) {
-                throw new ClientException('Embedding is empty', 422, null, null, [], false);
+            $data = $response->json('data');
+            if (! is_array($data) || empty($data)) {
+                throw new ClientException('Embeddings are empty', 422, null, null, [], false);
             }
 
-            return $embedding;
+            $embeddings = [];
+            foreach ($data as $item) {
+                $index = $item['index'] ?? null;
+                $embedding = $item['embedding'] ?? null;
+
+                if (! is_int($index) || empty($embedding)) {
+                    continue;
+                }
+
+                $embeddings[$index] = $embedding;
+            }
+
+            ksort($embeddings);
+
+            if (count($embeddings) !== count($texts)) {
+                throw new ClientException('Embedding count mismatch', 422, null, null, [
+                    'expected_count' => count($texts),
+                    'actual_count' => count($embeddings),
+                ], false);
+            }
+
+            return array_values($embeddings);
         } catch (ClientException $e) {
-            $this->logger()->error("Error during embedding: {$e->getMessage()}", [
+            $this->logger()->error("Error during batch embedding: {$e->getMessage()}", [
                 'driver' => $this->configKey,
-                'text' => $text,
+                'count' => count($texts),
                 'model' => $this->model,
                 ...$e->context(),
             ]);
 
             throw $e;
         } catch (Throwable $throwable) {
-            $this->logger()->error("Error during embedding: {$throwable->getMessage()}", [
+            $this->logger()->error("Error during batch embedding: {$throwable->getMessage()}", [
                 'driver' => $this->configKey,
-                'text' => $text,
+                'count' => count($texts),
                 'model' => $this->model,
                 'trace' => $throwable->getTrace(),
             ]);
 
             throw ClientException::makeFromException($throwable);
         }
-    }
-
-    /**
-     * @param array $texts
-     * @return array
-     * @throws ClientException
-     */
-    public function multiEmbed(array $texts): array
-    {
-        $embeds = [];
-
-        foreach ($texts as $text) {
-            $embeds[] = $this->embed($text);
-        }
-
-        return $embeds;
     }
 }

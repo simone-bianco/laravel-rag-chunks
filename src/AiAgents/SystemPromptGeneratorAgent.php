@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use LarAgent\Context\Drivers\InMemoryStorage;
+use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 
 /**
  * LarAgent responsible for generating a complete system prompt for a

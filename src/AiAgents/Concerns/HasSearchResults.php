@@ -35,25 +35,4 @@ trait HasSearchResults
         return SearchResultService::forAgent($agent)->getRecent($query, (string) $this->historyProjectId, $count);
     }
 
-    protected function saveSearchResult(string $query, array $results): void
-    {
-        if (! $this->searchResultsActive()) {
-            return;
-        }
-
-        if (trim($query) === '') {
-            return;
-        }
-
-        $agent = AiAgent::find($this->callingAgentId);
-        if (! $agent) {
-            return;
-        }
-
-        if (! is_string($this->historyProjectId ?? null) || trim((string) $this->historyProjectId) === '') {
-            return;
-        }
-
-        SearchResultService::forAgent($agent)->save($query, $results, (string) $this->historyProjectId);
-    }
 }
