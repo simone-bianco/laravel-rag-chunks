@@ -39,7 +39,14 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
 
     public function uniqueId(): string
     {
-        return $this->processId;
+        $documentId = Process::query()
+            ->whereKey($this->processId)
+            ->where('processable_type', Document::class)
+            ->value('processable_id');
+
+        return $documentId !== null
+            ? 'document:' . (string) $documentId
+            : 'process:' . $this->processId;
     }
 
     /**
@@ -55,26 +62,27 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
 
             $this->logger()->debug('Post processing parsing job started');
 
-            $lockKey = "rag_chunks:post_process:{$this->processId}";
-            $lockTtl = $this->timeout + 300;
-            $lock = Cache::lock($lockKey, $lockTtl);
-
-            if (!$lock->get()) {
-                $this->logger()->warning('Post processing already running for this process, skipping duplicate execution', [
-                    'process_id' => (string) $this->processId,
-                    'lock_key' => $lockKey,
-                    'lock_ttl_seconds' => $lockTtl,
-                ]);
-
-                return;
-            }
-
             $process = Process::with('processable')->findOrFail($this->processId);
 
             /** @var Document $document */
             $document = $process->processable;
             $this->documentId = $document->id;
             $this->enrichContext();
+
+            $lockKey = "rag_chunks:post_process:document:{$document->id}";
+            $lockTtl = $this->timeout + 300;
+            $lock = Cache::lock($lockKey, $lockTtl);
+
+            if (!$lock->get()) {
+                $this->logger()->warning('Post processing already running for this document, skipping duplicate execution', [
+                    'process_id' => (string) $this->processId,
+                    'document_id' => (string) $document->id,
+                    'lock_key' => $lockKey,
+                    'lock_ttl_seconds' => $lockTtl,
+                ]);
+
+                return;
+            }
 
             $process->setProcessing([
                 'phase' => ParsingPhase::POST_PROCESSING->value
