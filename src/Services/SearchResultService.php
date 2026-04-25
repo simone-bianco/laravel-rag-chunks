@@ -44,13 +44,10 @@ class SearchResultService
         Log::channel('search')->info('[SearchResultService] History lookup', [
             'agent_id' => (string) $this->agent->id,
             'project_id' => $projectId,
-            'query_preview' => mb_substr($query, 0, 200),
+            'query_count' => substr_count($query, 'query="'),
             'recent_count' => count($results),
             'history_hit' => count($results) > 0,
-            'recent_ids' => array_values(array_map(
-                static fn (array $row): string => (string) ($row['id'] ?? ''),
-                $results,
-            )),
+            'recent_ids' => array_column($results, 'id'),
         ]);
 
         return $results;

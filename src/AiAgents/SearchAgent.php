@@ -47,6 +47,7 @@ class SearchAgent extends RotableAgent
     protected ?string $historyProjectId = null;
     protected ?string $historyProjectAlias = null;
     protected array $scopeProjectTags = [];
+    protected array $recentSearchResults = [];
 
     protected function logger(): LoggerInterface
     {
@@ -179,44 +180,7 @@ class SearchAgent extends RotableAgent
         $withImagesInstruct = $this->includeImages ? ' + images' : '';
         $includeImagesInstruct = $this->includeImages ? '- Include chunk images in `relevant_images` when present.' : '- Ignore image fields; do not include them in your response.';
 
-        $history = [];
-        if ($this->searchResultsActive()) {
-            $history = $this->getRecentSearchResults((string) $this->currentInput);
-
-            $this->logger()->info('[SearchAgent] Recent search history lookup', [
-                'scope_type' => $this->scope->type->value,
-                'scope_alias' => $this->scope->alias,
-                'calling_agent_id' => $this->callingAgentId,
-                'history_enabled' => $this->historyEnabled,
-                'history_project_id' => $this->historyProjectId,
-                'history_project_alias' => $this->historyProjectAlias,
-                'input_preview' => mb_substr((string) $this->currentInput, 0, 200),
-                'recent_searches_count' => count($history),
-                'search_results_hit' => count($history) > 0,
-                'recent_search_ids' => array_values(array_map(
-                    static fn (array $entry): string => (string) ($entry['id'] ?? ''),
-                    $history,
-                )),
-                'recent_search_queries' => array_values(array_map(
-                    static fn (array $entry): string => mb_substr((string) ($entry['query'] ?? ''), 0, 200),
-                    $history,
-                )),
-            ]);
-
-            if (! empty($history)) {
-                $this->logger()->info('[SearchAgent] Search results found', [
-                    'scope_type' => $this->scope->type->value,
-                    'scope_alias' => $this->scope->alias,
-                    'history_project_id' => $this->historyProjectId,
-                    'history_project_alias' => $this->historyProjectAlias,
-                    'hit_count' => count($history),
-                    'hit_ids' => array_values(array_map(
-                        static fn (array $entry): string => (string) ($entry['id'] ?? ''),
-                        $history,
-                    )),
-                ]);
-            }
-        }
+        $history = $this->recentSearchResults;
 
         $historyBlock = '';
         if (! empty($history)) {
@@ -227,9 +191,10 @@ class SearchAgent extends RotableAgent
             $historyBlock = "\n\nHISTORY\n"
                 . "Recent prior searches for the calling agent (semantically closest to the current input):\n"
                 . $historyList . "\n"
-                . "If one of these prior queries exactly matches what you are looking for, skip `search_chunks` entirely and call "
-                . "`get_searches_results` with the relevant ids to reuse the prior result set. You can also combine: use `get_searches_results` "
-                . "for the already-covered angle and `search_chunks` only for the missing angle. An empty prior result means no chunks were found for that query.";
+                . "If a prior query covers the same topic or angle you are currently searching for, reuse it: call "
+                . "`get_searches_results` with the relevant id(s) instead of running a new `search_chunks`. You can also combine: use "
+                . "`get_searches_results` for the already-covered angle and `search_chunks` only for the missing angle. "
+                . "An empty prior result means no chunks were found for that query.";
         }
 
         return <<<INSTRUCTIONS
@@ -408,6 +373,19 @@ SECTION,
             is_array($message)  => json_encode($message, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: null,
             default             => null,
         };
+
+        $this->recentSearchResults = [];
+        if ($this->searchResultsActive()) {
+            $this->recentSearchResults = $this->getRecentSearchResults((string) $this->currentInput);
+
+            if (! empty($this->recentSearchResults)) {
+                $this->logger()->info('[SearchAgent] History hit', [
+                    'scope' => $this->scope->alias,
+                    'hit_count' => count($this->recentSearchResults),
+                    'ids' => array_column($this->recentSearchResults, 'id'),
+                ]);
+            }
+        }
 
         try {
             $this->injectInstructionsForCurrentTurn();
