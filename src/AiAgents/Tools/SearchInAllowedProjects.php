@@ -26,7 +26,6 @@ class SearchInAllowedProjects extends Tool
         protected SearchDepth $deep = SearchDepth::Standard,
         ?string $name = 'search_in_project',
         ?string $description = 'Search inside one allowed project. You must provide projectAlias + 1-5 searches. Searches run in parallel in a single call.',
-        protected ?string $callingAgentId = null,
         protected bool $historyEnabled = false,
     ) {
         $this->allowedProjectAliases = array_values(array_unique(array_filter(array_map(
@@ -142,7 +141,6 @@ class SearchInAllowedProjects extends Tool
             includeImages: $this->includeImages,
             model: $this->model,
             deep: $this->deep,
-            callingAgentId: $this->callingAgentId,
             historyEnabled: $this->historyEnabled,
         )->respond("Search queries:\n$queryLines");
 

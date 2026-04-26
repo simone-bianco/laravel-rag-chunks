@@ -28,9 +28,6 @@ final class SearchInProjectFactory implements AgentToolFactory
 
         $maxParallel = (int) ($context->get('max_parallel_agents') ?? $config['max_parallel_agents'] ?? 8);
 
-        $callingAgentId = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
-        $callingAgentId = is_string($callingAgentId) && $callingAgentId !== '' ? $callingAgentId : null;
-
         $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
 
         Log::channel('search')->debug('[SearchInProjectFactory] tool config resolved', [
@@ -43,7 +40,6 @@ final class SearchInProjectFactory implements AgentToolFactory
             'model' => $model,
             'deep' => $deep->value,
             'max_parallel' => $maxParallel,
-            'calling_agent_id' => $callingAgentId,
             'history_enabled' => $historyEnabled,
         ]);
 
@@ -53,7 +49,6 @@ final class SearchInProjectFactory implements AgentToolFactory
             model: $model !== null ? (string) $model : null,
             deep: $deep,
             maxParallel: $maxParallel,
-            callingAgentId: $callingAgentId,
             historyEnabled: $historyEnabled,
         );
     }

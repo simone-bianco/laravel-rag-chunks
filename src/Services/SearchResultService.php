@@ -3,47 +3,38 @@
 namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Support\Facades\Log;
-use SimoneBianco\LaravelAiAgents\Models\AiAgent;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 
 class SearchResultService
 {
-    public function __construct(
-        protected readonly AiAgent $agent,
-    ) {
-    }
-
-    public static function forAgent(AiAgent $agent): self
+    public static function make(): self
     {
-        return new self($agent);
+        return new self();
     }
 
     /**
-     * Semantic lookup of recent SearchResults for this agent by query similarity.
+     * Semantic lookup of recent SearchResults by query similarity (global cache).
      *
-     * @return array<int, array{id: string, query: string, results: array<string, mixed>}>
+     * @return array<int, array{id: string, query: string, notes: ?string, results: array<string, mixed>}>
      */
-    public function getRecent(string $query, string $projectId, int $count = 5): array
+    public function getRecent(string $query, int $count = 5): array
     {
         $vector = Embedding::embed($query);
 
         $results = SearchResult::query()
-            ->where('ai_agent_id', $this->agent->id)
-            ->where('project_id', $projectId)
             ->nearestNeighbors('embedding', $vector)
             ->limit(max(1, $count))
-            ->get(['id', 'query', 'results'])
+            ->get(['id', 'query', 'notes', 'results'])
             ->map(static fn (SearchResult $row): array => [
                 'id'      => (string) $row->id,
                 'query'   => (string) $row->query,
+                'notes'   => is_string($row->notes) ? $row->notes : null,
                 'results' => is_array($row->results) ? $row->results : [],
             ])
             ->all();
 
         Log::channel('search')->info('[SearchResultService] History lookup', [
-            'agent_id' => (string) $this->agent->id,
-            'project_id' => $projectId,
             'query_count' => substr_count($query, 'query="'),
             'recent_count' => count($results),
             'history_hit' => count($results) > 0,
@@ -54,24 +45,24 @@ class SearchResultService
     }
 
     /**
-     * Persist a SearchResult with embedded query vector.
+     * Persist a SearchResult with embedded query vector (global cache).
      */
-    public function save(string $query, array $results, string $projectId): SearchResult
+    public function save(string $query, array $results, ?string $projectId = null, ?string $notes = null): SearchResult
     {
         $vector = Embedding::embed($query);
 
         $searchResult = SearchResult::create([
-            'ai_agent_id' => $this->agent->id,
             'project_id'  => $projectId,
             'query'       => $query,
+            'notes'       => is_string($notes) && trim($notes) !== '' ? trim($notes) : null,
             'results'     => $results,
             'embedding'   => $vector,
         ]);
 
         Log::channel('search')->info('[SearchResultService] Search result saved', [
-            'agent_id' => (string) $this->agent->id,
-            'project_id' => $projectId,
             'search_result_id' => (string) $searchResult->id,
+            'project_id' => $projectId,
+            'notes' => $searchResult->notes,
             'query_preview' => mb_substr($query, 0, 200),
             'chunks_count' => count($results['chunk_ids'] ?? []),
         ]);
@@ -80,31 +71,28 @@ class SearchResultService
     }
 
     /**
-     * Fetch full results for a set of SearchResult ids belonging to this agent.
+     * Fetch full results for a set of SearchResult ids (global cache).
      *
      * @param  array<int, string>  $ids
-     * @return array<int, array{id: string, query: string, results: array<string, mixed>}>
+     * @return array<int, array{id: string, query: string, notes: ?string, results: array<string, mixed>}>
      */
-    public function getSearchResults(array $ids, string $projectId): array
+    public function getSearchResults(array $ids): array
     {
         if (empty($ids)) {
             return [];
         }
 
         SearchResult::query()
-            ->where('ai_agent_id', $this->agent->id)
-            ->where('project_id', $projectId)
             ->whereIn('id', $ids)
             ->increment('hits');
 
         $rows = SearchResult::query()
-            ->where('ai_agent_id', $this->agent->id)
-            ->where('project_id', $projectId)
             ->whereIn('id', $ids)
-            ->get(['id', 'query', 'results'])
+            ->get(['id', 'query', 'notes', 'results'])
             ->map(static fn (SearchResult $row): array => [
                 'id'      => (string) $row->id,
                 'query'   => (string) $row->query,
+                'notes'   => is_string($row->notes) ? $row->notes : null,
                 'results' => is_array($row->results) ? $row->results : [],
             ])
             ->all();
@@ -125,8 +113,6 @@ class SearchResultService
         }
 
         Log::channel('search')->info('[SearchResultService] Reuse lookup', [
-            'agent_id' => (string) $this->agent->id,
-            'project_id' => $projectId,
             'requested_ids_count' => count($ids),
             'resolved_count' => count($results),
             'search_results_hit' => count($results) > 0,
@@ -137,5 +123,13 @@ class SearchResultService
         ]);
 
         return $results;
+    }
+
+    /**
+     * Flush all saved search results (global).
+     */
+    public function flush(): int
+    {
+        return SearchResult::query()->delete();
     }
 }

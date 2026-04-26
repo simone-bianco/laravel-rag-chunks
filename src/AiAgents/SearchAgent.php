@@ -21,6 +21,7 @@ use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\Models\Project;
+use SimoneBianco\LaravelRagChunks\Services\SearchResultService;
 use Throwable;
 
 class SearchAgent extends RotableAgent
@@ -41,12 +42,9 @@ class SearchAgent extends RotableAgent
 
     protected SearchDepth $deep;
 
-    protected ?string $callingAgentId = null;
     protected bool $historyEnabled;
+    protected ?string $scopeProjectId = null;
     protected ?string $currentInput = null;
-    protected ?string $historyProjectId = null;
-    protected ?string $historyProjectAlias = null;
-    protected array $scopeProjectTags = [];
     protected array $recentSearchResults = [];
 
     protected function logger(): LoggerInterface
@@ -62,19 +60,13 @@ class SearchAgent extends RotableAgent
         SearchDepth $deep = SearchDepth::Standard,
         bool $usesUserId = false,
         ?string $group = null,
-        ?string $callingAgentId = null,
         bool $historyEnabled = false,
     ) {
         $this->scope         = $scope;
         $this->includeImages = $includeImages;
         $this->deep          = $deep;
-        $this->callingAgentId = $callingAgentId;
         $this->historyEnabled = $historyEnabled;
-
-        $projectContext = $this->resolveProjectContextFromScope();
-        $this->historyProjectId = $projectContext['id'] ?? null;
-        $this->historyProjectAlias = $projectContext['alias'] ?? null;
-        $this->scopeProjectTags = $projectContext['tags'] ?? [];
+        $this->scopeProjectId = $this->resolveProjectIdFromScope();
 
         parent::__construct($key, $usesUserId, $group);
 
@@ -87,9 +79,9 @@ class SearchAgent extends RotableAgent
         $this->withTool(new SearchChunks($this->scope));
         $this->withTool(new GetChunksByAliases($this->scope));
 
-        if ($this->searchResultsActive() && $this->historyProjectId !== null) {
-            $this->withTool(new GetSearchesResultsTool($this->callingAgentId, $this->historyProjectId));
-            $this->withTool(new SaveSearchesResultsTool($this->callingAgentId, $this->historyProjectId));
+        if ($this->searchResultsActive()) {
+            $this->withTool(new GetSearchesResultsTool());
+            $this->withTool(new SaveSearchesResultsTool($this->scopeProjectId));
         }
 
         $this->logger()->debug('[Agent] SearchAgent initialized', [
@@ -98,8 +90,7 @@ class SearchAgent extends RotableAgent
             'include_images' => $this->includeImages,
             'deep'           => $this->deep->value,
             'search_key'     => (string) $key,
-            'history_project_id' => $this->historyProjectId,
-            'history_project_alias' => $this->historyProjectAlias,
+            'scope_project_id' => $this->scopeProjectId,
         ]);
     }
 
@@ -189,11 +180,12 @@ class SearchAgent extends RotableAgent
                 ->join("\n");
 
             $historyBlock = "\n\nHISTORY\n"
-                . "Recent prior searches for the calling agent (semantically closest to the current input):\n"
+                . "Recent prior searches from the global shared cache (semantically closest to the current input):\n"
                 . $historyList . "\n"
-                . "If a prior query covers the same topic or angle you are currently searching for, reuse it: call "
-                . "`get_searches_results` with the relevant id(s) instead of running a new `search_chunks`. You can also combine: use "
-                . "`get_searches_results` for the already-covered angle and `search_chunks` only for the missing angle. "
+                . "History-first is mandatory: if entries are available, call `get_searches_results` first with the best id(s) before any `search_chunks` call. "
+                . "If the reused result is semantically close enough and fully answers the current request, stop there and skip `search_chunks` entirely. "
+                . "Only run `search_chunks` when reused results are empty, incomplete, tangential, or you need complementary angles. "
+                . "You can also combine: use `get_searches_results` for the already-covered angle and `search_chunks` only for the missing angle. "
                 . "An empty prior result means no chunks were found for that query.";
         }
 
@@ -208,7 +200,8 @@ OBJECTIVE
 - Include ALL relevant chunk UUIDs; do not truncate
 
 DEFAULT TOOLING
-- First attempt: use `search_chunks`
+- If HISTORY entries are present: first call `get_searches_results` (history-first).
+- If HISTORY is empty or insufficient: use `search_chunks`.
 - Use `get_chunks_by_aliases` only when exact chunk UUIDs are already known
 
 SEARCH INPUT POLICY
@@ -217,7 +210,7 @@ SEARCH INPUT POLICY
 {$scopeTagsBlock}
 - If the query text contains explicit inline constraints (e.g. `constraints: documentsAliases=[...]; chapters=[...]; keywords=[...]; keywordMode=OR|AND; hasImage=...; tag_<typeAlias>=[...]`), you MUST map them to the corresponding `search_chunks` fields
 - Inline constraints and explicit user constraints are authoritative
-- ATTEMPT 1 MUST be broad:
+- When you choose `search_chunks`, ATTEMPT 1 MUST be broad:
   - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, or any deterministic tag/document narrowing
   - MUST NOT send `documentsAliases` on attempt 1 unless the user explicitly asks to restrict to specific document aliases, or explicit inline constraints require it
   - If this agent is already document-scoped by constructor, keep that scope (tool will inject it)
@@ -293,10 +286,20 @@ TAGS;
 
     private function resolveProjectTagsFromScope(): array
     {
-        return $this->scopeProjectTags;
+        $project = match ($this->scope->type) {
+            SearchScopeType::Project => Project::query()
+                ->where('alias', $this->scope->alias)
+                ->first(),
+            SearchScopeType::Document => Document::query()
+                ->where('alias', $this->scope->alias)
+                ->with('project')
+                ->first()?->project,
+        };
+
+        return $project?->getTagsSlugsKeyedByTypes() ?? [];
     }
 
-    private function resolveProjectContextFromScope(): ?array
+    private function resolveProjectIdFromScope(): ?string
     {
         $project = match ($this->scope->type) {
             SearchScopeType::Project => Project::query()
@@ -308,15 +311,7 @@ TAGS;
                 ->first()?->project,
         };
 
-        if (! $project) {
-            return null;
-        }
-
-        return [
-            'id' => (string) $project->id,
-            'alias' => (string) $project->alias,
-            'tags' => $project->getTagsSlugsKeyedByTypes(),
-        ];
+        return $project ? (string) $project->id : null;
     }
 
     private function buildSearchRetryBlock(): string
@@ -324,14 +319,16 @@ TAGS;
         return match ($this->deep) {
             SearchDepth::Shallow => <<<'SECTION'
 SEARCH POLICY (SHALLOW MODE)
-- Run exactly 1 attempt per query. No deep dive required.
-- Stop after the first attempt unless the result is completely empty.
-- If first attempt returns zero results, run one retry with broader/rewritten semantic fields only.
+- These attempt rules apply only when using `search_chunks`.
+- Run exactly 1 `search_chunks` attempt per query. No deep dive required.
+- Stop after the first `search_chunks` attempt unless the result is completely empty.
+- If first `search_chunks` attempt returns zero results, run one retry with broader/rewritten semantic fields only.
 SECTION,
 
             SearchDepth::Standard => <<<'SECTION'
 RETRY POLICY
-- Target 2 attempts by default; allow up to 5 when progressive refinement keeps improving relevance.
+- These attempt/deep-dive rules apply only when using `search_chunks`.
+- Target 2 `search_chunks` attempts by default; allow up to 5 when progressive refinement keeps improving relevance.
 - Always set `allowRelaxTagFilters=true` on `search_chunks`.
 - Retry is PER QUERY, mandatory when first pass is weak (< 3 chunks or tangential results).
 - Never finalize a query after only one weak/empty attempt.
@@ -347,7 +344,8 @@ SECTION,
 
             SearchDepth::Deep => <<<'SECTION'
 RETRY POLICY (DEEP MODE)
-- Minimum 3 attempts per query; up to 7 when progressive refinement keeps improving relevance.
+- These attempt/deep-dive rules apply only when using `search_chunks`.
+- Minimum 3 `search_chunks` attempts per query; up to 7 when progressive refinement keeps improving relevance.
 - Always set `allowRelaxTagFilters=true` on `search_chunks`.
 - Never finalize after 1-2 weak attempts; continue until density is maximized or 7 attempts are exhausted.
 
@@ -407,6 +405,36 @@ SECTION,
 
         $resolvedResults = $this->resolveResults($decoded['results']);
 
+        // Negative caching: persist empty results so future lookups know this query yielded nothing
+        if ($this->searchResultsActive()) {
+            foreach ($resolvedResults as $result) {
+                $query = (string) ($result['query'] ?? '');
+                if ($query === '' || ! empty($result['chunk_ids'])) {
+                    continue;
+                }
+
+                if ($this->scopeProjectId === null) {
+                    $this->logger()->warning('[SearchAgent] Skipping empty search save: missing project context', [
+                        'scope_alias' => $this->scope->alias,
+                        'query_preview' => mb_substr($query, 0, 100),
+                    ]);
+
+                    continue;
+                }
+
+                SearchResultService::make()->save($query, [
+                    'chunk_ids' => [],
+                    'relevant_chunks' => [],
+                    'relevant_images' => [],
+                ], $this->scopeProjectId, 'Deeply searched in the project, no relevant chunks found');
+
+                $this->logger()->info('[SearchAgent] Saved empty search result', [
+                    'scope_alias' => $this->scope->alias,
+                    'query_preview' => mb_substr($query, 0, 100),
+                ]);
+            }
+        }
+
         $this->logger()->info('[SearchAgent] Search completed', [
             'scope_type'    => $this->scope->type->value,
             'scope_alias'   => $this->scope->alias,
@@ -435,7 +463,8 @@ SEARCH-RESULT MEMORY
 - `save_searches_results` is the ONLY way to persist search results. Do not assume results are saved automatically.
 - Call `save_searches_results` exactly once, at the end of the whole search workflow, and only if the final retrieval was fruitful.
 - A fruitful retrieval has at least one on-topic chunk that should be reusable for a future similar query.
-- Do NOT save empty results, weak/tangential results, failed attempts, exploratory intermediate attempts, or duplicates of a reused history result.
+- Do NOT save weak/tangential results, failed attempts, exploratory intermediate attempts, or duplicates of a reused history result.
+- You MAY save a deeply investigated empty outcome (`chunk_ids: []`) only when it is clearly useful to avoid repeating the same search. In that case set `notes` with a clear reason (example: "Deeply searched in the project, no relevant chunks found").
 - Save only final curated groups: each item must include `query` plus `chunk_ids`. The `query` is a concise reusable description of what those chunks answer.
 - If images materially help the result, include them in `relevant_images` on the saved item.
 - After saving, still return the required structured `{ results: [...] }` response.
@@ -446,9 +475,13 @@ SECTION;
     {
         return array_map(function (array $searchResult) {
             $chunkIds = $this->normalizeChunkIds($searchResult['relevant_chunks'] ?? []);
+            $query = is_string($searchResult['query'] ?? null) ? trim((string) $searchResult['query']) : '';
+            $notes = is_string($searchResult['notes'] ?? null) ? trim((string) $searchResult['notes']) : null;
 
             if (empty($chunkIds)) {
                 return [
+                    'query' => $query,
+                    'notes' => $notes,
                     'chunk_ids'       => [],
                     'relevant_chunks' => [],
                     'relevant_images' => $searchResult['relevant_images'] ?? [],
@@ -465,9 +498,13 @@ SECTION;
                     },
                 ])
                 ->withNeighborSnippets()
-                ->get();
+                ->get()
+                ->unique('id')
+                ->values();
 
             return [
+                'query' => $query,
+                'notes' => $notes,
                 'chunk_ids'       => $chunks->pluck('id')->values()->toArray(),
                 'relevant_chunks' => $chunks->mapWithKeys(fn (Chunk $chunk) => [
                     $chunk->id => ChunkMapper::loadAndMap($chunk),

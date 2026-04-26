@@ -28,7 +28,6 @@ class SearchTool extends Tool
         protected int $maxParallel = 8,
         ?string $name = 'search_in_project',
         ?string $description = 'Search the knowledge base. Accepts multiple independent search queries executed in parallel in a single call. Use this to retrieve relevant information chunks.',
-        protected ?string $callingAgentId = null,
         protected bool $historyEnabled = false,
     ) {
         $this->maxParallel = max(1, min(8, $this->maxParallel));
@@ -53,10 +52,25 @@ class SearchTool extends Tool
             ],
             'searches' => [
                 'type'        => 'array',
-                'description' => "Array of 1-$this->maxParallel independent search queries executed in parallel in one call. Do not call this tool multiple times in the same turn.",
+                'description' => "Array of 1-$this->maxParallel independent search queries executed in parallel in one call. Each search can optionally target specific scopes. Do not call this tool multiple times in the same turn.",
                 'items'       => [
-                    'type'        => 'string',
-                    'description' => 'Concise search query for one angle (e.g. "goblin tribe rituals", "founding of the empire").',
+                    'type'        => 'object',
+                    'description' => 'One search query with optional per-query scope targeting.',
+                    'properties'  => [
+                        'query' => [
+                            'type'        => 'string',
+                            'description' => 'Concise search query for one angle (e.g. "goblin tribe rituals", "founding of the empire").',
+                        ],
+                        'scopeAliases' => [
+                            'type'        => 'array',
+                            'description' => 'Optional: target only these scope aliases for this query. If omitted or empty, the query runs in all selected scopes.',
+                            'items'       => [
+                                'type' => 'string',
+                                'description' => 'Scope alias to target.',
+                            ],
+                        ],
+                    ],
+                    'required' => ['query'],
                 ],
             ],
             'scopeAliases' => [
@@ -92,7 +106,7 @@ class SearchTool extends Tool
                 if (is_string($search)) {
                     $query = trim($search);
 
-                    return $query !== '' ? ['query' => $query] : null;
+                    return $query !== '' ? ['query' => $query, 'scopeAliases' => []] : null;
                 }
 
                 if (! is_array($search)) {
@@ -103,7 +117,19 @@ class SearchTool extends Tool
                     ? trim($search['query'])
                     : '';
 
-                return $query !== '' ? ['query' => $query] : null;
+                if ($query === '') {
+                    return null;
+                }
+
+                $scopeAliases = [];
+                if (isset($search['scopeAliases']) && is_array($search['scopeAliases'])) {
+                    $scopeAliases = array_values(array_filter(array_map(
+                        static fn ($v) => is_string($v) ? trim($v) : null,
+                        $search['scopeAliases'],
+                    )));
+                }
+
+                return ['query' => $query, 'scopeAliases' => $scopeAliases];
             })
             ->filter()
             ->values()
@@ -173,14 +199,6 @@ class SearchTool extends Tool
             ];
         }
 
-        $queryLines = collect($searches)
-            ->map(function (array $s, int $i) {
-                $query = json_encode($s['query'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-                return ($i + 1) . ". query={$query}";
-            })
-            ->join("\n");
-
         Log::channel('search')->info('[SearchTool] Executing parallel search', [
             'scopes'         => array_map(fn (SearchScope $s) => $s->type->value . ':' . $s->alias, $scopesToSearch),
             'include_images' => $this->includeImages,
@@ -191,28 +209,51 @@ class SearchTool extends Tool
             'effective_scopes_count' => count($scopesToSearch),
         ]);
 
-        $allScopeResults = $this->runScopes($scopesToSearch, $persistentKey, $queryLines);
+        $allScopeResults = $this->runScopes($scopesToSearch, $persistentKey, $searches);
 
         return $this->mergeResults($allScopeResults);
     }
 
     /**
      * @param SearchScope[] $scopes
+     * @param array<int, array{query: string, scopeAliases: string[]}> $searches
      */
-    private function runScopes(array $scopes, string $persistentKey, string $queryLines): array
+    private function runScopes(array $scopes, string $persistentKey, array $searches): array
     {
         $includeImages  = $this->includeImages;
         $model          = $this->model;
         $deep           = $this->deep;
         $maxParallel    = $this->maxParallel;
-        $callingAgentId = $this->callingAgentId;
         $historyEnabled = $this->historyEnabled;
 
+        $results = [];
         $tasks = [];
+
         foreach ($scopes as $scopeIndex => $scope) {
+            $scopeQueries = [];
+            foreach ($searches as $originalIndex => $search) {
+                $aliases = $search['scopeAliases'] ?? [];
+                if (empty($aliases) || in_array($scope->alias, $aliases, true)) {
+                    $scopeQueries[] = ['original_index' => $originalIndex, 'query' => $search['query']];
+                }
+            }
+
+            if ($scopeQueries === []) {
+                $results[$scopeIndex] = ['results' => []];
+                continue;
+            }
+
+            $queryLines = collect($scopeQueries)
+                ->map(function (array $s, int $i) {
+                    $query = json_encode($s['query'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+                    return ($i + 1) . ". query={$query}";
+                })
+                ->join("\n");
+
             $scopeKey = $persistentKey . ':' . $scope->type->value . ':' . $scope->alias;
 
-            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $includeImages, $model, $deep, $callingAgentId, $historyEnabled): array {
+            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled): array {
                 $result = (new SearchAgent(
                     $scopeKey,
                     $scope,
@@ -221,16 +262,25 @@ class SearchTool extends Tool
                     $deep,
                     false,
                     null,
-                    $callingAgentId,
                     $historyEnabled,
                 ))->respond("Search queries:\n{$queryLines}");
 
-                return is_array($result) ? $result : ['results' => []];
+                if (! is_array($result) || ! isset($result['results'])) {
+                    return ['results' => []];
+                }
+
+                $remapped = [];
+                foreach ($result['results'] as $agentIndex => $queryResult) {
+                    $originalIndex = $scopeQueries[$agentIndex]['original_index'] ?? $agentIndex;
+                    $remapped[$originalIndex] = $queryResult;
+                }
+
+                return ['results' => $remapped];
             };
         }
 
         if ($tasks === []) {
-            return [];
+            return $results;
         }
 
         $timeoutSeconds = (int) config('rag-chunks.search_tool_process_timeout', 300);

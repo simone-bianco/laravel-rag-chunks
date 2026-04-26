@@ -18,6 +18,7 @@ class SearchResult extends Model
         'ai_agent_id',
         'project_id',
         'query',
+        'notes',
         'results',
         'embedding',
         'hits',
@@ -27,6 +28,7 @@ class SearchResult extends Model
     {
         return [
             'embedding' => VectorArray::class,
+            'notes'     => 'string',
             'results'   => 'array',
             'hits'      => 'integer',
         ];
