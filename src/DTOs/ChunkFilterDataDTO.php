@@ -6,6 +6,7 @@ class ChunkFilterDataDTO
 {
     public function __construct(
         public ?string $documentId = null,
+        public ?string $documentSearch = null,
         public ?string $text = null,
         public bool $caseSensitive = false,
         public ?int $charMin = null,

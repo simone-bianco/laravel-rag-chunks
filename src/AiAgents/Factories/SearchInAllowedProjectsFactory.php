@@ -24,10 +24,19 @@ final class SearchInAllowedProjectsFactory implements AgentToolFactory
 
         $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
 
+        $compactionThreshold = (float) ($context->get('compaction_threshold') ?? $config['compaction_threshold'] ?? 0.1);
+
+        $callingAgentIdRaw = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
+        $callingAgentId = is_string($callingAgentIdRaw) && trim($callingAgentIdRaw) !== ''
+            ? trim($callingAgentIdRaw)
+            : null;
+
         return new SearchInAllowedProjects(
             allowedProjectAliases: $aliases,
             includeImages: $includeImages,
             historyEnabled: $historyEnabled,
+            compactionThreshold: $compactionThreshold,
+            callingAgentId: $callingAgentId,
         );
     }
 

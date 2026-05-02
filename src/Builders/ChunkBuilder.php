@@ -126,6 +126,21 @@ class ChunkBuilder extends Builder
         });
     }
 
+    public function whereDocumentSearch(?string $text): self
+    {
+        return $this->when(! empty($text), function ($q) use ($text) {
+            $q->whereHas('document', function (Builder $query) use ($text) {
+                $like = '%' . $text . '%';
+
+                $query->where(function (Builder $documentQuery) use ($like) {
+                    $documentQuery
+                        ->where('name', 'ILIKE', $like)
+                        ->orWhere('description', 'ILIKE', $like);
+                });
+            });
+        });
+    }
+
     /**
      * @param  string[]|null  $chunksIds
      * @param  string[]|null  $keywordsSearch

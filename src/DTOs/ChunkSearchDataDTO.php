@@ -22,6 +22,7 @@ class ChunkSearchDataDTO
         public ?array      $projectsAliases = null,
         public ?array      $tagFilters = null,
         public ?array      $documentsAliases = null,
+        public ?string     $documentSearch = null,
         public ?array      $chunksIds = null,
         public ?bool       $hasImage = null,
         public bool        $includeEmbeddings = false,
@@ -81,6 +82,7 @@ class ChunkSearchDataDTO
             projectsAliases: $data['projectsAliases'] ?? null,
             tagFilters: isset($data['tagFilters']) && is_array($data['tagFilters']) ? $data['tagFilters'] : null,
             documentsAliases: $data['documentsAliases'] ?? null,
+            documentSearch: self::trimmedStringOrNull($data['documentSearch'] ?? null),
             chunksIds: $data['chunksIds'] ?? null,
             hasImage: self::resolveHasImage($data['hasImage'] ?? null),
             chunkTagGroups: $data['chunkTagGroups'] ?? null,
@@ -122,8 +124,20 @@ class ChunkSearchDataDTO
             'projectsAliases' => $this->projectsAliases,
             'tagFilters' => $this->tagFilters,
             'documentsAliases' => $this->documentsAliases,
+            'documentSearch' => $this->documentSearch,
             'chunksIds' => $this->chunksIds,
             'hasImage' => $this->hasImage,
         ];
+    }
+
+    private static function trimmedStringOrNull(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+
+        return $value !== '' ? $value : null;
     }
 }

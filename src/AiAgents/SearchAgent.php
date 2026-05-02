@@ -43,6 +43,8 @@ class SearchAgent extends RotableAgent
     protected SearchDepth $deep;
 
     protected bool $historyEnabled;
+    protected float $compactionThreshold = 0.1;
+    protected ?string $callingAgentId = null;
     protected ?string $scopeProjectId = null;
     protected ?string $currentInput = null;
     protected array $recentSearchResults = [];
@@ -61,11 +63,17 @@ class SearchAgent extends RotableAgent
         bool $usesUserId = false,
         ?string $group = null,
         bool $historyEnabled = false,
+        float $compactionThreshold = 0.1,
+        ?string $callingAgentId = null,
     ) {
         $this->scope         = $scope;
         $this->includeImages = $includeImages;
         $this->deep          = $deep;
         $this->historyEnabled = $historyEnabled;
+        $this->compactionThreshold = max(0.0, min(1.0, $compactionThreshold));
+        $this->callingAgentId = is_string($callingAgentId) && trim($callingAgentId) !== ''
+            ? trim($callingAgentId)
+            : null;
         $this->scopeProjectId = $this->resolveProjectIdFromScope();
 
         parent::__construct($key, $usesUserId, $group);
@@ -81,7 +89,9 @@ class SearchAgent extends RotableAgent
 
         if ($this->searchResultsActive()) {
             $this->withTool(new GetSearchesResultsTool());
-            $this->withTool(new SaveSearchesResultsTool($this->scopeProjectId));
+            $this->withTool((new SaveSearchesResultsTool($this->scopeProjectId))
+                ->compactionThreshold($this->compactionThreshold)
+                ->creatorAgentId($this->callingAgentId));
         }
 
         $this->logger()->debug('[Agent] SearchAgent initialized', [
@@ -91,6 +101,8 @@ class SearchAgent extends RotableAgent
             'deep'           => $this->deep->value,
             'search_key'     => (string) $key,
             'scope_project_id' => $this->scopeProjectId,
+            'compaction_threshold' => $this->compactionThreshold,
+            'calling_agent_id' => $this->callingAgentId,
         ]);
     }
 
@@ -104,12 +116,21 @@ class SearchAgent extends RotableAgent
                 'description' => 'An explicative query that briefly summarizes the search and the data contained in the chunks (just one sentence)'
             ];
 
+            $itemProperties['history_ids'] = [
+                'type' => 'array',
+                'description' => 'Optional UUIDs of reused history records from HISTORY block. Use these instead of repeating their chunk UUIDs.',
+                'items' => [
+                    'type' => 'string',
+                    'description' => 'SearchResult UUID from HISTORY list.',
+                ],
+            ];
+
             $itemRequired[] = 'query';
         }
 
         $itemProperties['relevant_chunks'] = [
             'type'        => 'array',
-            'description' => 'Array of chunk IDs (UUIDs) relevant to this query. Include every single relevant chunk — do not truncate.',
+            'description' => 'Array of NEW chunk IDs (UUIDs) discovered by search_chunks for this query. Do not repeat chunks already covered by history_ids.',
             'items'       => [
                 'type'        => 'string',
                 'description' => 'Chunk ID (UUID), taken verbatim from the search results keys.'
@@ -176,7 +197,32 @@ class SearchAgent extends RotableAgent
         $historyBlock = '';
         if (! empty($history)) {
             $historyList = collect($history)
-                ->map(static fn (array $entry): string => "- id={$entry['id']} | query=\"{$entry['query']}\"")
+                ->map(static function (array $entry): string {
+                    $queryJson = json_encode((string) ($entry['query'] ?? ''), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if (! is_string($queryJson) || $queryJson === '') {
+                        $queryJson = '""';
+                    }
+
+                    $notes = is_string($entry['notes'] ?? null)
+                        ? trim((string) $entry['notes'])
+                        : null;
+
+                    $notesJson = null;
+                    if ($notes !== null && $notes !== '') {
+                        $encodedNotes = json_encode($notes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                        $notesJson = is_string($encodedNotes) && $encodedNotes !== '' ? $encodedNotes : '""';
+                    }
+
+                    $chunksCount = count(is_array($entry['results']['chunk_ids'] ?? null)
+                        ? $entry['results']['chunk_ids']
+                        : []);
+
+                    $notesPart = $notesJson !== null
+                        ? " | notes={$notesJson}"
+                        : '';
+
+                    return "- id={$entry['id']} | query={$queryJson}{$notesPart} | chunks_count={$chunksCount}";
+                })
                 ->join("\n");
 
             $historyBlock = "\n\nHISTORY\n"
@@ -197,7 +243,8 @@ Return structured data only (UUIDs{$withImagesInstruct}). No prose
 OBJECTIVE
 - Execute retrieval with tools and output `{ results: [...] }`
 {$schemaRequirement}
-- Include ALL relevant chunk UUIDs; do not truncate
+- For reused history, return `history_ids` (record UUIDs) instead of repeating all their chunk UUIDs
+- In `relevant_chunks`, include only NEW chunk UUIDs discovered by `search_chunks`
 
 DEFAULT TOOLING
 - If HISTORY entries are present: first call `get_searches_results` (history-first).
@@ -208,21 +255,22 @@ SEARCH INPUT POLICY
 - Always provide: `textSearch`, `semanticTagsSearch`, `questionsSearch`
 {$imagePolicy}
 {$scopeTagsBlock}
-- If the query text contains explicit inline constraints (e.g. `constraints: documentsAliases=[...]; chapters=[...]; keywords=[...]; keywordMode=OR|AND; hasImage=...; tag_<typeAlias>=[...]`), you MUST map them to the corresponding `search_chunks` fields
+- If the query text contains explicit inline constraints (e.g. `constraints: documentsAliases=[...]; documentSearch="..."; chapters=[...]; keywords=[...]; keywordMode=OR|AND; hasImage=...; tag_<typeAlias>=[...]`), you MUST map them to the corresponding `search_chunks` fields
 - Inline constraints and explicit user constraints are authoritative
 - When you choose `search_chunks`, ATTEMPT 1 MUST be broad:
-  - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, or any deterministic tag/document narrowing
+  - MUST call `search_chunks` without `keywordsSearch`, `chapters`, `tag_*`, `documentSearch`, or any deterministic tag/document narrowing
   - MUST NOT send `documentsAliases` on attempt 1 unless the user explicitly asks to restrict to specific document aliases, or explicit inline constraints require it
   - If this agent is already document-scoped by constructor, keep that scope (tool will inject it)
 
 CONSTRAINT EXTRACTION RULES
 - Before each `search_chunks` call, extract any explicit constraints from the user query text and from inline `constraints:` blocks
-- Allowed explicit fields to extract: `documentsAliases`, `chapters`, `keywords`, `keywordMode`, `hasImage`, `tag_*`
+- Allowed explicit fields to extract: `documentsAliases`, `documentSearch`, `chapters`, `keywords`, `keywordMode`, `hasImage`, `tag_*`
+- `documentSearch` means a case-insensitive hard filter against document title/name OR description; use it only for explicit user phrases such as "document title contains..." or inline constraints
 - `keywords` + `keywordMode` MUST be translated to `keywordsSearch = { keywords: [...], mode: OR|AND }`
 - Never invent aliases, chapter values, tag keys, or tag values; use only explicit user text or values surfaced in prior tool results
 
 REFINEMENT-ONLY FIELDS
-- `keywordsSearch`, `chapters`, and `tag_*` are NEVER first-attempt fields
+- `keywordsSearch`, `chapters`, `tag_*`, and `documentSearch` are NEVER first-attempt fields
 - Use them from attempt 2 only
 - `keywordsSearch`: MUST use object form `{ keywords: [...], mode: OR|AND }`; prefer `OR` first, `AND` only for stricter disambiguation
 - `chapters`: use only chapter aliases discovered in prior results
@@ -230,13 +278,15 @@ REFINEMENT-ONLY FIELDS
 - `tag_*` only works when paired with `keywordsSearch` or `chapters`; never send `tag_*` alone
 - On attempt 2, add deterministic narrowing progressively:
   - first choice: rewrite/broaden semantic fields
-  - then optional `keywordsSearch`
+  - then optional `keywordsSearch` or `documentSearch`
   - then optional ONE deterministic filter family (`chapters` OR one `tag_*`)
 
 {$searchRetryBlock}
 
 RESULT EXTRACTION
 - Collect UUIDs from relevant chunks across all returned documents
+- If result is mostly/fully covered by reused history: put history record IDs in `history_ids`
+- Never duplicate history chunks in `relevant_chunks`; server will expand `history_ids` and merge
 {$includeImagesInstruct}
 
 {$searchResultsMemoryBlock}
@@ -389,7 +439,7 @@ SECTION,
             $this->injectInstructionsForCurrentTurn();
             $decoded = parent::respond($message);
         } catch (Throwable $e) {
-            Log::warning('[SearchAgent] respond() failed', ['error' => $e->getMessage()]);
+            $this->logger()->warning('[SearchAgent] respond() failed', ['error' => $e->getMessage()]);
 
             return ['results' => []];
         }
@@ -404,36 +454,6 @@ SECTION,
         }
 
         $resolvedResults = $this->resolveResults($decoded['results']);
-
-        // Negative caching: persist empty results so future lookups know this query yielded nothing
-        if ($this->searchResultsActive()) {
-            foreach ($resolvedResults as $result) {
-                $query = (string) ($result['query'] ?? '');
-                if ($query === '' || ! empty($result['chunk_ids'])) {
-                    continue;
-                }
-
-                if ($this->scopeProjectId === null) {
-                    $this->logger()->warning('[SearchAgent] Skipping empty search save: missing project context', [
-                        'scope_alias' => $this->scope->alias,
-                        'query_preview' => mb_substr($query, 0, 100),
-                    ]);
-
-                    continue;
-                }
-
-                SearchResultService::make()->save($query, [
-                    'chunk_ids' => [],
-                    'relevant_chunks' => [],
-                    'relevant_images' => [],
-                ], $this->scopeProjectId, 'Deeply searched in the project, no relevant chunks found');
-
-                $this->logger()->info('[SearchAgent] Saved empty search result', [
-                    'scope_alias' => $this->scope->alias,
-                    'query_preview' => mb_substr($query, 0, 100),
-                ]);
-            }
-        }
 
         $this->logger()->info('[SearchAgent] Search completed', [
             'scope_type'    => $this->scope->type->value,
@@ -461,11 +481,17 @@ SECTION,
         return <<<'SECTION'
 SEARCH-RESULT MEMORY
 - `save_searches_results` is the ONLY way to persist search results. Do not assume results are saved automatically.
-- Call `save_searches_results` exactly once, at the end of the whole search workflow, and only if the final retrieval was fruitful.
-- A fruitful retrieval has at least one on-topic chunk that should be reusable for a future similar query.
-- Do NOT save weak/tangential results, failed attempts, exploratory intermediate attempts, or duplicates of a reused history result.
-- You MAY save a deeply investigated empty outcome (`chunk_ids: []`) only when it is clearly useful to avoid repeating the same search. In that case set `notes` with a clear reason (example: "Deeply searched in the project, no relevant chunks found").
-- Save only final curated groups: each item must include `query` plus `chunk_ids`. The `query` is a concise reusable description of what those chunks answer.
+- If you executed at least one `search_chunks` call in this run, call `save_searches_results` exactly once at the end.
+- If you did NOT execute `search_chunks` and only reused HISTORY (`get_searches_results`) because it was already sufficient, do NOT call `save_searches_results`.
+- Do NOT save weak/tangential results, exploratory intermediate attempts, or duplicates of a reused history result.
+- If `search_chunks` found no relevant chunks after proper search, still save exactly one FINAL negative outcome with `chunk_ids: []` and a short caveman note.
+- Save only final curated groups: each item must include `query`, `notes`, and `chunk_ids`.
+- `notes` MUST be **caveman style** and ultra-short (at most 30 words): only core coverage keywords, no long prose, no explanations, no fluff.
+- Good notes examples: "ghoul lore tactics paralysis touch treasure", "storm giant ordning hierarchy motives lore", "no relevant chunks after deep search".
+- Bad notes examples: long narrative summaries, full sentences, cross-topic commentary.
+- The `query` is a concise reusable description of what those chunks answer.
+- If reusing prior HISTORY entries, return their record UUIDs in `history_ids`.
+- When `history_ids` is used, keep `relevant_chunks` for NEW chunks only (do not repeat history chunk UUIDs).
 - If images materially help the result, include them in `relevant_images` on the saved item.
 - After saving, still return the required structured `{ results: [...] }` response.
 SECTION;
@@ -473,23 +499,115 @@ SECTION;
 
     private function resolveResults(array $results): array
     {
-        return array_map(function (array $searchResult) {
-            $chunkIds = $this->normalizeChunkIds($searchResult['relevant_chunks'] ?? []);
-            $query = is_string($searchResult['query'] ?? null) ? trim((string) $searchResult['query']) : '';
-            $notes = is_string($searchResult['notes'] ?? null) ? trim((string) $searchResult['notes']) : null;
+        if ($results === []) {
+            return [];
+        }
 
-            if (empty($chunkIds)) {
-                return [
-                    'query' => $query,
-                    'notes' => $notes,
-                    'chunk_ids'       => [],
-                    'relevant_chunks' => [],
-                    'relevant_images' => $searchResult['relevant_images'] ?? [],
-                ];
+        $prepared = [];
+        $allHistoryIds = [];
+
+        foreach ($results as $index => $searchResult) {
+            if (! is_array($searchResult)) {
+                continue;
             }
 
-            $chunks = Chunk::query()
-                ->whereIn('id', $chunkIds)
+            $query = is_string($searchResult['query'] ?? null)
+                ? trim((string) $searchResult['query'])
+                : '';
+
+            $notes = is_string($searchResult['notes'] ?? null)
+                ? trim((string) $searchResult['notes'])
+                : null;
+
+            $manualChunkIds = $this->normalizeChunkIds($searchResult['relevant_chunks'] ?? []);
+            $historyIds = $this->normalizeHistoryIds(
+                $searchResult['history_ids']
+                    ?? $searchResult['history_result_ids']
+                    ?? [],
+            );
+
+            $prepared[$index] = [
+                'query' => $query,
+                'notes' => $notes,
+                'manual_chunk_ids' => $manualChunkIds,
+                'history_ids' => $historyIds,
+                'relevant_images' => is_array($searchResult['relevant_images'] ?? null)
+                    ? $searchResult['relevant_images']
+                    : [],
+            ];
+
+            foreach ($historyIds as $historyId) {
+                $allHistoryIds[] = $historyId;
+            }
+        }
+
+        if ($prepared === []) {
+            return [];
+        }
+
+        $historyRows = [];
+        if ($allHistoryIds !== []) {
+            $historyRows = SearchResultService::make()->getSearchResults(array_values(array_unique($allHistoryIds)));
+        }
+
+        $historyById = [];
+        foreach ($historyRows as $historyRow) {
+            if (! is_array($historyRow)) {
+                continue;
+            }
+
+            $id = isset($historyRow['id']) && is_string($historyRow['id'])
+                ? trim($historyRow['id'])
+                : '';
+
+            if ($id !== '') {
+                $historyById[$id] = $historyRow;
+            }
+        }
+
+        $allMergedChunkIds = [];
+
+        foreach ($prepared as $index => $entry) {
+            $mergedChunkIds = $entry['manual_chunk_ids'];
+            $mergedImages = $this->normalizeRelevantImages($entry['relevant_images']);
+
+            foreach ($entry['history_ids'] as $historyId) {
+                $historyRow = $historyById[$historyId] ?? null;
+                if (! is_array($historyRow)) {
+                    continue;
+                }
+
+                $historyResult = is_array($historyRow['results'] ?? null)
+                    ? $historyRow['results']
+                    : [];
+
+                $historyChunkIds = $this->normalizeChunkIds(
+                    $historyResult['chunk_ids']
+                        ?? array_keys(is_array($historyResult['relevant_chunks'] ?? null) ? $historyResult['relevant_chunks'] : []),
+                );
+
+                foreach ($historyChunkIds as $chunkId) {
+                    $mergedChunkIds[] = $chunkId;
+                }
+
+                $mergedImages = $this->mergeRelevantImages(
+                    $mergedImages,
+                    is_array($historyResult['relevant_images'] ?? null) ? $historyResult['relevant_images'] : [],
+                );
+            }
+
+            $prepared[$index]['final_chunk_ids'] = array_values(array_unique($mergedChunkIds));
+            $prepared[$index]['final_images'] = $mergedImages;
+
+            foreach ($prepared[$index]['final_chunk_ids'] as $chunkId) {
+                $allMergedChunkIds[] = $chunkId;
+            }
+        }
+
+        $chunksById = collect();
+        if ($allMergedChunkIds !== []) {
+            $chunksById = Chunk::query()
+                ->whereIn('id', array_values(array_unique($allMergedChunkIds)))
                 ->with([
                     'dedupMedia',
                     'outgoingRelations.to_entity',
@@ -499,18 +617,100 @@ SECTION;
                 ])
                 ->withNeighborSnippets()
                 ->get()
-                ->unique('id')
+                ->keyBy('id');
+        }
+
+        $resolved = [];
+        foreach ($prepared as $entry) {
+            $orderedChunks = collect($entry['final_chunk_ids'] ?? [])
+                ->map(static fn (string $id) => $chunksById->get($id))
+                ->filter()
                 ->values();
 
-            return [
-                'query' => $query,
-                'notes' => $notes,
-                'chunk_ids'       => $chunks->pluck('id')->values()->toArray(),
-                'relevant_chunks' => $chunks->mapWithKeys(fn (Chunk $chunk) => [
+            $resolved[] = [
+                'query' => $entry['query'],
+                'notes' => $entry['notes'],
+                'chunk_ids' => $orderedChunks->pluck('id')->values()->toArray(),
+                'relevant_chunks' => $orderedChunks->mapWithKeys(fn (Chunk $chunk) => [
                     $chunk->id => ChunkMapper::loadAndMap($chunk),
                 ])->toArray(),
-                'relevant_images' => $searchResult['relevant_images'] ?? [],
+                'relevant_images' => $entry['final_images'] ?? [],
             ];
-        }, $results);
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function normalizeHistoryIds(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $ids = array_map(
+            static fn (mixed $id): ?string => is_string($id) ? trim($id) : null,
+            $value,
+        );
+
+        return array_values(array_unique(array_filter($ids, static fn (?string $id): bool => $id !== null && $id !== '')));
+    }
+
+    /**
+     * @param array<int, mixed> $images
+     * @return array<int, array{url: string, content: string}>
+     */
+    private function normalizeRelevantImages(array $images): array
+    {
+        $normalized = [];
+
+        foreach ($images as $image) {
+            if (! is_array($image)) {
+                continue;
+            }
+
+            $url = isset($image['url']) && is_string($image['url']) ? trim($image['url']) : '';
+            if ($url === '') {
+                continue;
+            }
+
+            $content = isset($image['content']) && is_string($image['content'])
+                ? trim($image['content'])
+                : '';
+
+            $normalized[] = [
+                'url' => $url,
+                'content' => $content,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<int, mixed> $left
+     * @param array<int, mixed> $right
+     * @return array<int, array{url: string, content: string}>
+     */
+    private function mergeRelevantImages(array $left, array $right): array
+    {
+        $merged = [];
+        $seen = [];
+
+        foreach ([$this->normalizeRelevantImages($left), $this->normalizeRelevantImages($right)] as $imageList) {
+            foreach ($imageList as $image) {
+                $url = $image['url'];
+                if (isset($seen[$url])) {
+                    continue;
+                }
+
+                $seen[$url] = true;
+                $merged[] = $image;
+            }
+        }
+
+        return $merged;
     }
 }

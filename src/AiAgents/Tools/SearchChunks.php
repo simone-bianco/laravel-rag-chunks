@@ -65,6 +65,7 @@ class SearchChunks extends Tool
             'allowRelaxTagFilters' => ['type' => 'boolean', 'description' => 'Allow retry without tag filters', 'default' => true, 'toggleable' => true, 'default_enabled' => true],
             'tag_filters' => ['type' => 'array', 'description' => 'Per-type tag filters (tag_*)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
             'documentsAliases' => ['type' => 'array', 'description' => 'Restrict to specific document aliases', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
+            'documentSearch' => ['type' => 'string', 'description' => 'Restrict to documents whose title/name or description contains this text (case-insensitive)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
         ];
 
         $manifest = [];
@@ -227,6 +228,10 @@ class SearchChunks extends Tool
             'allowRelaxTagFilters' => [
                 'type' => 'boolean',
                 'description' => 'Optional safety valve for low recall with chunk tag filters. If true and first-page results are below perPage while chunkTagGroups are active, tool may retry once without chunk tag filters.',
+            ],
+            'documentSearch' => [
+                'type' => 'string',
+                'description' => 'Document title/description hard filter. REFINEMENT ONLY: use only when the user explicitly asks to restrict by document title/name or description. Applies a case-insensitive contains match (%text%) against document name and description.',
             ],
         ], $tagProperties, $documentsAliasesProperties);
     }

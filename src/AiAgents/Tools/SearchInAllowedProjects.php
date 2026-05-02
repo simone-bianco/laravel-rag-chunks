@@ -27,7 +27,11 @@ class SearchInAllowedProjects extends Tool
         ?string $name = 'search_in_project',
         ?string $description = 'Search inside one allowed project. You must provide projectAlias + 1-5 searches. Searches run in parallel in a single call.',
         protected bool $historyEnabled = false,
+        protected float $compactionThreshold = 0.1,
+        protected ?string $callingAgentId = null,
     ) {
+        $this->compactionThreshold = max(0.0, min(1.0, $this->compactionThreshold));
+
         $this->allowedProjectAliases = array_values(array_unique(array_filter(array_map(
             static fn ($alias) => is_string($alias) ? trim($alias) : '',
             $allowedProjectAliases,
@@ -142,6 +146,8 @@ class SearchInAllowedProjects extends Tool
             model: $this->model,
             deep: $this->deep,
             historyEnabled: $this->historyEnabled,
+            compactionThreshold: $this->compactionThreshold,
+            callingAgentId: $this->callingAgentId,
         )->respond("Search queries:\n$queryLines");
 
         return is_array($result) ? $result : $result->getContent();

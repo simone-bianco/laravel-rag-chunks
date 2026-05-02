@@ -30,6 +30,13 @@ final class SearchInProjectFactory implements AgentToolFactory
 
         $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
 
+        $compactionThreshold = (float) ($context->get('compaction_threshold') ?? $config['compaction_threshold'] ?? 0.1);
+
+        $callingAgentIdRaw = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
+        $callingAgentId = is_string($callingAgentIdRaw) && trim($callingAgentIdRaw) !== ''
+            ? trim($callingAgentIdRaw)
+            : null;
+
         Log::channel('search')->debug('[SearchInProjectFactory] tool config resolved', [
             'scopes_count' => count($scopes),
             'scopes' => array_map(
@@ -41,6 +48,8 @@ final class SearchInProjectFactory implements AgentToolFactory
             'deep' => $deep->value,
             'max_parallel' => $maxParallel,
             'history_enabled' => $historyEnabled,
+            'compaction_threshold' => $compactionThreshold,
+            'calling_agent_id' => $callingAgentId,
         ]);
 
         return new SearchTool(
@@ -50,6 +59,8 @@ final class SearchInProjectFactory implements AgentToolFactory
             deep: $deep,
             maxParallel: $maxParallel,
             historyEnabled: $historyEnabled,
+            compactionThreshold: $compactionThreshold,
+            callingAgentId: $callingAgentId,
         );
     }
 

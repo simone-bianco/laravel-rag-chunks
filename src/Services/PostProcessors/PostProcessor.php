@@ -966,8 +966,11 @@ class PostProcessor
             || str_contains($message, 'connection refused')
             || str_contains($message, 'curl error')
             || str_contains($message, 'syntax error')
-            || str_contains($message, 'json')
+            || str_contains($message, 'invalid json')
+            || str_contains($message, 'json syntax error')
+            || str_contains($message, 'could not parse the json body')
             || str_contains($message, 'rate limit')
+            || str_contains($message, 'rate-limit')
             || str_contains($message, 'server error')
             || str_contains($message, '500')
             || str_contains($message, '503');
@@ -1132,16 +1135,23 @@ class PostProcessor
 
             $prev = $exception->getPrevious();
             $message = $exception->getMessage();
+            $lowerMessage = Str::lower($message);
             $isRetryable = ($exception instanceof \RuntimeException && $prev instanceof \TypeError)
                 || $prev instanceof ConnectException
                 || $prev instanceof ServerException
                 || $exception instanceof \OpenAI\Exceptions\UnserializableResponse
+                || $exception instanceof \OpenAI\Exceptions\RateLimitException
                 || $exception instanceof \JsonException
                 || str_contains($message, 'Syntax error')
                 || str_contains($message, 'timed out')
                 || str_contains($message, 'Connection refused')
                 || str_contains($message, 'cURL error')
-                || str_contains($message, 'We could not parse the JSON body of your request');
+                || str_contains($message, 'We could not parse the JSON body of your request')
+                || str_contains($lowerMessage, 'rate limit')
+                || str_contains($lowerMessage, 'rate-limit')
+                || str_contains($lowerMessage, '429')
+                || str_contains($lowerMessage, 'throttle')
+                || str_contains($lowerMessage, 'too many requests');
 
             throw new PostProcessingException(
                 "Error during post-processing: {$exception->getMessage()}",

@@ -29,8 +29,11 @@ class SearchTool extends Tool
         ?string $name = 'search_in_project',
         ?string $description = 'Search the knowledge base. Accepts multiple independent search queries executed in parallel in a single call. Use this to retrieve relevant information chunks.',
         protected bool $historyEnabled = false,
+        protected float $compactionThreshold = 0.1,
+        protected ?string $callingAgentId = null,
     ) {
         $this->maxParallel = max(1, min(8, $this->maxParallel));
+        $this->compactionThreshold = max(0.0, min(1.0, $this->compactionThreshold));
         parent::__construct($name, $description);
     }
 
@@ -225,6 +228,8 @@ class SearchTool extends Tool
         $deep           = $this->deep;
         $maxParallel    = $this->maxParallel;
         $historyEnabled = $this->historyEnabled;
+        $compactionThreshold = $this->compactionThreshold;
+        $callingAgentId = $this->callingAgentId;
 
         $results = [];
         $tasks = [];
@@ -253,7 +258,7 @@ class SearchTool extends Tool
 
             $scopeKey = $persistentKey . ':' . $scope->type->value . ':' . $scope->alias;
 
-            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled): array {
+            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled, $compactionThreshold, $callingAgentId): array {
                 $result = (new SearchAgent(
                     $scopeKey,
                     $scope,
@@ -263,6 +268,8 @@ class SearchTool extends Tool
                     false,
                     null,
                     $historyEnabled,
+                    $compactionThreshold,
+                    $callingAgentId,
                 ))->respond("Search queries:\n{$queryLines}");
 
                 if (! is_array($result) || ! isset($result['results'])) {

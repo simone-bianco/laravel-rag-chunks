@@ -47,11 +47,12 @@ class SearchResultService
     /**
      * Persist a SearchResult with embedded query vector (global cache).
      */
-    public function save(string $query, array $results, ?string $projectId = null, ?string $notes = null): SearchResult
+    public function save(string $query, array $results, string $aiAgentId, ?string $projectId = null, ?string $notes = null): SearchResult
     {
         $vector = Embedding::embed($query);
 
         $searchResult = SearchResult::create([
+            'ai_agent_id' => $aiAgentId,
             'project_id'  => $projectId,
             'query'       => $query,
             'notes'       => is_string($notes) && trim($notes) !== '' ? trim($notes) : null,
@@ -61,6 +62,7 @@ class SearchResultService
 
         Log::channel('search')->info('[SearchResultService] Search result saved', [
             'search_result_id' => (string) $searchResult->id,
+            'ai_agent_id' => $aiAgentId,
             'project_id' => $projectId,
             'notes' => $searchResult->notes,
             'query_preview' => mb_substr($query, 0, 200),
