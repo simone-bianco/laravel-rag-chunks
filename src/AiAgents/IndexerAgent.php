@@ -17,7 +17,7 @@ class IndexerAgent extends RotableAgent
 //    protected $provider = 'ollama';
 //    protected $model = 'gemma3:12b';
 
-    protected $model = 'gpt-5-mini';
+    protected $model = 'gpt-5.4-mini';
 
     protected ?array $index = null;
     protected array $chunks = [];

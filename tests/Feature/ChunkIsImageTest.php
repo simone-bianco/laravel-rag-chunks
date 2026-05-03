@@ -16,7 +16,7 @@ class ChunkIsImageTest extends TestCase
     {
         $project = Project::create([
             'name' => 'Test Project',
-            'hash' => 'proj123',
+            'alias' => 'test-project',
         ]);
 
         $document = Document::create([
@@ -46,7 +46,7 @@ class ChunkIsImageTest extends TestCase
     {
         $project = Project::create([
             'name' => 'Test Project 2',
-            'hash' => 'proj456',
+            'alias' => 'test-project-2',
         ]);
 
         $document = Document::create([

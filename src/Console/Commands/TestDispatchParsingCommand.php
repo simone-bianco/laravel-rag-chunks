@@ -9,7 +9,6 @@ use SimoneBianco\LaravelRagChunks\Jobs\Parsing\DispatchParsingJob;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Services\DocumentService;
-use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
 class TestDispatchParsingCommand extends Command
@@ -18,16 +17,13 @@ class TestDispatchParsingCommand extends Command
 
     protected $description = 'Test the PdfParser::dispatchParsing service directly';
 
-    public function __construct(protected PdfParser $pdfParser, protected DocumentService $documentService)
-    {
-        parent::__construct();
-    }
-
     public function handle(): int
     {
         $this->info("Testing PdfParser::dispatchParsing()");
 
         try {
+            $documentService = app(DocumentService::class);
+
             $project = Project::firstOrFail();
 
             $document = $project->documents()->create([
@@ -36,14 +32,14 @@ class TestDispatchParsingCommand extends Command
                 'description' => 'PDF that explains how a keep was in medieval times',
                 'extension' => 'pdf',
                 'file_path' => '\test\test.pdf',
-                'hash' => $this->documentService->calculateFileHash(Storage::disk('local')->path('\test\test.pdf'))
+                'hash' => $documentService->calculateFileHash(Storage::disk('local')->path('\test\test.pdf'))
             ]);
             $document->save();
 
             $this->info('Calling dispatchParsing...');
 
             $process = $document->startProcess('document_parsing');
-            $result = DispatchParsingJob::dispatch($process->id);
+            DispatchParsingJob::dispatch($process->id);
 
             $this->info('SUCCESS!');
 

@@ -7,18 +7,25 @@ trait NormalizesChunkIds
     private const UUID_PATTERN = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
     /**
-     * @param  array<int, mixed>  $chunkIds
+     * @param  mixed  $chunkIds
      * @return array<int, string>
      */
-    protected function normalizeChunkIds(array $chunkIds): array
+    protected function normalizeChunkIds(mixed $chunkIds): array
     {
+        if (! is_array($chunkIds)) {
+            return [];
+        }
+
         $normalized = [];
 
-        foreach ($chunkIds as $id) {
-            $uuid = $this->extractUuid($id);
+        foreach ($chunkIds as $key => $value) {
+            foreach ([$value, $key] as $candidate) {
+                $uuid = $this->extractUuid($candidate);
 
-            if ($uuid !== null) {
-                $normalized[$uuid] = $uuid;
+                if ($uuid !== null) {
+                    $normalized[$uuid] = $uuid;
+                    break;
+                }
             }
         }
 
@@ -37,11 +44,7 @@ trait NormalizesChunkIds
             return null;
         }
 
-        if (preg_match('/^' . self::UUID_PATTERN . '$/', $candidate) === 1) {
-            return strtolower($candidate);
-        }
-
-        if (preg_match('/^(' . self::UUID_PATTERN . ')[0-9a-fA-F]+$/', $candidate, $match) === 1) {
+        if (preg_match('/(' . self::UUID_PATTERN . ')/', $candidate, $match) === 1) {
             return strtolower($match[1]);
         }
 

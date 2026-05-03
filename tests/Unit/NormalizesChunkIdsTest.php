@@ -56,4 +56,44 @@ class NormalizesChunkIdsTest extends TestCase
 
         $this->assertSame(['a0d0e9f4-f00c-4ab5-bb92-12ba1735a6ed'], $result);
     }
+
+    public function test_it_drops_malformed_uuid_values(): void
+    {
+        $normalizer = new class
+        {
+            use NormalizesChunkIds;
+
+            public function run(array $chunkIds): array
+            {
+                return $this->normalizeChunkIds($chunkIds);
+            }
+        };
+
+        $result = $normalizer->run([
+            '7f955b8c-c406-4cf7-a297-8a7420cf7b9',
+            '7f955b8c-c406-4cf7-a297-8a7420cf7b90',
+        ]);
+
+        $this->assertSame(['7f955b8c-c406-4cf7-a297-8a7420cf7b90'], $result);
+    }
+
+    public function test_it_recovers_uuid_keys_from_relevant_chunk_maps(): void
+    {
+        $normalizer = new class
+        {
+            use NormalizesChunkIds;
+
+            public function run(array $chunkIds): array
+            {
+                return $this->normalizeChunkIds($chunkIds);
+            }
+        };
+
+        $result = $normalizer->run([
+            'df418ad4-6016-4483-a3a3-05fed8287b8d' => ['content' => 'Mapped chunk payload'],
+            'not-a-uuid' => ['content' => 'Invalid mapped chunk payload'],
+        ]);
+
+        $this->assertSame(['df418ad4-6016-4483-a3a3-05fed8287b8d'], $result);
+    }
 }

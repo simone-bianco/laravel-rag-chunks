@@ -14,11 +14,6 @@ class TestPollParsingCommand extends Command
 
     protected $description = 'Test the PdfParser::pollParsing service directly';
 
-    public function __construct(protected PdfParser $pdfParser)
-    {
-        parent::__construct();
-    }
-
     public function handle(): int
     {
         $jobId = $this->argument('job_id');
@@ -28,8 +23,10 @@ class TestPollParsingCommand extends Command
         $this->newLine();
 
         try {
+            $pdfParser = app(PdfParser::class);
+
             $this->info('Calling pollParsing...');
-            $status = $this->pdfParser->pollParsing(new PdfParsingContextDTO(jobId: $jobId));
+            $status = $pdfParser->pollParsing(new PdfParsingContextDTO(jobId: $jobId));
 
             $this->info('SUCCESS!');
             $this->newLine();

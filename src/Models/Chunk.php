@@ -58,15 +58,19 @@ class Chunk extends Model
         'is_tags_dirty',
     ];
 
+    protected $attributes = [
+        'is_image' => false,
+    ];
+
     protected function casts()
     {
         return [
+            'is_image' => 'boolean',
             'embedding' => VectorArray::class,
             'tags_embedding' => VectorArray::class,
             'questions_embedding' => VectorArray::class,
             'tags' => 'array',
             'questions' => 'array',
-            'is_image' => 'boolean',
             'is_content_dirty' => 'boolean',
             'is_questions_dirty' => 'boolean',
             'is_tags_dirty' => 'boolean',

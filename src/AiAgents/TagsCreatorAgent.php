@@ -12,7 +12,7 @@ class TagsCreatorAgent extends RotableAgent
 
     protected Project $project;
 
-    protected $model = 'gpt-5-mini';
+    protected $model = 'gpt-5.4-mini';
     protected string $additionalInstructions = '';
 
     protected $responseSchema = [

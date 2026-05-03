@@ -30,7 +30,17 @@ final class SearchInProjectFactory implements AgentToolFactory
 
         $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
 
-        $compactionThreshold = (float) ($context->get('compaction_threshold') ?? $config['compaction_threshold'] ?? 0.1);
+        $compactionThreshold = (float) ($context->get('compaction_threshold')
+            ?? $config['compaction_threshold']
+            ?? config('rag_chunks.search_results.auto_merge_distance', 0.11));
+
+        $optimizationChunkThreshold = (int) ($context->get('optimization_chunk_threshold')
+            ?? $config['optimization_chunk_threshold']
+            ?? config('rag_chunks.search_results.optimization_chunk_threshold', 12));
+
+        $optimizationHitThreshold = (int) ($context->get('optimization_hit_threshold')
+            ?? $config['optimization_hit_threshold']
+            ?? config('rag_chunks.search_results.optimization_hit_threshold', 5));
 
         $callingAgentIdRaw = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
         $callingAgentId = is_string($callingAgentIdRaw) && trim($callingAgentIdRaw) !== ''
@@ -49,6 +59,8 @@ final class SearchInProjectFactory implements AgentToolFactory
             'max_parallel' => $maxParallel,
             'history_enabled' => $historyEnabled,
             'compaction_threshold' => $compactionThreshold,
+            'optimization_chunk_threshold' => $optimizationChunkThreshold,
+            'optimization_hit_threshold' => $optimizationHitThreshold,
             'calling_agent_id' => $callingAgentId,
         ]);
 
@@ -60,6 +72,8 @@ final class SearchInProjectFactory implements AgentToolFactory
             maxParallel: $maxParallel,
             historyEnabled: $historyEnabled,
             compactionThreshold: $compactionThreshold,
+            optimizationChunkThreshold: $optimizationChunkThreshold,
+            optimizationHitThreshold: $optimizationHitThreshold,
             callingAgentId: $callingAgentId,
         );
     }

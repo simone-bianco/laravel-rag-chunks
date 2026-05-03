@@ -5,6 +5,9 @@ namespace SimoneBianco\LaravelRagChunks\Tests;
 use Orchestra\Testbench\TestCase as Orchestra;
 use SimoneBianco\LaravelRagChunks\LaravelRagChunksServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver;
+use SimoneBianco\LaravelRagChunks\Models\Chunk;
+use SimoneBianco\LaravelRagChunks\Services\Embedding\OpenaiEmbeddingDriver;
 
 class TestCase extends Orchestra
 {
@@ -43,13 +46,12 @@ class TestCase extends Orchestra
         $app['config']->set('app.key', 'base64:6Cu/ozj4w0CjZ+h4F1ZO0a4Yy7d5Zc7eX0y0z1a2b3c=');
 
         // Setup Package Config
-        $app['config']->set('rag_chunks.driver', \SimoneBianco\LaravelRagChunks\Enums\ChunkingDriver::POSTGRES);
-        $app['config']->set('rag_chunks.embedding', \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI);
+        $app['config']->set('rag_chunks.embedding', EmbeddingDriver::OPENAI->value);
         $app['config']->set('rag_chunks.models', [
-            'chunk' => \SimoneBianco\LaravelRagChunks\Tests\Models\TestChunk::class
+            'chunk' => Chunk::class,
         ]);
         $app['config']->set('rag_chunks.embedders', [
-            \SimoneBianco\LaravelRagChunks\Enums\EmbeddingDriver::OPENAI->value => \SimoneBianco\LaravelRagChunks\Services\Embedding\OpenaiEmbeddingDriver::class
+            EmbeddingDriver::OPENAI->value => OpenaiEmbeddingDriver::class,
         ]);
     }
 
@@ -60,6 +62,10 @@ class TestCase extends Orchestra
         $migrationProjs->up();
         $migrationDocs = include __DIR__.'/../stubs/migrations/generic/create_documents_table.php.stub';
         $migrationDocs->up();
+        $migrationProjectGroups = include __DIR__.'/../stubs/migrations/generic/create_project_groups_table.php.stub';
+        $migrationProjectGroups->up();
+        $migrationGroupProject = include __DIR__.'/../stubs/migrations/generic/create_group_project_table.php.stub';
+        $migrationGroupProject->up();
         $migration = include __DIR__.'/../stubs/migrations/generic/create_chunks_table.php.stub';
         $migration->up();
     }

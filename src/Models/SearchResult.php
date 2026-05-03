@@ -19,6 +19,7 @@ class SearchResult extends Model
         'project_id',
         'query',
         'notes',
+        'summary',
         'results',
         'embedding',
         'hits',
@@ -29,6 +30,7 @@ class SearchResult extends Model
         return [
             'embedding' => VectorArray::class,
             'notes'     => 'string',
+            'summary'   => 'string',
             'results'   => 'array',
             'hits'      => 'integer',
         ];

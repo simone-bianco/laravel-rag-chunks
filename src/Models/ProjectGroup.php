@@ -3,10 +3,11 @@
 namespace SimoneBianco\LaravelRagChunks\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Support\Collection;
 use SimoneBianco\LaravelProcesses\Models\Traits\HasProcesses;
 use SimoneBianco\LaravelSimpleTags\HasTags;
 
@@ -32,8 +33,14 @@ class ProjectGroup extends Model
      * All documents aggregated from all projects in this group.
      * Useful for RAG: $group->documents() gives the full knowledge pool.
      */
-    public function documents(): HasManyThrough
+    public function documents(): Builder
     {
-        return $this->hasManyThrough(Document::class, Project::class);
+        return Document::query()
+            ->whereIn('project_id', $this->projects()->select('projects.id'));
+    }
+
+    public function getDocumentsAttribute(): Collection
+    {
+        return $this->documents()->get();
     }
 }

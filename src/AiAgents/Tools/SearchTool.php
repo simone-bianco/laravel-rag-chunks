@@ -29,11 +29,15 @@ class SearchTool extends Tool
         ?string $name = 'search_in_project',
         ?string $description = 'Search the knowledge base. Accepts multiple independent search queries executed in parallel in a single call. Use this to retrieve relevant information chunks.',
         protected bool $historyEnabled = false,
-        protected float $compactionThreshold = 0.1,
+        protected float $compactionThreshold = 0.11,
+        protected int $optimizationChunkThreshold = 12,
+        protected int $optimizationHitThreshold = 5,
         protected ?string $callingAgentId = null,
     ) {
         $this->maxParallel = max(1, min(8, $this->maxParallel));
         $this->compactionThreshold = max(0.0, min(1.0, $this->compactionThreshold));
+        $this->optimizationChunkThreshold = max(1, $this->optimizationChunkThreshold);
+        $this->optimizationHitThreshold = max(0, $this->optimizationHitThreshold);
         parent::__construct($name, $description);
     }
 
@@ -229,6 +233,7 @@ class SearchTool extends Tool
         $maxParallel    = $this->maxParallel;
         $historyEnabled = $this->historyEnabled;
         $compactionThreshold = $this->compactionThreshold;
+        $optimizationHitThreshold = $this->optimizationHitThreshold;
         $callingAgentId = $this->callingAgentId;
 
         $results = [];
@@ -258,7 +263,9 @@ class SearchTool extends Tool
 
             $scopeKey = $persistentKey . ':' . $scope->type->value . ':' . $scope->alias;
 
-            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled, $compactionThreshold, $callingAgentId): array {
+            $optimizationChunkThreshold = $this->optimizationChunkThreshold;
+
+            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled, $compactionThreshold, $optimizationChunkThreshold, $optimizationHitThreshold, $callingAgentId): array {
                 $result = (new SearchAgent(
                     $scopeKey,
                     $scope,
@@ -269,6 +276,8 @@ class SearchTool extends Tool
                     null,
                     $historyEnabled,
                     $compactionThreshold,
+                    $optimizationChunkThreshold,
+                    $optimizationHitThreshold,
                     $callingAgentId,
                 ))->respond("Search queries:\n{$queryLines}");
 
@@ -290,7 +299,7 @@ class SearchTool extends Tool
             return $results;
         }
 
-        $timeoutSeconds = (int) config('rag-chunks.search_tool_process_timeout', 300);
+        $timeoutSeconds = (int) config('rag_chunks.search_tool_process_timeout', 300);
 
         $results = [];
         foreach (array_chunk($tasks, max(1, $maxParallel), true) as $taskChunk) {
@@ -407,6 +416,7 @@ class SearchTool extends Tool
                         'chunk_ids'       => [],
                         'relevant_chunks' => [],
                         'relevant_images' => [],
+                        'memory_results'  => [],
                     ];
                 }
 
@@ -432,13 +442,49 @@ class SearchTool extends Tool
                         $seenImageUrls[]               = $url;
                     }
                 }
+
+                foreach ($queryResult['memory_results'] ?? [] as $memResult) {
+                    $memoryId = is_array($memResult) && is_string($memResult['id'] ?? null)
+                        ? $memResult['id']
+                        : null;
+
+                    if ($memoryId !== null) {
+                        $existingIds = array_column($existing['memory_results'], 'id');
+                        if (in_array($memoryId, $existingIds, true)) {
+                            continue;
+                        }
+                    }
+
+                    $existing['memory_results'][] = $memResult;
+                }
             }
         }
 
         $mergedResults = array_values($mergedByQuery);
+        $memoryResults = [];
+        $seenMemoryIds = [];
+
+        foreach ($mergedResults as $mergedResult) {
+            foreach ($mergedResult['memory_results'] ?? [] as $memoryResult) {
+                $memoryId = is_array($memoryResult) && is_string($memoryResult['id'] ?? null)
+                    ? $memoryResult['id']
+                    : null;
+
+                if ($memoryId !== null) {
+                    if (isset($seenMemoryIds[$memoryId])) {
+                        continue;
+                    }
+
+                    $seenMemoryIds[$memoryId] = true;
+                }
+
+                $memoryResults[] = $memoryResult;
+            }
+        }
 
         Log::channel('search')->info('[SearchTool] Relevant chunks summary', [
             'query_count' => count($mergedResults),
+            'memory_count' => count($memoryResults),
             'query_chunk_counts' => array_values(array_map(
                 static fn (array $result): int => count($result['chunk_ids'] ?? []),
                 $mergedResults,
@@ -449,6 +495,9 @@ class SearchTool extends Tool
             )),
         ]);
 
-        return ['results' => $mergedResults];
+        return [
+            'results' => $mergedResults,
+            'memory_results' => $memoryResults,
+        ];
     }
 }

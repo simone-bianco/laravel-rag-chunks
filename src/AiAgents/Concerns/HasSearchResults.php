@@ -21,6 +21,10 @@ trait HasSearchResults
             return [];
         }
 
-        return SearchResultService::make()->getRecent($query, $count);
+        $projectId = property_exists($this, 'scopeProjectId') && is_string($this->scopeProjectId)
+            ? $this->scopeProjectId
+            : null;
+
+        return SearchResultService::make()->getRecent($query, $count, $projectId);
     }
 }

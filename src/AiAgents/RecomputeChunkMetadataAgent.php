@@ -11,7 +11,7 @@ class RecomputeChunkMetadataAgent extends RotableAgent
 {
     protected $history = 'LarAgent\\Context\\Drivers\\InMemoryStorage';
 
-    protected $model = 'gpt-5-mini';
+    protected $model = 'gpt-5.4-mini';
 
     protected array $chunks = [];
     protected bool $generateClassicTags = true;
