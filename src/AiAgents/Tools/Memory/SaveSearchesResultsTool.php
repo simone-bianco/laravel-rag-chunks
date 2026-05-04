@@ -239,16 +239,46 @@ class SaveSearchesResultsTool extends Tool
             if ($compactionResult !== null) {
                 // Result was merged into an existing one; the new record was deleted
                 $compacted[] = $compactionResult;
-                $saved[] = [
-                    'id' => $compactionResult['merged_into_id'],
-                    'query' => $compactionResult['merged_query'],
-                    'chunks_count' => $compactionResult['merged_chunks_count'],
-                    'project_id' => $projectId,
-                    'notes' => $compactionResult['merged_notes'],
-                    'compacted' => true,
-                    'merged_from_id' => (string) $row->id,
-                    'optimization' => $compactionResult['optimization'] ?? null,
-                ];
+
+                $optimization = $compactionResult['optimization'] ?? null;
+
+                // When a merge followed by a split deletes the merged-into record,
+                // the merged_into_id is no longer valid. Must return the newly
+                // created split IDs instead, loaded with their actual metadata.
+                if (is_array($optimization) && ($optimization['action'] ?? '') === 'split' && ! empty($optimization['created_ids'] ?? [])) {
+                    /** @var array<int, SearchResult> $splitRows */
+                    $splitRows = SearchResult::query()
+                        ->whereIn('id', $optimization['created_ids'])
+                        ->get()
+                        ->all();
+
+                    foreach ($splitRows as $splitRow) {
+                        $saved[] = [
+                            'id' => (string) $splitRow->id,
+                            'query' => $splitRow->query,
+                            'chunks_count' => is_array($splitRow->results['chunk_ids'] ?? null)
+                                ? count($splitRow->results['chunk_ids'])
+                                : 0,
+                            'project_id' => $projectId,
+                            'notes' => is_string($splitRow->notes) ? $splitRow->notes : null,
+                            'compacted' => true,
+                            'merged_from_id' => (string) $row->id,
+                            'optimization' => $optimization,
+                        ];
+                    }
+                } else {
+                    // Standard compaction: merged_into_id is still a valid, live record
+                    $saved[] = [
+                        'id' => $compactionResult['merged_into_id'],
+                        'query' => $compactionResult['merged_query'],
+                        'chunks_count' => $compactionResult['merged_chunks_count'],
+                        'project_id' => $projectId,
+                        'notes' => $compactionResult['merged_notes'],
+                        'compacted' => true,
+                        'merged_from_id' => (string) $row->id,
+                        'optimization' => $optimization,
+                    ];
+                }
             } else {
                 $optimization = $this->optimizeMemory(
                     $row,
@@ -402,19 +432,28 @@ class SaveSearchesResultsTool extends Tool
         );
 
         // Detailed input → output log for debugging
+        $outputLog = [
+            'id' => (string) $similar->id,
+            'query' => $similar->query,
+            'notes' => is_string($similar->notes) ? $similar->notes : null,
+            'hits' => (int) $similar->hits,
+            'chunk_ids_count' => $mergedChunksCount,
+            'optimization' => $optimization,
+        ];
+
+        // When the merged result was split (deleted + replaced), the output ID
+        // is stale — surface the actual split IDs in the log for accurate tracing.
+        $isSplit = is_array($optimization) && ($optimization['action'] ?? '') === 'split';
+        if ($isSplit) {
+            $outputLog['split_created_ids'] = $optimization['created_ids'] ?? [];
+        }
+
         $this->logger()->info('[SaveSearchesResultsTool] Auto-compacted similar result', [
             'project_id' => $projectId,
             'distance' => $distance,
             'threshold' => $compactionThreshold,
             'input' => $preMerge,
-            'output' => [
-                'id' => (string) $similar->id,
-                'query' => $similar->query,
-                'notes' => is_string($similar->notes) ? $similar->notes : null,
-                'hits' => (int) $similar->hits,
-                'chunk_ids_count' => $mergedChunksCount,
-                'optimization' => $optimization,
-            ],
+            'output' => $outputLog,
             'deleted_id' => (string) $newResult->id,
         ]);
 

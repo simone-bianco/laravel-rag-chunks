@@ -303,28 +303,9 @@ class SearchTool extends Tool
 
         $results = [];
         foreach (array_chunk($tasks, max(1, $maxParallel), true) as $taskChunk) {
-            try {
-                $chunkResults = $this->runTasksInProcessPool($taskChunk, $timeoutSeconds);
-                foreach ($chunkResults as $taskIndex => $taskResult) {
-                    $results[(int) $taskIndex] = $taskResult;
-                }
-            } catch (\Throwable $e) {
-                Log::channel('search')->warning('[SearchTool] Parallel chunk execution failed, fallback to sequential', [
-                    'error' => $e->getMessage(),
-                    'tasks' => count($taskChunk),
-                    'timeout_s' => $timeoutSeconds,
-                ]);
-
-                foreach ($taskChunk as $idx => $task) {
-                    try {
-                        $results[(int) $idx] = $task();
-                    } catch (\Throwable $inner) {
-                        Log::channel('search')->warning('[SearchTool] Scope task failed', [
-                            'task_index' => $idx,
-                            'error' => $inner->getMessage(),
-                        ]);
-                    }
-                }
+            $chunkResults = $this->runTasksInProcessPool($taskChunk, $timeoutSeconds);
+            foreach ($chunkResults as $taskIndex => $taskResult) {
+                $results[(int) $taskIndex] = $taskResult;
             }
         }
 

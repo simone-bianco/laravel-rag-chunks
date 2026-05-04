@@ -19,8 +19,6 @@ use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Services\SearchAgentResultResolver;
-use Throwable;
-
 class SearchAgent extends RotableAgent
 {
     use BuildsInstructions, HasSearchResults;
@@ -40,8 +38,8 @@ class SearchAgent extends RotableAgent
     protected SearchDepth $deep;
 
     protected bool $historyEnabled;
-    protected float $compactionThreshold = 0.11;
-    protected int $optimizationChunkThreshold = 12;
+    protected float $compactionThreshold = 0.08;
+    protected int $optimizationChunkThreshold = 30;
     protected int $optimizationHitThreshold = 5;
     protected ?string $callingAgentId = null;
     protected ?string $scopeProjectId = null;
@@ -62,8 +60,8 @@ class SearchAgent extends RotableAgent
         bool $usesUserId = false,
         ?string $group = null,
         bool $historyEnabled = false,
-        float $compactionThreshold = 0.11,
-        int $optimizationChunkThreshold = 12,
+        float $compactionThreshold = 0.08,
+        int $optimizationChunkThreshold = 30,
         int $optimizationHitThreshold = 5,
         ?string $callingAgentId = null,
     ) {
@@ -88,7 +86,7 @@ class SearchAgent extends RotableAgent
         $this->responseSchema = $this->buildResponseSchema();
 
         $this->withTool(new SearchChunks($this->scope));
-        $this->withTool(new GetChunksByAliases($this->scope));
+//        $this->withTool(new GetChunksByAliases($this->scope));
 
         if ($this->searchResultsActive()) {
             $this->withTool((new GetSearchesResultsTool($this->scopeProjectId))
@@ -111,6 +109,7 @@ class SearchAgent extends RotableAgent
             'optimization_chunk_threshold' => $this->optimizationChunkThreshold,
             'optimization_hit_threshold' => $this->optimizationHitThreshold,
             'calling_agent_id' => $this->callingAgentId,
+            'instructions_chars' => strlen($this->instructions()),
         ]);
     }
 
@@ -170,14 +169,8 @@ class SearchAgent extends RotableAgent
             }
         }
 
-        try {
-            $this->injectInstructionsForCurrentTurn();
-            $decoded = parent::respond($message);
-        } catch (Throwable $e) {
-            $this->logger()->warning('[SearchAgent] respond() failed', ['error' => $e->getMessage()]);
-
-            return ['results' => [], 'memory_results' => []];
-        }
+        $this->injectInstructionsForCurrentTurn();
+        $decoded = parent::respond($message);
 
         if (! is_array($decoded) || empty($decoded['results'])) {
             $this->logger()->info('[SearchAgent] No results returned', [
@@ -191,6 +184,8 @@ class SearchAgent extends RotableAgent
         $resolver = app(SearchAgentResultResolver::class);
         $resolved = $resolver->resolve($decoded['results'], $this->scopeProjectId);
 
+        $this->persistResolvedResultsDeterministically($resolved);
+
         $this->logger()->info('[SearchAgent] Search completed', [
             'scope_type'    => $this->scope->type->value,
             'scope_alias'   => $this->scope->alias,
@@ -203,5 +198,82 @@ class SearchAgent extends RotableAgent
         ]);
 
         return $resolved;
+    }
+
+    private function persistResolvedResultsDeterministically(array $resolved): void
+    {
+        if (! $this->searchResultsActive()) {
+            return;
+        }
+
+        $results = is_array($resolved['results'] ?? null)
+            ? $resolved['results']
+            : [];
+
+        if ($results === []) {
+            return;
+        }
+
+        $searchResults = collect($results)
+            ->map(function (mixed $result): ?array {
+                if (! is_array($result)) {
+                    return null;
+                }
+
+                $chunkIds = is_array($result['chunk_ids'] ?? null)
+                    ? array_values(array_filter($result['chunk_ids'], static fn (mixed $id): bool => is_string($id) && trim($id) !== ''))
+                    : [];
+
+                if ($chunkIds === []) {
+                    return null;
+                }
+
+                $query = is_string($result['query'] ?? null)
+                    ? trim((string) $result['query'])
+                    : '';
+
+                if ($query === '') {
+                    return null;
+                }
+
+                $notes = is_string($result['notes'] ?? null)
+                    ? trim((string) $result['notes'])
+                    : null;
+
+                $relevantImages = is_array($result['relevant_images'] ?? null)
+                    ? $result['relevant_images']
+                    : [];
+
+                return [
+                    'query' => $query,
+                    'notes' => $notes,
+                    'chunk_ids' => $chunkIds,
+                    'relevant_images' => $relevantImages,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($searchResults === []) {
+            return;
+        }
+
+        $tool = (new SaveSearchesResultsTool($this->scopeProjectId))
+            ->compactionThreshold($this->compactionThreshold)
+            ->optimizationChunkThreshold($this->optimizationChunkThreshold)
+            ->creatorAgentId($this->callingAgentId);
+
+        $saveResult = $tool->execute([
+            'searchResults' => $searchResults,
+        ]);
+
+        $this->logger()->info('[SearchAgent] Deterministic history save completed', [
+            'scope_type' => $this->scope->type->value,
+            'scope_alias' => $this->scope->alias,
+            'saved_count' => is_array($saveResult) ? (int) ($saveResult['saved_count'] ?? 0) : 0,
+            'skipped_count' => is_array($saveResult) ? (int) ($saveResult['skipped_count'] ?? 0) : 0,
+            'status' => is_array($saveResult) ? ($saveResult['status'] ?? null) : null,
+        ]);
     }
 }

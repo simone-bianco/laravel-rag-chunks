@@ -65,7 +65,7 @@ class SearchChunks extends Tool
             'allowRelaxTagFilters' => ['type' => 'boolean', 'description' => 'Allow retry without tag filters', 'default' => true, 'toggleable' => true, 'default_enabled' => true],
             'tag_filters' => ['type' => 'array', 'description' => 'Per-type tag filters (tag_*)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
             'documentsAliases' => ['type' => 'array', 'description' => 'Restrict to specific document aliases', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
-            'documentSearch' => ['type' => 'string', 'description' => 'Restrict to documents whose title/name or description contains this text (case-insensitive)', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
+            'documentSearch' => ['type' => 'object', 'description' => 'Document title/description hard filter (OR only).', 'default' => null, 'toggleable' => true, 'default_enabled' => false],
         ];
 
         $manifest = [];
@@ -230,8 +230,23 @@ class SearchChunks extends Tool
                 'description' => 'Optional safety valve for low recall with chunk tag filters. If true and first-page results are below perPage while chunkTagGroups are active, tool may retry once without chunk tag filters.',
             ],
             'documentSearch' => [
-                'type' => 'string',
-                'description' => 'Document title/description hard filter. REFINEMENT ONLY: use only when the user explicitly asks to restrict by document title/name or description. Applies a case-insensitive contains match (%text%) against document name and description.',
+                'type' => 'object',
+                'description' => 'Document title/description hard filter. REFINEMENT ONLY: use only when the user explicitly asks to restrict by document title/name or description. Each keyword is matched case-insensitive against document name AND description, and keywords are combined with OR.',
+                'properties' => [
+                    'keywords' => [
+                        'type' => 'array',
+                        'description' => 'List of keywords to filter against document name/description; USE ONLY INDIVIDUAL WORD PER ITEM',
+                        'items' => [
+                            'type' => 'string'
+                        ]
+                    ],
+                    'mode' => [
+                        'type' => 'string',
+                        'description' => 'Filter mode (always OR)',
+                        'enum' => ['OR']
+                    ]
+                ],
+                'required' => ['keywords']
             ],
         ], $tagProperties, $documentsAliasesProperties);
     }

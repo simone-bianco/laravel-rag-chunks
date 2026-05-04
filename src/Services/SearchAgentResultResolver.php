@@ -7,6 +7,7 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\NormalizesChunkIds;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
+use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 
 class SearchAgentResultResolver
@@ -100,6 +101,12 @@ class SearchAgentResultResolver
                 ->filter()
                 ->values();
 
+            $orderedChunks = $this->expandChunksForExplicitSessionQuery(
+                $orderedChunks,
+                $entry['query'],
+                $scopeProjectId,
+            );
+
             $queryMemoryResults = [];
 
             foreach ($entry['history_ids'] as $historyId) {
@@ -111,6 +118,10 @@ class SearchAgentResultResolver
                 );
 
                 if ($memoryResult === null) {
+                    continue;
+                }
+
+                if (! $this->isMemoryResultRelevantToQuery($entry['query'], $memoryResult)) {
                     continue;
                 }
 
@@ -221,6 +232,184 @@ class SearchAgentResultResolver
     }
 
     /**
+     * @param Collection<int, Chunk> $orderedChunks
+     * @return Collection<int, Chunk>
+     */
+    private function expandChunksForExplicitSessionQuery(Collection $orderedChunks, string $query, ?string $scopeProjectId): Collection
+    {
+        $sessionNumber = $this->extractSessionNumber($query);
+        if ($sessionNumber === null || $orderedChunks->isEmpty()) {
+            return $orderedChunks;
+        }
+
+        $matchedDocumentIds = $orderedChunks
+            ->pluck('document_id')
+            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->values()
+            ->all();
+
+        if ($matchedDocumentIds === []) {
+            return $orderedChunks;
+        }
+
+        $candidateDocuments = Document::query()
+            ->whereIn('id', $matchedDocumentIds)
+            ->get(['id', 'alias', 'name']);
+
+        $sessionDocuments = $candidateDocuments
+            ->filter(fn (Document $document): bool => $this->documentMatchesSessionNumber($document, $sessionNumber))
+            ->values();
+
+        if ($sessionDocuments->isEmpty()) {
+            return $orderedChunks;
+        }
+
+        $expandedChunks = Chunk::query()
+            ->whereIn('document_id', $sessionDocuments->pluck('id')->all())
+            ->when(is_string($scopeProjectId) && $scopeProjectId !== '', function ($query) use ($scopeProjectId): void {
+                $query->whereHas('document', fn ($documentQuery) => $documentQuery->where('project_id', $scopeProjectId));
+            })
+            ->with([
+                'dedupMedia',
+                'outgoingRelations.to_entity',
+                'incomingRelations' => function ($query) {
+                    $query->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
+                },
+            ])
+            ->withNeighborSnippets()
+            ->orderBy('document_id')
+            ->orderBy('order')
+            ->get()
+            ->keyBy('id');
+
+        if ($expandedChunks->isEmpty()) {
+            return $orderedChunks;
+        }
+
+        $existingById = $orderedChunks
+            ->keyBy(static fn (Chunk $chunk): string => (string) $chunk->id);
+
+        foreach ($expandedChunks as $chunkId => $chunk) {
+            if (! $existingById->has((string) $chunkId)) {
+                $existingById->put((string) $chunkId, $chunk);
+            }
+        }
+
+        return $existingById->values();
+    }
+
+    private function documentMatchesSessionNumber(Document $document, int $sessionNumber): bool
+    {
+        $alias = mb_strtolower(trim((string) ($document->alias ?? '')));
+        $name = mb_strtolower(trim((string) ($document->name ?? '')));
+
+        if ($alias === '' && $name === '') {
+            return false;
+        }
+
+        $patterns = [
+            'sessione-' . $sessionNumber,
+            'sessione ' . $sessionNumber,
+            'session-' . $sessionNumber,
+            'session ' . $sessionNumber,
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (str_contains($alias, $pattern) || str_contains($name, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isMemoryResultRelevantToQuery(string $query, array $memoryResult): bool
+    {
+        $queryTokens = $this->tokenizeForHistoryMatch($query);
+        if ($queryTokens === []) {
+            return true;
+        }
+
+        $minMatchRatio = $this->minMatchRatioForTokens($queryTokens);
+        $querySession = $this->extractSessionNumber($query);
+
+        $memoryQuery = is_string($memoryResult['query'] ?? null)
+            ? (string) $memoryResult['query']
+            : '';
+        $memoryNotes = is_string($memoryResult['notes'] ?? null)
+            ? (string) $memoryResult['notes']
+            : '';
+        $memorySummary = is_string($memoryResult['summary'] ?? null)
+            ? (string) $memoryResult['summary']
+            : '';
+
+        $memoryText = trim($memoryQuery . ' ' . $memoryNotes . ' ' . $memorySummary);
+        $memoryTokens = $this->tokenizeForHistoryMatch($memoryText);
+        if ($memoryTokens === []) {
+            return false;
+        }
+
+        $overlap = array_values(array_intersect($queryTokens, $memoryTokens));
+        $matchRatio = count($queryTokens) > 0
+            ? (count($overlap) / count($queryTokens))
+            : 0.0;
+
+        if ($matchRatio < $minMatchRatio) {
+            return false;
+        }
+
+        if ($querySession === null) {
+            return true;
+        }
+
+        return $this->extractSessionNumber($memoryText) === $querySession;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function tokenizeForHistoryMatch(string $text): array
+    {
+        $normalized = mb_strtolower(trim($text));
+        if ($normalized === '') {
+            return [];
+        }
+
+        $normalized = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $normalized);
+        if (! is_string($normalized) || trim($normalized) === '') {
+            return [];
+        }
+
+        $parts = preg_split('/\s+/u', $normalized) ?: [];
+
+        return array_values(array_unique(array_filter($parts, static fn (string $token): bool => $token !== '')));
+    }
+
+    /**
+     * @param array<int, string> $queryTokens
+     */
+    private function minMatchRatioForTokens(array $queryTokens): float
+    {
+        return count($queryTokens) >= 4 ? 0.6 : 1.0;
+    }
+
+    private function extractSessionNumber(string $text): ?int
+    {
+        $normalized = mb_strtolower(trim($text));
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (preg_match('/\bsession(?:e)?\s*[-:]?\s*(\d+)\b/u', $normalized, $matches) !== 1) {
+            return null;
+        }
+
+        $value = (int) ($matches[1] ?? 0);
+
+        return $value > 0 ? $value : null;
+    }
+
+    /**
      * @param array<string, array<string, mixed>> $historyById
      * @param array<string, array<int, string>> $historyChunkIdsById
      */
@@ -289,7 +478,12 @@ class SearchAgentResultResolver
             $value,
         );
 
-        return array_values(array_unique(array_filter($ids, static fn (?string $id): bool => $id !== null && $id !== '')));
+        // Validate UUID format to prevent SQLSTATE[22P02] on PostgreSQL.
+        $pattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
+        return array_values(array_unique(array_filter($ids, static fn (?string $id): bool =>
+            $id !== null && $id !== '' && preg_match($pattern, $id) === 1,
+        )));
     }
 
     /**

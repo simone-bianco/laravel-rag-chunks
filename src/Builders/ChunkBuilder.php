@@ -126,16 +126,21 @@ class ChunkBuilder extends Builder
         });
     }
 
-    public function whereDocumentSearch(?string $text): self
+    /**
+     * @param  string[]|null  $keywords  Document name/description keywords. Always OR: each keyword is matched against name OR description, and keywords are combined with OR.
+     */
+    public function whereDocumentSearch(?array $keywords): self
     {
-        return $this->when(! empty($text), function ($q) use ($text) {
-            $q->whereHas('document', function (Builder $query) use ($text) {
-                $like = '%' . $text . '%';
-
-                $query->where(function (Builder $documentQuery) use ($like) {
-                    $documentQuery
-                        ->where('name', 'ILIKE', $like)
-                        ->orWhere('description', 'ILIKE', $like);
+        return $this->when(!empty($keywords), function ($q) use ($keywords) {
+            $q->whereHas('document', function (Builder $query) use ($keywords) {
+                $query->where(function (Builder $documentQuery) use ($keywords) {
+                    foreach ($keywords as $keyword) {
+                        $like = '%' . $keyword . '%';
+                        $documentQuery->orWhere(function (Builder $inner) use ($like) {
+                            $inner->where('name', 'ILIKE', $like)
+                                ->orWhere('description', 'ILIKE', $like);
+                        });
+                    }
                 });
             });
         });

@@ -38,19 +38,8 @@ class ChunkService
                     $q->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
                 },
             ])
-            ->whereHas('document', function (Builder $query) use ($searchData) {
-                $query->where('enabled', true);
-
-                if (! empty($searchData->documentSearch)) {
-                    $like = '%' . $searchData->documentSearch . '%';
-
-                    $query->where(function (Builder $documentQuery) use ($like) {
-                        $documentQuery
-                            ->where('name', 'ILIKE', $like)
-                            ->orWhere('description', 'ILIKE', $like);
-                    });
-                }
-            })
+            ->whereHas('document', fn (Builder $query) => $query->where('enabled', true))
+            ->whereDocumentSearch($searchData->documentSearch)
             ->withNeighborSnippets()
             ->whereBasicFilters(
                 $searchData->chunksIds,

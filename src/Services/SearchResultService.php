@@ -97,6 +97,12 @@ class SearchResultService
             return [];
         }
 
+        // Filter out malformed UUIDs that would crash PostgreSQL native UUID columns.
+        $ids = $this->filterValidUuids($ids);
+        if ($ids === []) {
+            return [];
+        }
+
         $scopedQuery = static function () use ($ids, $projectId) {
             return SearchResult::query()
                 ->whereIn('id', $ids)
@@ -257,6 +263,35 @@ class SearchResultService
         }
 
         return is_array($row->results) ? $row->results : [];
+    }
+
+    /**
+     * Filter an array of ID strings to only valid UUID format.
+     * Prevents SQLSTATE[22P02] errors on PostgreSQL native UUID columns.
+     *
+     * @param  array<int, string>  $ids
+     * @return array<int, string>
+     */
+    private function filterValidUuids(array $ids): array
+    {
+        $pattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
+        $filtered = array_values(array_filter(
+            array_map(static fn (mixed $id): ?string => is_string($id) ? trim($id) : null, $ids),
+            static fn (?string $id): bool => $id !== null && preg_match($pattern, $id) === 1,
+        ));
+
+        $dropped = array_diff(array_map(static fn (mixed $id): string => is_string($id) ? trim($id) : '', $ids), $filtered);
+
+        if ($dropped !== []) {
+            Log::channel('search')->warning('[SearchResultService] Dropped invalid UUIDs from lookup', [
+                'dropped_count' => count($dropped),
+                'dropped_ids' => array_values($dropped),
+                'valid_count' => count($filtered),
+            ]);
+        }
+
+        return $filtered;
     }
 
     /**

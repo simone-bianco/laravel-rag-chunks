@@ -22,7 +22,8 @@ class ChunkSearchDataDTO
         public ?array      $projectsAliases = null,
         public ?array      $tagFilters = null,
         public ?array      $documentsAliases = null,
-        public ?string     $documentSearch = null,
+        /** @var string[]|null  Document name/description keywords (always OR) */
+        public ?array      $documentSearch = null,
         public ?array      $chunksIds = null,
         public ?bool       $hasImage = null,
         public bool        $includeEmbeddings = false,
@@ -82,7 +83,7 @@ class ChunkSearchDataDTO
             projectsAliases: $data['projectsAliases'] ?? null,
             tagFilters: isset($data['tagFilters']) && is_array($data['tagFilters']) ? $data['tagFilters'] : null,
             documentsAliases: $data['documentsAliases'] ?? null,
-            documentSearch: self::trimmedStringOrNull($data['documentSearch'] ?? null),
+            documentSearch: self::parseDocumentSearch($data['documentSearch'] ?? null),
             chunksIds: $data['chunksIds'] ?? null,
             hasImage: self::resolveHasImage($data['hasImage'] ?? null),
             chunkTagGroups: $data['chunkTagGroups'] ?? null,
@@ -130,14 +131,36 @@ class ChunkSearchDataDTO
         ];
     }
 
-    private static function trimmedStringOrNull(mixed $value): ?string
+    /**
+     * Parse documentSearch from object form { keywords: string[] } or legacy string[] form.
+     * Always uses OR semantics (each keyword matched against name OR description, keywords OR'd together).
+     *
+     * @return string[]|null
+     */
+    private static function parseDocumentSearch(mixed $value): ?array
     {
-        if (! is_string($value)) {
+        if (! is_array($value)) {
             return null;
         }
 
-        $value = trim($value);
+        // New schema: { keywords: string[] }
+        if (array_key_exists('keywords', $value)) {
+            $keywords = is_array($value['keywords'])
+                ? array_values(array_filter(array_map(
+                    static fn ($k) => is_string($k) ? trim($k) : null,
+                    $value['keywords']
+                )))
+                : null;
 
-        return $value !== '' ? $value : null;
+            return ! empty($keywords) ? $keywords : null;
+        }
+
+        // Legacy/fallback: plain string[] — accept only string elements
+        $keywords = array_values(array_filter(array_map(
+            static fn ($k) => is_string($k) ? trim($k) : null,
+            $value
+        )));
+
+        return ! empty($keywords) ? $keywords : null;
     }
 }
