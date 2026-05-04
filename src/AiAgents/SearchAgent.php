@@ -18,7 +18,9 @@ use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
 use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use SimoneBianco\LaravelRagChunks\Models\Project;
+use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 use SimoneBianco\LaravelRagChunks\Services\SearchAgentResultResolver;
+use SimoneBianco\LaravelRagChunks\Services\SearchResultAutomationSettings;
 class SearchAgent extends RotableAgent
 {
     use BuildsInstructions, HasSearchResults;
@@ -76,6 +78,15 @@ class SearchAgent extends RotableAgent
             ? trim($callingAgentId)
             : null;
         $this->scopeProjectId = $this->resolveProjectIdFromScope();
+
+        // Override thresholds from project-level settings (hierarchy: project → constructor param).
+        // Without this, project-specific overrides (e.g. optimization_chunk_threshold=30)
+        // would be ignored because the factory only reads from context/config.
+        if ($this->scopeProjectId !== null) {
+            $automationSettings = SearchResultAutomationSettings::forProjectId($this->scopeProjectId);
+            $this->optimizationChunkThreshold = $automationSettings->optimizationChunkThreshold($this->optimizationChunkThreshold);
+            $this->optimizationHitThreshold = $automationSettings->optimizationHitThreshold($this->optimizationHitThreshold);
+        }
 
         parent::__construct($key, $usesUserId, $group);
 
@@ -259,6 +270,20 @@ class SearchAgent extends RotableAgent
             return;
         }
 
+        // Skip save when the unique chunk set is identical to what's already saved.
+        // Prevents wasted DB writes, unnecessary compaction/optimization, and
+        // spurious summary regeneration on history-reused runs.
+        if ($this->isChunkSetAlreadySaved($searchResults)) {
+            $this->logger()->info('[SearchAgent] Deterministic save skipped: identical unique chunk set already saved', [
+                'scope_type' => $this->scope->type->value,
+                'scope_alias' => $this->scope->alias,
+                'project_id' => $this->scopeProjectId,
+                'reason' => 'zero_diff_unique_chunks',
+            ]);
+
+            return;
+        }
+
         $tool = (new SaveSearchesResultsTool($this->scopeProjectId))
             ->compactionThreshold($this->compactionThreshold)
             ->optimizationChunkThreshold($this->optimizationChunkThreshold)
@@ -286,5 +311,55 @@ class SearchAgent extends RotableAgent
                 $searchResults,
             )),
         ]);
+    }
+
+    /**
+     * Check whether the unique chunk IDs from the current search results
+     * are identical to the most recently saved SearchResult for this project.
+     *
+     * When true, the deterministic save is skipped to avoid wasted writes,
+     * unnecessary compaction/optimization, and spurious summary regeneration.
+     *
+     * @param array<int, array{chunk_ids?: array<int, string>}> $searchResults
+     */
+    private function isChunkSetAlreadySaved(array $searchResults): bool
+    {
+        if ($this->scopeProjectId === null) {
+            return false;
+        }
+
+        $currentChunkIds = collect($searchResults)
+            ->flatMap(fn (array $result): array => is_array($result['chunk_ids'] ?? null)
+                ? $result['chunk_ids']
+                : [])
+            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($currentChunkIds === []) {
+            return false;
+        }
+
+        $lastSaved = SearchResult::query()
+            ->where('project_id', $this->scopeProjectId)
+            ->latest()
+            ->first();
+
+        if ($lastSaved === null) {
+            return false;
+        }
+
+        $savedResults = is_array($lastSaved->results) ? $lastSaved->results : [];
+        $savedChunkIds = is_array($savedResults['chunk_ids'] ?? null) ? $savedResults['chunk_ids'] : [];
+        $savedChunkIds = array_values(array_unique(array_filter(
+            $savedChunkIds,
+            static fn (mixed $id): bool => is_string($id) && $id !== '',
+        )));
+
+        sort($currentChunkIds);
+        sort($savedChunkIds);
+
+        return $currentChunkIds === $savedChunkIds;
     }
 }
