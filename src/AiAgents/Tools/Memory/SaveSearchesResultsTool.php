@@ -282,6 +282,7 @@ class SaveSearchesResultsTool extends Tool
             } else {
                 $optimization = $this->optimizeMemory(
                     $row,
+                    automationSettings: $automationSettings,
                     allowedOperations: $automationSettings->optimizationOperations(),
                 );
 
@@ -469,6 +470,7 @@ class SaveSearchesResultsTool extends Tool
     /** @return array<string, mixed> */
     private function optimizeMemory(
         SearchResult $memory,
+        ?SearchResultAutomationSettings $automationSettings = null,
         bool $forceSplit = false,
         bool $summarizeWhenUnderThreshold = false,
         array $allowedOperations = ['compact', 'split'],
@@ -477,6 +479,7 @@ class SaveSearchesResultsTool extends Tool
             return app(SearchResultMemoryOptimizationService::class)->optimizeIfNeeded(
                 memory: $memory,
                 chunkThreshold: $this->optimizationChunkThreshold,
+                automationSettings: $automationSettings,
                 forceSplit: $forceSplit,
                 summarizeWhenUnderThreshold: $summarizeWhenUnderThreshold,
                 allowedOperations: $allowedOperations,

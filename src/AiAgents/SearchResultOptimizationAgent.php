@@ -14,7 +14,7 @@ class SearchResultOptimizationAgent extends RotableAgent
 
     protected $model = 'gpt-5.4-mini';
 
-    protected $maxCompletionTokens = 2600;
+    protected $maxCompletionTokens = 8192;
 
     protected string $query = '';
 
@@ -26,13 +26,16 @@ class SearchResultOptimizationAgent extends RotableAgent
 
     protected bool $forceSplit = false;
 
-    public function withInput(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit): self
+    protected int $maxSummaryWords = 1000;
+
+    public function withInput(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit, int $maxSummaryWords = 1000): self
     {
         $this->query = trim($query);
         $this->notes = is_string($notes) && trim($notes) !== '' ? trim($notes) : null;
         $this->existingSummary = is_string($existingSummary) && trim($existingSummary) !== '' ? trim($existingSummary) : null;
         $this->chunkCatalog = trim($chunkCatalog);
         $this->forceSplit = $forceSplit;
+        $this->maxSummaryWords = self::normalizeMaxWords($maxSummaryWords);
 
         return $this;
     }
@@ -80,7 +83,7 @@ class SearchResultOptimizationAgent extends RotableAgent
 
     public function instructions(): string
     {
-        return <<<'PROMPT'
+        return <<<PROMPT
 You optimize one saved RAG search-result memory.
 
 INPUT
@@ -101,7 +104,7 @@ RULES
 2. Ignore chunk material unrelated to query and notes.
 3. Split when the memory mixes separable entities or questions, e.g. "who are Giacomo and Fabrizio" -> one group per person.
 4. Compact when chunks are facets of one subject, e.g. "Giacomo appearance, habits, work" -> one summary.
-5. Summary max 260 words. Preserve concrete names, dates, places, numbers, constraints, causal links.
+5. Summary max {$this->maxSummaryWords} words. Do not be terse: include all relevant facts, names, dates, places, events, numbers, causal links from the chunks that relate to the query.
 6. Split groups must use only chunk IDs from chunk_catalog; each group needs at least one chunk_id.
 7. Notes are ultra-short keyword fragments, max 30 words.
 8. Do not invent facts or topics. Return schema-compliant JSON only.
@@ -152,11 +155,13 @@ PROMPT;
     }
 
     /** @return array{action: string, summary: ?string, groups: array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}>} */
-    public static function optimize(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit = false): array
+    public static function optimize(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit = false, ?int $maxSummaryWords = 1000): array
     {
+        $maxSummaryWords = self::normalizeMaxWords($maxSummaryWords ?? 1000);
+
         try {
             $agent = new self('search-result-optimization');
-            $result = $agent->withInput($query, $notes, $existingSummary, $chunkCatalog, $forceSplit)->respond();
+            $result = $agent->withInput($query, $notes, $existingSummary, $chunkCatalog, $forceSplit, $maxSummaryWords)->respond();
 
             if (! is_array($result)) {
                 return self::fallback($forceSplit);
@@ -172,7 +177,7 @@ PROMPT;
             }
 
             $summary = is_string($result['summary'] ?? null) && trim($result['summary']) !== ''
-                ? self::limitWords(trim($result['summary']))
+                ? self::limitWords(trim($result['summary']), $maxSummaryWords)
                 : null;
 
             return [
@@ -219,7 +224,7 @@ PROMPT;
         return array_values(array_slice($normalized, 0, 6));
     }
 
-    private static function limitWords(string $text): ?string
+    private static function limitWords(string $text, int $maxWords): ?string
     {
         $normalized = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
         if ($normalized === '') {
@@ -228,6 +233,11 @@ PROMPT;
 
         $words = preg_split('/\s+/u', $normalized) ?: [];
 
-        return implode(' ', array_slice($words, 0, 260));
+        return implode(' ', array_slice($words, 0, self::normalizeMaxWords($maxWords)));
+    }
+
+    private static function normalizeMaxWords(int $maxWords): int
+    {
+        return max(100, min(5000, $maxWords));
     }
 }

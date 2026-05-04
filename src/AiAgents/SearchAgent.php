@@ -273,7 +273,18 @@ class SearchAgent extends RotableAgent
             'scope_alias' => $this->scope->alias,
             'saved_count' => is_array($saveResult) ? (int) ($saveResult['saved_count'] ?? 0) : 0,
             'skipped_count' => is_array($saveResult) ? (int) ($saveResult['skipped_count'] ?? 0) : 0,
+            'compacted_count' => is_array($saveResult) ? (int) ($saveResult['compacted_count'] ?? 0) : 0,
             'status' => is_array($saveResult) ? ($saveResult['status'] ?? null) : null,
+            'saved_ids' => is_array($saveResult) ? ($saveResult['saved_ids'] ?? []) : [],
+            'saved_with_notes' => is_array($saveResult) ? (int) ($saveResult['saved_with_notes_count'] ?? 0) : 0,
+            'query_previews' => array_values(array_map(
+                fn (array $s): string => mb_substr((string) ($s['query'] ?? ''), 0, 120),
+                $searchResults,
+            )),
+            'chunk_counts' => array_values(array_map(
+                fn (array $s): int => count($s['chunk_ids'] ?? []),
+                $searchResults,
+            )),
         ]);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\AiAgents\Concerns;
 
+use Illuminate\Support\Facades\Log;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultService;
 
 trait HasSearchResults
@@ -41,38 +42,58 @@ trait HasSearchResults
         }
 
         $queryTokens = $this->tokenizeForHistoryMatch($query);
-        if ($queryTokens === []) {
-            return $recent;
-        }
+        $minMatchRatio = $queryTokens === [] ? 1.0 : $this->minMatchRatioForTokens($queryTokens);
 
-        $minMatchRatio = $this->minMatchRatioForTokens($queryTokens);
-        $querySession = $this->extractSessionNumber($query);
+        $accepted = [];
+        $rejected = [];
 
-        return array_values(array_filter($recent, function (array $entry) use ($queryTokens, $minMatchRatio, $querySession): bool {
+        foreach ($recent as $entry) {
+            $entryId = is_string($entry['id'] ?? null) ? $entry['id'] : '?';
+            $similarity = (float) ($entry['similarity'] ?? 0.0);
+
+            // High semantic similarity → accept regardless of token overlap (cross-language rescue)
+            if ($similarity >= 0.80) {
+                $accepted[] = $entry;
+                continue;
+            }
+
+            // Token overlap rule
             $historyQuery = is_string($entry['query'] ?? null) ? (string) $entry['query'] : '';
             $historyNotes = is_string($entry['notes'] ?? null) ? (string) $entry['notes'] : '';
-
             $historyText = trim($historyQuery . ' ' . $historyNotes);
             $historyTokens = $this->tokenizeForHistoryMatch($historyText);
-            if ($historyTokens === []) {
-                return false;
+
+            if ($historyTokens !== [] && $queryTokens !== []) {
+                $overlap = array_values(array_intersect($queryTokens, $historyTokens));
+                $matchRatio = count($overlap) / count($queryTokens);
+                if ($matchRatio >= $minMatchRatio) {
+                    $accepted[] = $entry;
+                    continue;
+                }
+                $reason = sprintf('tokens=%.2f/%s', round($matchRatio, 2), round($minMatchRatio, 2));
+            } else {
+                $reason = 'no tokens';
             }
 
-            $overlap = array_values(array_intersect($queryTokens, $historyTokens));
-            $matchRatio = count($queryTokens) > 0
-                ? (count($overlap) / count($queryTokens))
-                : 0.0;
-
-            if ($matchRatio < $minMatchRatio) {
-                return false;
+            if (($reason ?? '') === '') {
+                $reason = sprintf('sim=%.3f', $similarity);
             }
 
-            if ($querySession === null) {
-                return true;
-            }
+            $rejected[] = ['id' => $entryId, 'reason' => $reason];
+        }
 
-            return $this->extractSessionNumber($historyText) === $querySession;
-        }));
+        if ($rejected !== []) {
+            Log::channel('search')->info('[HasSearchResults] Pre-lookup filter', [
+                'search_query' => mb_substr($query, 0, 200),
+                'query_tokens' => $queryTokens,
+                'min_match_ratio' => round($minMatchRatio, 2),
+                'accepted_count' => count($accepted),
+                'rejected_count' => count($rejected),
+                'rejected' => $rejected,
+            ]);
+        }
+
+        return array_values($accepted);
     }
 
     /**

@@ -19,6 +19,7 @@ class SearchResultMemoryOptimizationService
     public function optimizeIfNeeded(
         SearchResult $memory,
         int $chunkThreshold,
+        ?SearchResultAutomationSettings $automationSettings = null,
         bool $forceSplit = false,
         bool $summarizeWhenUnderThreshold = false,
         bool $forceDecision = false,
@@ -26,6 +27,8 @@ class SearchResultMemoryOptimizationService
     ): array {
         $chunkThreshold = max(1, $chunkThreshold);
         $allowedOperations = $this->normalizeAllowedOperations($allowedOperations);
+        $automationSettings ??= SearchResultAutomationSettings::forProjectId($this->projectId($memory));
+        $maxSummaryWords = $automationSettings->maxSummaryWords((int) config('rag_chunks.search_results.max_summary_words', 1000));
 
         if ($allowedOperations === []) {
             return ['action' => 'keep', 'reason' => 'automatic_operations_disabled'];
@@ -45,7 +48,7 @@ class SearchResultMemoryOptimizationService
                     return ['action' => 'keep', 'reason' => 'compact_disabled'];
                 }
 
-                return $this->compact($memory, 'under_threshold_summary_refresh');
+                return $this->compact($memory, 'under_threshold_summary_refresh', $maxSummaryWords);
             }
 
             return ['action' => 'keep', 'reason' => 'under_threshold', 'chunks_count' => $chunkCount];
@@ -62,12 +65,13 @@ class SearchResultMemoryOptimizationService
             $this->summary($memory),
             $this->buildChunkCatalog($chunks),
             $forceSplit && in_array('split', $allowedOperations, true),
+            $maxSummaryWords,
         );
 
         if ($forceSplit || $decision['action'] === 'split') {
             if (! in_array('split', $allowedOperations, true)) {
                 if (in_array('compact', $allowedOperations, true)) {
-                    return $this->compact($memory, 'split_disabled_compact_fallback');
+                    return $this->compact($memory, 'split_disabled_compact_fallback', $maxSummaryWords);
                 }
 
                 return ['action' => 'keep', 'reason' => 'split_disabled', 'chunks_count' => $chunkCount];
@@ -83,7 +87,7 @@ class SearchResultMemoryOptimizationService
 
             $summary = $decision['summary'] ?? null;
             if (! is_string($summary) || trim($summary) === '') {
-                return $this->compact($memory, 'agent_compact_fallback');
+                return $this->compact($memory, 'agent_compact_fallback', $maxSummaryWords);
             }
 
             $memory->forceFill(['summary' => trim($summary)])->save();
@@ -96,7 +100,7 @@ class SearchResultMemoryOptimizationService
                 return ['action' => 'keep', 'reason' => 'compact_disabled_forced_decision', 'chunks_count' => $chunkCount];
             }
 
-            return $this->compact($memory, 'forced_decision_compact_fallback');
+            return $this->compact($memory, 'forced_decision_compact_fallback', $maxSummaryWords);
         }
 
         return ['action' => 'keep', 'reason' => 'agent_keep', 'chunks_count' => $chunkCount];
@@ -114,7 +118,7 @@ class SearchResultMemoryOptimizationService
     }
 
     /** @return array<string, mixed> */
-    private function compact(SearchResult $memory, string $reason): array
+    private function compact(SearchResult $memory, string $reason, int $maxSummaryWords): array
     {
         $input = $this->buildFullChunkInput($memory);
         if ($input === '') {
@@ -126,7 +130,7 @@ class SearchResultMemoryOptimizationService
             ? "Existing summary:\n{$summarySeed}\n\nNew/backing chunks:\n{$input}"
             : $input;
 
-        $summary = SearchResultSummaryAgent::summarize($this->query($memory), $this->notes($memory), $summaryInput);
+        $summary = SearchResultSummaryAgent::summarize($this->query($memory), $this->notes($memory), $summaryInput, $maxSummaryWords);
         if (trim($summary) === '') {
             return ['action' => 'keep', 'reason' => 'empty_summary'];
         }

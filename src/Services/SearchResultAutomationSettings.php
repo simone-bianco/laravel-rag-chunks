@@ -7,13 +7,14 @@ use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class SearchResultAutomationSettings
 {
-    /** @var null|Closure(): array{auto_merge_distance: ?float, optimization_chunk_threshold: ?int, optimization_hit_threshold: ?int} */
+    /** @var null|Closure(): array{auto_merge_distance: ?float, optimization_chunk_threshold: ?int, optimization_hit_threshold: ?int, max_summary_words: ?int} */
     protected static ?Closure $globalDefaultsResolver = null;
 
     public function __construct(
         private readonly ?float $autoMergeDistance,
         private readonly ?int $optimizationChunkThreshold,
         private readonly ?int $optimizationHitThreshold,
+        private readonly ?int $maxSummaryWords,
         private readonly ?bool $autoMergeEnabled,
         private readonly ?bool $autoCompactEnabled,
         private readonly ?bool $autoSplitEnabled,
@@ -23,7 +24,7 @@ class SearchResultAutomationSettings
      * Register a resolver for global defaults (called when project value is null).
      * The closure should return an array with optional float/int values.
      *
-     * @param  Closure(): array{auto_merge_distance?: ?float, optimization_chunk_threshold?: ?int, optimization_hit_threshold?: ?int}  $resolver
+     * @param  Closure(): array{auto_merge_distance?: ?float, optimization_chunk_threshold?: ?int, optimization_hit_threshold?: ?int, max_summary_words?: ?int}  $resolver
      */
     public static function resolveGlobalDefaultsUsing(Closure $resolver): void
     {
@@ -48,6 +49,7 @@ class SearchResultAutomationSettings
             autoMergeDistance: $settings->search_result_auto_merge_distance,
             optimizationChunkThreshold: $settings->search_result_optimization_chunk_threshold ?? null,
             optimizationHitThreshold: $settings->search_result_optimization_hit_threshold,
+            maxSummaryWords: $settings->search_result_max_summary_words,
             autoMergeEnabled: $settings->search_result_auto_merge_enabled,
             autoCompactEnabled: $settings->search_result_auto_compact_enabled,
             autoSplitEnabled: $settings->search_result_auto_split_enabled,
@@ -62,6 +64,7 @@ class SearchResultAutomationSettings
             autoMergeDistance: $global['auto_merge_distance'] ?? null,
             optimizationChunkThreshold: $global['optimization_chunk_threshold'] ?? null,
             optimizationHitThreshold: $global['optimization_hit_threshold'] ?? null,
+            maxSummaryWords: $global['max_summary_words'] ?? null,
             autoMergeEnabled: null,
             autoCompactEnabled: null,
             autoSplitEnabled: null,
@@ -69,7 +72,7 @@ class SearchResultAutomationSettings
     }
 
     /**
-     * @return array{auto_merge_distance: ?float, optimization_chunk_threshold: ?int, optimization_hit_threshold: ?int}
+     * @return array{auto_merge_distance: ?float, optimization_chunk_threshold: ?int, optimization_hit_threshold: ?int, max_summary_words: ?int}
      */
     private static function resolveGlobalDefaults(): array
     {
@@ -78,6 +81,7 @@ class SearchResultAutomationSettings
                 'auto_merge_distance' => null,
                 'optimization_chunk_threshold' => null,
                 'optimization_hit_threshold' => null,
+                'max_summary_words' => null,
             ];
         }
 
@@ -92,6 +96,9 @@ class SearchResultAutomationSettings
                 : null,
             'optimization_hit_threshold' => is_array($resolved) && array_key_exists('optimization_hit_threshold', $resolved)
                 ? (is_int($resolved['optimization_hit_threshold']) || $resolved['optimization_hit_threshold'] === null ? $resolved['optimization_hit_threshold'] : (int) $resolved['optimization_hit_threshold'])
+                : null,
+            'max_summary_words' => is_array($resolved) && array_key_exists('max_summary_words', $resolved)
+                ? (is_int($resolved['max_summary_words']) || $resolved['max_summary_words'] === null ? $resolved['max_summary_words'] : (int) $resolved['max_summary_words'])
                 : null,
         ];
     }
@@ -115,6 +122,13 @@ class SearchResultAutomationSettings
         $value = $this->optimizationHitThreshold ?? $fallback;
 
         return max(0, $value);
+    }
+
+    public function maxSummaryWords(int $fallback): int
+    {
+        $value = $this->maxSummaryWords ?? $fallback;
+
+        return max(100, min(5000, $value));
     }
 
     /** @return array<int, string> */

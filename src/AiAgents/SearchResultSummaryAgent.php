@@ -10,13 +10,11 @@ use TypeError;
 
 class SearchResultSummaryAgent extends RotableAgent
 {
-    private const MAX_SUMMARY_WORDS = 260;
-
     protected $history = 'LarAgent\\Context\\Drivers\\InMemoryStorage';
 
     protected $model = 'gpt-5.4-mini';
 
-    protected $maxCompletionTokens = 1200;
+    protected $maxCompletionTokens = 4096;
 
     protected string $query = '';
 
@@ -24,11 +22,20 @@ class SearchResultSummaryAgent extends RotableAgent
 
     protected string $chunkText = '';
 
+    protected int $maxSummaryWords = 1000;
+
     public function withInput(string $query, ?string $notes, string $chunkText): self
     {
         $this->query = trim($query);
         $this->notes = is_string($notes) && trim($notes) !== '' ? trim($notes) : null;
         $this->chunkText = trim($chunkText);
+
+        return $this;
+    }
+
+    public function maxSummaryWords(int $maxSummaryWords): self
+    {
+        $this->maxSummaryWords = self::normalizeMaxWords($maxSummaryWords);
 
         return $this;
     }
@@ -54,7 +61,7 @@ class SearchResultSummaryAgent extends RotableAgent
 
     public function instructions(): string
     {
-        return <<<'PROMPT'
+        return <<<PROMPT
 You compact saved RAG search results.
 
 INPUT
@@ -71,7 +78,7 @@ RULES
 3. Do not mention that you are summarizing chunks.
 4. Do not invent missing facts.
 5. Prefer compact paragraphs; bullets are allowed only when they improve density.
-6. Max 260 words.
+6. Max {$this->maxSummaryWords} words. Do not be terse: include all relevant facts, names, places, events, and causal links.
 7. If there is no relevant information, return: No relevant information found.
 PROMPT;
     }
@@ -103,7 +110,7 @@ PROMPT;
             $response = $method->invokeArgs($this, $arguments);
 
             if (is_array($response)) {
-                return ['summary' => self::limitWords(trim((string) ($response['summary'] ?? '')))];
+                return ['summary' => self::limitWords(trim((string) ($response['summary'] ?? '')), $this->maxSummaryWords)];
             }
 
             throw new RuntimeException('[SearchResultSummaryAgent] Unexpected response type from AI provider.');
@@ -117,10 +124,11 @@ PROMPT;
         return $message;
     }
 
-    public static function summarize(string $query, ?string $notes, string $chunkText): string
+    public static function summarize(string $query, ?string $notes, string $chunkText, ?int $maxWords = 1000): string
     {
         $query = trim($query);
         $chunkText = trim($chunkText);
+        $maxWords = self::normalizeMaxWords($maxWords ?? 1000);
 
         if ($query === '' || $chunkText === '') {
             return '';
@@ -128,19 +136,22 @@ PROMPT;
 
         try {
             $agent = new self('search-result-summary');
-            $result = $agent->withInput($query, $notes, $chunkText)->respond();
+            $result = $agent
+                ->maxSummaryWords($maxWords)
+                ->withInput($query, $notes, $chunkText)
+                ->respond();
 
             if (is_array($result)) {
-                return self::limitWords(trim((string) ($result['summary'] ?? ''))) ?? '';
+                return self::limitWords(trim((string) ($result['summary'] ?? '')), $maxWords) ?? '';
             }
         } catch (Throwable) {
             // Fall back to deterministic truncation below.
         }
 
-        return self::limitWords($chunkText) ?? '';
+        return self::limitWords($chunkText, $maxWords) ?? '';
     }
 
-    private static function limitWords(string $text): ?string
+    private static function limitWords(string $text, int $maxWords): ?string
     {
         $normalized = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
         if ($normalized === '') {
@@ -152,6 +163,11 @@ PROMPT;
             return null;
         }
 
-        return implode(' ', array_slice($words, 0, self::MAX_SUMMARY_WORDS));
+        return implode(' ', array_slice($words, 0, self::normalizeMaxWords($maxWords)));
+    }
+
+    private static function normalizeMaxWords(int $maxWords): int
+    {
+        return max(100, min(5000, $maxWords));
     }
 }

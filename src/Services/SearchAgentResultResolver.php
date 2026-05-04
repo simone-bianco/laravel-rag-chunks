@@ -3,6 +3,7 @@
 namespace SimoneBianco\LaravelRagChunks\Services;
 
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\NormalizesChunkIds;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
@@ -331,7 +332,6 @@ class SearchAgentResultResolver
         }
 
         $minMatchRatio = $this->minMatchRatioForTokens($queryTokens);
-        $querySession = $this->extractSessionNumber($query);
 
         $memoryQuery = is_string($memoryResult['query'] ?? null)
             ? (string) $memoryResult['query']
@@ -345,24 +345,33 @@ class SearchAgentResultResolver
 
         $memoryText = trim($memoryQuery . ' ' . $memoryNotes . ' ' . $memorySummary);
         $memoryTokens = $this->tokenizeForHistoryMatch($memoryText);
+
         if ($memoryTokens === []) {
+            Log::channel('search')->debug('[Resolver] Memory rejected: no tokens', [
+                'memory_id' => $memoryResult['id'] ?? '?',
+                'query_preview' => mb_substr($query, 0, 120),
+            ]);
+
             return false;
         }
 
         $overlap = array_values(array_intersect($queryTokens, $memoryTokens));
-        $matchRatio = count($queryTokens) > 0
-            ? (count($overlap) / count($queryTokens))
-            : 0.0;
+        $matchRatio = count($overlap) / count($queryTokens);
 
         if ($matchRatio < $minMatchRatio) {
+            Log::channel('search')->debug('[Resolver] Memory rejected: token mismatch', [
+                'memory_id' => $memoryResult['id'] ?? '?',
+                'query_preview' => mb_substr($query, 0, 120),
+                'match_ratio' => round($matchRatio, 2),
+                'min_ratio' => round($minMatchRatio, 2),
+                'query_tokens' => $queryTokens,
+                'memory_tokens' => $memoryTokens,
+            ]);
+
             return false;
         }
 
-        if ($querySession === null) {
-            return true;
-        }
-
-        return $this->extractSessionNumber($memoryText) === $querySession;
+        return true;
     }
 
     /**

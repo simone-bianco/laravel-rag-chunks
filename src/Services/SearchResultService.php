@@ -2,6 +2,7 @@
 
 namespace SimoneBianco\LaravelRagChunks\Services;
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
@@ -22,12 +23,15 @@ class SearchResultService
     public function getRecent(string $query, int $count = 5, ?string $projectId = null): array
     {
         $vector = Embedding::embed($query);
+        $vectorString = '[' . implode(',', $vector) . ']';
 
         $results = SearchResult::query()
             ->when(is_string($projectId) && $projectId !== '', static fn ($builder) => $builder->where('project_id', $projectId))
             ->nearestNeighbors('embedding', $vector)
+            ->select(['id', 'project_id', 'query', 'notes', 'summary', 'hits', 'results'])
+            ->addSelect(DB::raw("1.0 - (embedding <=> '{$vectorString}') as similarity"))
             ->limit(max(1, $count))
-            ->get(['id', 'project_id', 'query', 'notes', 'summary', 'hits', 'results'])
+            ->get()
             ->map(fn (SearchResult $row): array => [
                 'id'         => (string) $row->id,
                 'project_id' => is_string($row->project_id) ? $row->project_id : null,
@@ -35,6 +39,7 @@ class SearchResultService
                 'notes'      => is_string($row->notes) ? $row->notes : null,
                 'summary'    => is_string($row->summary) && trim($row->summary) !== '' ? trim($row->summary) : null,
                 'hits'       => (int) $row->hits,
+                'similarity' => (float) ($row->similarity ?? 0.0),
                 'results'    => $this->resultsForRow($row),
             ])
             ->all();
@@ -47,11 +52,18 @@ class SearchResultService
         }
 
         Log::channel('search')->info('[SearchResultService] History lookup', [
-            'query_count' => substr_count($query, 'query="'),
+            'search_query' => mb_substr($query, 0, 200),
             'recent_count' => count($results),
             'history_hit' => count($results) > 0,
             'project_id' => $projectId,
             'recent_ids' => array_column($results, 'id'),
+            'candidates' => array_values(array_map(fn (array $row): array => [
+                'id' => $row['id'],
+                'query_preview' => mb_substr((string) ($row['query'] ?? ''), 0, 120),
+                'notes_preview' => is_string($row['notes'] ?? null) ? mb_substr($row['notes'], 0, 80) : null,
+                'similarity' => round((float) ($row['similarity'] ?? 0.0), 4),
+                'hits' => (int) ($row['hits'] ?? 0),
+            ], $results)),
         ]);
 
         return $results;
