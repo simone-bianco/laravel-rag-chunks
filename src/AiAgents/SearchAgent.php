@@ -21,6 +21,7 @@ use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 use SimoneBianco\LaravelRagChunks\Services\SearchAgentResultResolver;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultAutomationSettings;
+use SimoneBianco\LaravelRagChunks\Services\SearchResultMemoryOptimizationService;
 
 class SearchAgent extends RotableAgent
 {
@@ -117,10 +118,6 @@ class SearchAgent extends RotableAgent
         if ($this->searchResultsActive()) {
             $this->withTool((new GetSearchesResultsTool($this->scopeProjectId))
                 ->optimizationChunkThreshold($this->optimizationChunkThreshold));
-            $this->withTool((new SaveSearchesResultsTool($this->scopeProjectId))
-                ->compactionThreshold($this->compactionThreshold)
-                ->optimizationChunkThreshold($this->optimizationChunkThreshold)
-                ->creatorAgentId($this->callingAgentId));
         }
 
         if ($this->persistentMemoryActive()) {
@@ -208,7 +205,14 @@ class SearchAgent extends RotableAgent
         $resolver = app(SearchAgentResultResolver::class);
         $resolved = $resolver->resolve($decoded['results'], $this->scopeProjectId);
 
-        $this->persistResolvedResultsDeterministically($resolved);
+        $storeMode = is_string($decoded['store_mode'] ?? null)
+            ? trim($decoded['store_mode'])
+            : 'as_is';
+        $storeContext = is_string($decoded['store_context'] ?? null)
+            ? trim($decoded['store_context'])
+            : null;
+
+        $this->persistResolvedResultsDeterministically($resolved, $storeMode, $storeContext);
 
         $this->logger()->info('[SearchAgent] Search completed', [
             'scope_type'    => $this->scope->type->value,
@@ -224,10 +228,19 @@ class SearchAgent extends RotableAgent
         return $resolved;
     }
 
-    private function persistResolvedResultsDeterministically(array $resolved): void
+    private function persistResolvedResultsDeterministically(array $resolved, string $storeMode = 'as_is', ?string $storeContext = null): void
     {
         if (! $this->searchResultsActive()) {
             return;
+        }
+
+        if ($storeMode === 'none') {
+            $this->logger()->info('[SearchAgent] Deterministic save skipped: store_mode=none');
+            return;
+        }
+
+        if (! in_array($storeMode, ['as_is', 'split'], true)) {
+            $storeMode = 'as_is';
         }
 
         $results = is_array($resolved['results'] ?? null)
@@ -287,11 +300,11 @@ class SearchAgent extends RotableAgent
         // Prevents wasted DB writes, unnecessary compaction/optimization, and
         // spurious summary regeneration on history-reused runs.
         if ($this->isChunkSetAlreadySaved($searchResults)) {
-            $this->logger()->info('[SearchAgent] Deterministic save skipped: identical unique chunk set already saved', [
+            $this->logger()->info('[SearchAgent] Deterministic save skipped: identical chunk set already saved', [
                 'scope_type' => $this->scope->type->value,
                 'scope_alias' => $this->scope->alias,
                 'project_id' => $this->scopeProjectId,
-                'reason' => 'zero_diff_unique_chunks',
+                'reason' => 'hash_match',
             ]);
 
             return;
@@ -306,32 +319,68 @@ class SearchAgent extends RotableAgent
             'searchResults' => $searchResults,
         ]);
 
-        $this->logger()->info('[SearchAgent] Deterministic history save completed', [
+        $savedCount = is_array($saveResult) ? (int) ($saveResult['saved_count'] ?? 0) : 0;
+        $savedIds = is_array($saveResult) ? ($saveResult['saved_ids'] ?? []) : [];
+
+        // Split mode: the LLM wants one composite memory split into focused ones.
+        // We saved it as one, now trigger split optimization on it.
+        $splitResult = null;
+        $splitIds = [];
+        if ($storeMode === 'split' && $savedCount === 1 && ! empty($savedIds)) {
+            $savedId = (string) $savedIds[0];
+            $savedMemory = SearchResult::query()->find($savedId);
+            if ($savedMemory !== null) {
+                $splitResult = $this->triggerSplitOnMemory($savedMemory, $storeContext);
+                if (is_array($splitResult) && ! empty($splitResult['created_ids'] ?? [])) {
+                    $splitIds = $splitResult['created_ids'];
+                }
+            }
+        }
+
+        $this->logger()->info('[SearchAgent] Deterministic save completed', [
             'scope_type' => $this->scope->type->value,
             'scope_alias' => $this->scope->alias,
-            'saved_count' => is_array($saveResult) ? (int) ($saveResult['saved_count'] ?? 0) : 0,
-            'skipped_count' => is_array($saveResult) ? (int) ($saveResult['skipped_count'] ?? 0) : 0,
-            'compacted_count' => is_array($saveResult) ? (int) ($saveResult['compacted_count'] ?? 0) : 0,
+            'store_mode' => $storeMode,
+            'saved_count' => $savedCount,
+            'saved_ids' => $savedIds,
+            'split_created_count' => count($splitIds),
+            'split_created_ids' => $splitIds,
             'status' => is_array($saveResult) ? ($saveResult['status'] ?? null) : null,
-            'saved_ids' => is_array($saveResult) ? ($saveResult['saved_ids'] ?? []) : [],
-            'saved_with_notes' => is_array($saveResult) ? (int) ($saveResult['saved_with_notes_count'] ?? 0) : 0,
-            'query_previews' => array_values(array_map(
-                fn (array $s): string => mb_substr((string) ($s['query'] ?? ''), 0, 120),
-                $searchResults,
-            )),
-            'chunk_counts' => array_values(array_map(
-                fn (array $s): int => count($s['chunk_ids'] ?? []),
-                $searchResults,
-            )),
         ]);
     }
 
     /**
-     * Check whether the unique chunk IDs from the current search results
-     * are identical to the most recently saved SearchResult for this project.
+     * Trigger split optimization on a saved memory.
      *
-     * When true, the deterministic save is skipped to avoid wasted writes,
-     * unnecessary compaction/optimization, and spurious summary regeneration.
+     * @return array<string, mixed>|null
+     */
+    private function triggerSplitOnMemory(SearchResult $memory, ?string $storeContext): ?array
+    {
+        try {
+            $automationSettings = $this->scopeProjectId !== null
+                ? SearchResultAutomationSettings::forProjectId($this->scopeProjectId)
+                : SearchResultAutomationSettings::defaults();
+
+            return app(SearchResultMemoryOptimizationService::class)->optimizeIfNeeded(
+                memory: $memory,
+                chunkThreshold: 1,
+                automationSettings: $automationSettings,
+                forceSplit: true,
+                forceDecision: true,
+            );
+        } catch (\Throwable $e) {
+            $this->logger()->warning('[SearchAgent] Split optimization failed', [
+                'error' => $e->getMessage(),
+                'memory_id' => (string) $memory->id,
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Check whether the unique chunk IDs from the current search results
+     * are identical to an already-saved SearchResult (via hash column).
      *
      * @param array<int, array{chunk_ids?: array<int, string>}> $searchResults
      */
@@ -354,56 +403,12 @@ class SearchAgent extends RotableAgent
             return false;
         }
 
-        $lastSaved = SearchResult::query()
-            ->where('project_id', $this->scopeProjectId)
-            ->latest()
-            ->first();
-
-        if ($lastSaved === null) {
-            return false;
-        }
-
-        $savedResults = is_array($lastSaved->results) ? $lastSaved->results : [];
-        $savedChunkIds = $this->extractChunkIdsFromStoredResults($savedResults);
-
         sort($currentChunkIds);
-        sort($savedChunkIds);
+        $hash = hash('sha256', implode(',', $currentChunkIds));
 
-        return $currentChunkIds === $savedChunkIds;
-    }
-
-    /**
-     * Extract chunk IDs from a stored results array (new documents format or legacy format).
-     *
-     * @param array<string, mixed> $results
-     * @return array<int, string>
-     */
-    private function extractChunkIdsFromStoredResults(array $results): array
-    {
-        // New format: documents.{alias}.chunk_ids
-        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
-        if ($documents !== []) {
-            $ids = [];
-            foreach ($documents as $docStats) {
-                if (! is_array($docStats)) {
-                    continue;
-                }
-                $chunkIds = is_array($docStats['chunk_ids'] ?? null) ? $docStats['chunk_ids'] : [];
-                foreach ($chunkIds as $chunkId) {
-                    if (is_string($chunkId) && $chunkId !== '') {
-                        $ids[] = $chunkId;
-                    }
-                }
-            }
-
-            return array_values(array_unique($ids));
-        }
-
-        // Legacy format
-        $legacyIds = is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : [];
-        return array_values(array_unique(array_filter(
-            $legacyIds,
-            static fn (mixed $id): bool => is_string($id) && $id !== '',
-        )));
+        return SearchResult::query()
+            ->where('project_id', $this->scopeProjectId)
+            ->where('hash', $hash)
+            ->exists();
     }
 }

@@ -19,6 +19,7 @@ trait BuildsInstructions
     {
         $itemRequired = [];
         $itemProperties = [];
+        $rootProperties = [];
 
         if ($this->searchResultsActive()) {
             $itemProperties['query'] = [
@@ -36,6 +37,18 @@ trait BuildsInstructions
             ];
 
             $itemRequired[] = 'query';
+
+            // Root-level persistence control
+            $rootProperties['store_mode'] = [
+                'type' => 'string',
+                'enum' => ['none', 'as_is', 'split'],
+                'description' => 'none=skip persistence (history sufficient or query too specific); as_is=save single memory; split=save multiple focused memories from one composite query',
+            ];
+
+            $rootProperties['store_context'] = [
+                'type' => 'string',
+                'description' => 'When store_mode=split: short instructions for the split agent (e.g. "split into 3: red dragons, black dragons, beholders"). Empty otherwise.',
+            ];
         }
 
         $itemProperties['relevant_chunks'] = [
@@ -65,22 +78,24 @@ trait BuildsInstructions
             $itemRequired[] = 'relevant_images';
         }
 
+        $properties = $rootProperties + [
+            'results' => [
+                'type' => 'array',
+                'description' => 'One item per input query, same order',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => $itemProperties,
+                    'required' => $itemRequired,
+                    'additionalProperties' => false,
+                ],
+            ],
+        ];
+
         return [
             'name' => 'search_results',
             'schema' => [
                 'type' => 'object',
-                'properties' => [
-                    'results' => [
-                        'type' => 'array',
-                        'description' => 'One item per input query, same order',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => $itemProperties,
-                            'required' => $itemRequired,
-                            'additionalProperties' => false,
-                        ],
-                    ],
-                ],
+                'properties' => $properties,
                 'required' => ['results'],
                 'additionalProperties' => false,
             ],
@@ -106,6 +121,28 @@ trait BuildsInstructions
             ? '- Add images only when present and relevant'
             : '- Ignore images. Do not output image fields';
 
+        $searchResultsActive = $this->searchResultsActive();
+
+        // Conditional blocks — only included when search results are enabled
+        $objectiveMemoryLines = $searchResultsActive
+            ? "- Use `history_ids` for reused memory records\n- Put only NEW chunk UUIDs in `relevant_chunks`\n- Never duplicate UUIDs\n- Set `store_mode` + `store_context` to control persistence (see SEARCH MEMORY below)"
+            : '';
+
+        $toolsMemoryBlock = $searchResultsActive
+            ? <<<'TOOLS_MEM'
+- FIRST: call `get_searches_results` with your query(ies) to discover relevant memories
+- MEMORY CHECK: if a returned memory has `is_complete: true`, it covers ALL information about that topic — use it and skip `search_chunks` for that query
+- If `is_complete: false` or memory is partial/weak, supplement with `search_chunks` for missing data
+- `documents` field shows per-document coverage (chunk_ids vs total_count). Use it to decide if a document is fully covered or needs more chunks
+- Use `search_chunks` only when: no memories found, all memories are `is_complete: false` and need supplementation, or complementary data is needed
+- Combine memory + search when old data covers one angle and search adds another
+TOOLS_MEM
+            : '';
+
+        $resultMemoryLines = $searchResultsActive
+            ? "- Set `store_mode` and `store_context` at the root level alongside `results`\n- If a memory with `is_complete: true` covers the query, return only `history_ids` plus empty `relevant_chunks` — you already have everything\n- If memory with `is_complete: false` partly covers the query, return `history_ids` plus only new/different UUIDs from fresh search"
+            : '';
+
         return <<<AI_INSTRUCTIONS
 You are restricted retrieval agent
 {$scopeBlock}
@@ -115,17 +152,11 @@ Return UUIDs only{$withImages}
 OBJECTIVE
 - Find relevant chunks
 {$requiredFields}
-- Use `history_ids` for reused HISTORY records
-- Put only NEW chunk UUIDs in `relevant_chunks`
-- Never duplicate UUIDs
+{$objectiveMemoryLines}
 
 TOOLS
-- FIRST: call `get_searches_results` with your query(ies) to discover relevant memories
-- MEMORY CHECK: if a returned memory has `is_complete: true`, it covers ALL information about that topic — use it and skip `search_chunks` for that query
-- If `is_complete: false` or memory is partial/weak, supplement with `search_chunks` for missing data
-- `documents` field shows per-document coverage (chunk_ids vs total_count). Use it to decide if a document is fully covered or needs more chunks
-- Use `search_chunks` only when: no memories found, all memories are `is_complete: false` and need supplementation, or complementary data is needed
-- Combine HISTORY + search when old data covers one angle and search adds another
+{$toolsMemoryBlock}
+- Use `search_chunks` as the primary search tool
 
 SEARCH CALL BASE
 - Always send: `page`, `perPage`, `textSearch`, `questionsSearch`, `semanticTagsSearch`, `hasImage`, `allowRelaxTagFilters`, `tags`
@@ -176,10 +207,9 @@ ZERO / WEAK RESULTS
 
 RESULT EXTRACTION
 - Collect relevant chunk UUIDs from all useful attempts
+{$resultMemoryLines}
 - When a document alias matches the query (e.g., "sessione-10-recap" for "sessione 10"), include ALL chunks from that document, not just 1-2
 - Target minimum 5+ relevant chunks per query. More if available
-- If a memory with `is_complete: true` covers the query, return only `history_ids` plus empty `relevant_chunks` — you already have everything
-- If memory with `is_complete: false` partly covers the query, return `history_ids` plus only new/different UUIDs from fresh search
 {$imageOutputPolicy}
 
 {$searchResultsMemoryBlock}
@@ -242,6 +272,11 @@ TAGS;
 
     protected function buildSearchRetryBlock(): string
     {
+        $historyActive = $this->searchResultsActive();
+        $standardHistoryLine = $historyActive
+            ? "- Skip `search_chunks` entirely when a memory with `is_complete: true` covers the query\n"
+            : '';
+
         return match ($this->deep) {
             SearchDepth::Shallow => <<<'SECTION'
 SEARCH DEPTH: SHALLOW
@@ -250,10 +285,9 @@ SEARCH DEPTH: SHALLOW
 - Attempt 2 only if attempt 1 returns 0 or weak. Broaden or remove failing filters
 SECTION,
 
-            SearchDepth::Standard => <<<'SECTION'
+            SearchDepth::Standard => <<<SECTION
 SEARCH DEPTH: STANDARD
-- Skip `search_chunks` entirely when a memory with `is_complete: true` covers the query
-- Minimum 2 attempts per query (reduced from 3 when using history)
+{$standardHistoryLine}- Minimum 2 attempts per query (reduced from 3 when using history)
 - Max 5 attempts when results improve
 - Never stop after one 0/weak attempt
 - Attempt 1: `keywordsSearch` OR + `documentSearch` OR + explicit `documentsAliases`. No chapters, no tag_*
@@ -283,20 +317,12 @@ SECTION,
 
         return <<<'SECTION'
 SEARCH MEMORY
-- `save_searches_results` is the only persistence tool
-- Call it only if this run found final curated data ADDITIONAL and/or DIFFERENT from reused memories
-- Do not save when memory alone was enough
-- Do not save when search only duplicated existing memories
-- Do not save 0-result outcomes
-- Do not save weak, tangential, exploratory, intermediate results
-- Save exactly once at end when saving is allowed
-- Saved items need `query`, `notes`, `chunk_ids`, `is_complete`
-- `chunk_ids`: only final useful new/different UUIDs
-- `is_complete`: true ONLY if these chunks cover EVERYTHING about this query — all documents, all angles. When in doubt, false
-- `notes`: caveman style, max 30 words, keywords only
-- Good notes: "goblin lore tactics paralysis touch treasure", "storm giant hierarchy motives lore"
-- Bad notes: long prose, full explanations, mixed topics
-- After save, still return structured `{ results: [...] }`
+- No tool call needed to save — the server persists results based on store_mode
+- store_mode decision:
+  - none: skip persistence. Use when HISTORY fully covers the query, or the query is too specific (e.g. "GDP comparison between Italy and Germany across 100 nations" — unlikely to repeat)
+  - as_is: save all results as one memory. Use for focused queries (e.g. "sessione 10 recap", "red dragon lore") where all chunks belong to one topic
+  - split: save as multiple focused memories. Use for composite queries (e.g. "info on red dragons, black dragons, and beholders") where chunks mix unrelated topics
+- store_context (only for split): short instructions for the split agent (e.g. "split into 3 groups: red dragons, black dragons, beholders"). Max 100 chars, imperative style
 SECTION;
     }
 
