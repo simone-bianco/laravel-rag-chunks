@@ -108,6 +108,12 @@ class SearchAgentResultResolver
                 $scopeProjectId,
             );
 
+            // Collect the query's own chunk IDs for memory deduplication
+            $queryChunkIdSet = array_fill_keys(
+                $orderedChunks->pluck('id')->map(static fn (mixed $id): string => (string) $id)->all(),
+                true,
+            );
+
             $queryMemoryResults = [];
 
             foreach ($entry['history_ids'] as $historyId) {
@@ -116,6 +122,7 @@ class SearchAgentResultResolver
                     $historyById,
                     $historyChunkIdsById,
                     $chunksById,
+                    $queryChunkIdSet,
                 );
 
                 if ($memoryResult === null) {
@@ -157,6 +164,41 @@ class SearchAgentResultResolver
      * @param array<string, array<string, mixed>> $historyById
      * @return array<string, array<int, string>>
      */
+    /**
+     * Extract chunk IDs from a results array, supporting both new format
+     * (documents.{alias}.chunk_ids) and legacy (chunk_ids[] / relevant_chunks keys).
+     *
+     * @param array<string, mixed> $results
+     * @return array<int, string>
+     */
+    private function extractChunkIdsFromResults(array $results): array
+    {
+        // New format: documents.{alias}.chunk_ids
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $ids = [];
+            foreach ($documents as $docStats) {
+                if (! is_array($docStats)) {
+                    continue;
+                }
+                $chunkIds = is_array($docStats['chunk_ids'] ?? null) ? $docStats['chunk_ids'] : [];
+                foreach ($chunkIds as $chunkId) {
+                    if (is_string($chunkId) && $chunkId !== '') {
+                        $ids[] = $chunkId;
+                    }
+                }
+            }
+
+            return $this->normalizeChunkIds($ids);
+        }
+
+        // Legacy format: chunk_ids[] or relevant_chunks keys
+        return $this->normalizeChunkIds(
+            $results['chunk_ids']
+                ?? array_keys(is_array($results['relevant_chunks'] ?? null) ? $results['relevant_chunks'] : []),
+        );
+    }
+
     private function resolveHistoryChunkIds(array $historyIds, array $historyById, ?string $scopeProjectId): array
     {
         if ($historyIds === []) {
@@ -173,11 +215,7 @@ class SearchAgentResultResolver
         foreach ($rawRows as $rawRow) {
             $historyId = (string) $rawRow->id;
             $rawResults = is_array($rawRow->results) ? $rawRow->results : [];
-
-            $historyChunkIdsById[$historyId] = $this->normalizeChunkIds(
-                $rawResults['chunk_ids']
-                    ?? array_keys(is_array($rawResults['relevant_chunks'] ?? null) ? $rawResults['relevant_chunks'] : []),
-            );
+            $historyChunkIdsById[$historyId] = $this->extractChunkIdsFromResults($rawResults);
         }
 
         foreach ($historyIds as $historyId) {
@@ -193,11 +231,7 @@ class SearchAgentResultResolver
             $historyResult = is_array($historyRow['results'] ?? null)
                 ? $historyRow['results']
                 : [];
-
-            $historyChunkIdsById[$historyId] = $this->normalizeChunkIds(
-                $historyResult['chunk_ids']
-                    ?? array_keys(is_array($historyResult['relevant_chunks'] ?? null) ? $historyResult['relevant_chunks'] : []),
-            );
+            $historyChunkIdsById[$historyId] = $this->extractChunkIdsFromResults($historyResult);
         }
 
         return $historyChunkIdsById;
@@ -421,19 +455,31 @@ class SearchAgentResultResolver
     /**
      * @param array<string, array<string, mixed>> $historyById
      * @param array<string, array<int, string>> $historyChunkIdsById
+     * @param array<string, true> $queryChunkIdSet Chunk IDs already included in the query result (for dedup)
      */
     private function resolveMemoryResult(
         string $historyId,
         array $historyById,
         array $historyChunkIdsById,
         Collection $chunksById,
+        array $queryChunkIdSet = [],
     ): ?array {
         $historyRow = $historyById[$historyId] ?? null;
         if (! is_array($historyRow)) {
             return null;
         }
 
-        $resolvedChunks = collect($historyChunkIdsById[$historyId] ?? [])
+        $allHistoryChunkIds = $historyChunkIdsById[$historyId] ?? [];
+
+        // Filter out chunk IDs already present in the query result
+        $filteredChunkIds = $queryChunkIdSet === []
+            ? $allHistoryChunkIds
+            : array_values(array_filter(
+                $allHistoryChunkIds,
+                static fn (string $chunkId): bool => ! isset($queryChunkIdSet[$chunkId]),
+            ));
+
+        $resolvedChunks = collect($filteredChunkIds)
             ->map(static fn (string $chunkId) => $chunksById->get($chunkId))
             ->filter()
             ->values();
@@ -460,9 +506,8 @@ class SearchAgentResultResolver
             $memoryResult['summary'] = $summary;
         }
 
-        // Only include full chunk data when there is no summary.
-        // Summarized memories carry enough context in the summary field
-        // and returning all chunks would bloat the payload unnecessarily.
+        // Only include full chunk data when there is no summary AND
+        // there are chunks that aren't already in the query result.
         if (! $hasSummary && $chunksCount > 0) {
             $memoryResult['chunks'] = $resolvedChunks->map(fn (Chunk $chunk): array => [
                 'id' => (string) $chunk->id,

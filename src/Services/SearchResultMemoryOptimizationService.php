@@ -5,12 +5,12 @@ namespace SimoneBianco\LaravelRagChunks\Services;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
-use SimoneBianco\LaravelRagChunks\AiAgents\SearchResultOptimizationAgent;
-use SimoneBianco\LaravelRagChunks\AiAgents\SearchResultSummaryAgent;
+use SimoneBianco\LaravelRagChunks\AiAgents\SearchMemoryAgent;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
 use SimoneBianco\LaravelRagChunks\Models\Embedding;
+use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 
 class SearchResultMemoryOptimizationService
@@ -59,12 +59,15 @@ class SearchResultMemoryOptimizationService
             return ['action' => 'keep', 'reason' => 'no_project_chunks'];
         }
 
-        $decision = SearchResultOptimizationAgent::optimize(
+        $projectContext = $this->resolveProjectContext($memory);
+        $decision = SearchMemoryAgent::optimize(
             $this->query($memory),
             $this->notes($memory),
             $this->summary($memory),
             $this->buildChunkCatalog($chunks),
             $forceSplit && in_array('split', $allowedOperations, true),
+            $projectContext['name'],
+            $projectContext['description'],
             $maxSummaryWords,
         );
 
@@ -90,9 +93,16 @@ class SearchResultMemoryOptimizationService
                 return $this->compact($memory, 'agent_compact_fallback', $maxSummaryWords);
             }
 
-            $memory->forceFill(['summary' => trim($summary)])->save();
+            $isComplete = is_bool($decision['is_complete'] ?? null) ? $decision['is_complete'] : false;
+            $memory->forceFill(['summary' => trim($summary), 'is_complete' => $isComplete])->save();
 
-            return ['action' => 'compact', 'memory_id' => (string) $memory->id, 'chunks_count' => $chunkCount];
+            return ['action' => 'compact', 'memory_id' => (string) $memory->id, 'chunks_count' => $chunkCount, 'is_complete' => $isComplete];
+        }
+
+        // keep action: still forward is_complete from the agent decision
+        $isComplete = is_bool($decision['is_complete'] ?? null) ? $decision['is_complete'] : $memory->is_complete;
+        if ($isComplete !== $memory->is_complete) {
+            $memory->forceFill(['is_complete' => $isComplete])->save();
         }
 
         if ($forceDecision) {
@@ -130,7 +140,11 @@ class SearchResultMemoryOptimizationService
             ? "Existing summary:\n{$summarySeed}\n\nNew/backing chunks:\n{$input}"
             : $input;
 
-        $summary = SearchResultSummaryAgent::summarize($this->query($memory), $this->notes($memory), $summaryInput, $maxSummaryWords);
+        $projectContext = $this->resolveProjectContext($memory);
+        $summary = SearchMemoryAgent::summarize(
+            $this->query($memory), $this->notes($memory), $summaryInput,
+            $projectContext['name'], $projectContext['description'], $maxSummaryWords,
+        );
         if (trim($summary) === '') {
             return ['action' => 'keep', 'reason' => 'empty_summary'];
         }
@@ -323,11 +337,28 @@ class SearchResultMemoryOptimizationService
             ->filter()
             ->values();
 
+        $documents = [];
+        $docIds = $orderedChunks->pluck('document_id')->unique()->filter()->values();
+        if ($docIds->isNotEmpty()) {
+            $totalChunksByDocId = Chunk::query()
+                ->whereIn('document_id', $docIds->all())
+                ->selectRaw('document_id, count(*) as total_count')
+                ->groupBy('document_id')
+                ->pluck('total_count', 'document_id')
+                ->map(fn (mixed $v): int => (int) $v);
+
+            foreach ($orderedChunks->groupBy('document_id') as $docId => $docChunks) {
+                $document = $docChunks->first()?->document;
+                $alias = $document?->alias ?? (string) $docId;
+                $documents[$alias] = [
+                    'chunk_ids' => $docChunks->pluck('id')->values()->toArray(),
+                    'total_count' => $totalChunksByDocId->get((string) $docId, 0),
+                ];
+            }
+        }
+
         return [
-            'chunk_ids' => $orderedChunks->pluck('id')->map(static fn (mixed $id): string => (string) $id)->values()->all(),
-            'relevant_chunks' => $orderedChunks->mapWithKeys(static fn (Chunk $chunk): array => [
-                (string) $chunk->id => ChunkMapper::loadAndMap($chunk),
-            ])->toArray(),
+            'documents' => $documents,
             'relevant_images' => [],
         ];
     }
@@ -335,6 +366,24 @@ class SearchResultMemoryOptimizationService
     /** @param array<string, mixed> $results @return array<int, string> */
     private function chunkIds(array $results): array
     {
+        // New format: extract from documents
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $ids = [];
+            foreach ($documents as $docAlias => $docStats) {
+                if (is_array($docStats) && is_array($docStats['chunk_ids'] ?? null)) {
+                    foreach ($docStats['chunk_ids'] as $chunkId) {
+                        if (is_string($chunkId) && trim($chunkId) !== '') {
+                            $ids[] = trim($chunkId);
+                        }
+                    }
+                }
+            }
+
+            return array_values(array_unique($ids));
+        }
+
+        // Legacy format: chunk_ids or relevant_chunks keys
         $ids = is_array($results['chunk_ids'] ?? null)
             ? $results['chunk_ids']
             : array_keys(is_array($results['relevant_chunks'] ?? null) ? $results['relevant_chunks'] : []);
@@ -368,5 +417,25 @@ class SearchResultMemoryOptimizationService
     private function projectId(SearchResult $memory): ?string
     {
         return is_string($memory->project_id) && trim($memory->project_id) !== '' ? trim($memory->project_id) : null;
+    }
+
+    /**
+     * @return array{name: string, description: ?string}
+     */
+    private function resolveProjectContext(SearchResult $memory): array
+    {
+        $projectId = $this->projectId($memory);
+        if ($projectId === null) {
+            return ['name' => 'Unknown Project', 'description' => null];
+        }
+
+        $project = Project::query()->find($projectId);
+
+        return [
+            'name' => $project?->name ?? 'Unknown Project',
+            'description' => is_string($project?->description) && trim($project->description) !== ''
+                ? trim($project->description)
+                : null,
+        ];
     }
 }

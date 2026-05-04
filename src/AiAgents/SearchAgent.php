@@ -7,11 +7,11 @@ use LarAgent\Context\Drivers\CacheStorage;
 use LarAgent\Core\Contracts\DataModel;
 use LarAgent\Core\Contracts\Message as MessageInterface;
 use Psr\Log\LoggerInterface;
-use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\BuildsInstructions;
-use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\HasSearchResults;
-use SimoneBianco\LaravelRagChunks\AiAgents\Tools\GetChunksByAliases;
+use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\SearchAgent\BuildsInstructions;
+use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\SearchAgent\HasSearchResults;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\Memory\GetSearchesResultsTool;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\Memory\SaveSearchesResultsTool;
+use SimoneBianco\LaravelRagChunks\AiAgents\Tools\Memory\UpdatePersistentMemoryTool;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\SearchChunks;
 use SimoneBianco\LaravelRagChunks\Enums\SearchDepth;
 use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
@@ -21,6 +21,7 @@ use SimoneBianco\LaravelRagChunks\Models\Project;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 use SimoneBianco\LaravelRagChunks\Services\SearchAgentResultResolver;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultAutomationSettings;
+
 class SearchAgent extends RotableAgent
 {
     use BuildsInstructions, HasSearchResults;
@@ -40,9 +41,10 @@ class SearchAgent extends RotableAgent
     protected SearchDepth $deep;
 
     protected bool $historyEnabled;
-    protected float $compactionThreshold = 0.08;
-    protected int $optimizationChunkThreshold = 30;
-    protected int $optimizationHitThreshold = 5;
+    protected ?bool $persistentMemoryEnabled;
+    protected ?int $persistentMemoryMaxWords = null;
+    protected float $compactionThreshold;
+    protected int $optimizationChunkThreshold;
     protected ?string $callingAgentId = null;
     protected ?string $scopeProjectId = null;
     protected ?string $currentInput = null;
@@ -53,6 +55,16 @@ class SearchAgent extends RotableAgent
         return Log::channel('search');
     }
 
+    public function getPersistentMemoryKey(): string
+    {
+        return "{$this->scope->getKey()}:search";
+    }
+
+    public function persistentMemoryActive(): bool
+    {
+        return $this->persistentMemoryEnabled === true;
+    }
+
     public function __construct(
         $key,
         SearchScope $scope,
@@ -61,32 +73,35 @@ class SearchAgent extends RotableAgent
         SearchDepth $deep = SearchDepth::Standard,
         bool $usesUserId = false,
         ?string $group = null,
-        bool $historyEnabled = false,
-        float $compactionThreshold = 0.08,
-        int $optimizationChunkThreshold = 30,
-        int $optimizationHitThreshold = 5,
+        ?bool $historyEnabled = null,
+        ?float $compactionThreshold = null,
+        ?int $optimizationChunkThreshold = null,
         ?string $callingAgentId = null,
+        ?bool $persistentMemoryEnabled = null,
+        ?int $persistentMemoryMaxWords = null,
     ) {
         $this->scope         = $scope;
         $this->includeImages = $includeImages;
         $this->deep          = $deep;
-        $this->historyEnabled = $historyEnabled;
-        $this->compactionThreshold = max(0.0, min(1.0, $compactionThreshold));
-        $this->optimizationChunkThreshold = max(1, $optimizationChunkThreshold);
-        $this->optimizationHitThreshold = max(0, $optimizationHitThreshold);
         $this->callingAgentId = is_string($callingAgentId) && trim($callingAgentId) !== ''
             ? trim($callingAgentId)
             : null;
         $this->scopeProjectId = $this->resolveProjectIdFromScope();
 
-        // Override thresholds from project-level settings (hierarchy: project → constructor param).
-        // Without this, project-specific overrides (e.g. optimization_chunk_threshold=30)
-        // would be ignored because the factory only reads from context/config.
-        if ($this->scopeProjectId !== null) {
-            $automationSettings = SearchResultAutomationSettings::forProjectId($this->scopeProjectId);
-            $this->optimizationChunkThreshold = $automationSettings->optimizationChunkThreshold($this->optimizationChunkThreshold);
-            $this->optimizationHitThreshold = $automationSettings->optimizationHitThreshold($this->optimizationHitThreshold);
-        }
+        // Resolve automation settings with full hierarchy: passed param → project → global → hardcoded fallback.
+        $settings = $this->scopeProjectId !== null
+            ? SearchResultAutomationSettings::forProjectId($this->scopeProjectId)
+            : SearchResultAutomationSettings::defaults();
+
+        $this->historyEnabled = $historyEnabled ?? true;
+        $this->persistentMemoryEnabled = $persistentMemoryEnabled
+            ?? $settings->persistentMemoryEnabled(true);
+        $this->persistentMemoryMaxWords = $persistentMemoryMaxWords
+            ?? $settings->persistentMemoryMaxWords(500);
+        $this->compactionThreshold = $compactionThreshold
+            ?? $settings->autoMergeDistance(0.08);
+        $this->optimizationChunkThreshold = $optimizationChunkThreshold
+            ?? $settings->optimizationChunkThreshold(30);
 
         parent::__construct($key, $usesUserId, $group);
 
@@ -101,12 +116,15 @@ class SearchAgent extends RotableAgent
 
         if ($this->searchResultsActive()) {
             $this->withTool((new GetSearchesResultsTool($this->scopeProjectId))
-                ->optimizationChunkThreshold($this->optimizationChunkThreshold)
-                ->optimizationHitThreshold($this->optimizationHitThreshold));
+                ->optimizationChunkThreshold($this->optimizationChunkThreshold));
             $this->withTool((new SaveSearchesResultsTool($this->scopeProjectId))
                 ->compactionThreshold($this->compactionThreshold)
                 ->optimizationChunkThreshold($this->optimizationChunkThreshold)
                 ->creatorAgentId($this->callingAgentId));
+        }
+
+        if ($this->persistentMemoryActive()) {
+            $this->withTool(new UpdatePersistentMemoryTool($this->getPersistentMemoryKey(), $this->persistentMemoryMaxWords));
         }
 
         $this->logger()->debug('[Agent] SearchAgent initialized', [
@@ -118,7 +136,9 @@ class SearchAgent extends RotableAgent
             'scope_project_id' => $this->scopeProjectId,
             'compaction_threshold' => $this->compactionThreshold,
             'optimization_chunk_threshold' => $this->optimizationChunkThreshold,
-            'optimization_hit_threshold' => $this->optimizationHitThreshold,
+            'history_enabled' => $this->historyEnabled ? 'true' : 'false',
+            'persistent_memory_enabled' => $this->persistentMemoryEnabled ? 'true' : 'false',
+            'persistent_memory_max_words' => $this->persistentMemoryMaxWords,
             'calling_agent_id' => $this->callingAgentId,
             'instructions_chars' => strlen($this->instructions()),
         ]);
@@ -167,18 +187,11 @@ class SearchAgent extends RotableAgent
             default             => null,
         };
 
+        // History discovery now happens via GetSearchesResultsTool — the LLM
+        // queries for memories itself and receives them with full context
+        // (is_complete flag, per-document stats, chunks). No server-side
+        // injection needed.
         $this->recentSearchResults = [];
-        if ($this->searchResultsActive()) {
-            $this->recentSearchResults = $this->getRecentSearchResults((string) $this->currentInput);
-
-            if (! empty($this->recentSearchResults)) {
-                $this->logger()->info('[SearchAgent] History hit', [
-                    'scope' => $this->scope->alias,
-                    'hit_count' => count($this->recentSearchResults),
-                    'ids' => array_column($this->recentSearchResults, 'id'),
-                ]);
-            }
-        }
 
         $this->injectInstructionsForCurrentTurn();
         $decoded = parent::respond($message);
@@ -351,15 +364,46 @@ class SearchAgent extends RotableAgent
         }
 
         $savedResults = is_array($lastSaved->results) ? $lastSaved->results : [];
-        $savedChunkIds = is_array($savedResults['chunk_ids'] ?? null) ? $savedResults['chunk_ids'] : [];
-        $savedChunkIds = array_values(array_unique(array_filter(
-            $savedChunkIds,
-            static fn (mixed $id): bool => is_string($id) && $id !== '',
-        )));
+        $savedChunkIds = $this->extractChunkIdsFromStoredResults($savedResults);
 
         sort($currentChunkIds);
         sort($savedChunkIds);
 
         return $currentChunkIds === $savedChunkIds;
+    }
+
+    /**
+     * Extract chunk IDs from a stored results array (new documents format or legacy format).
+     *
+     * @param array<string, mixed> $results
+     * @return array<int, string>
+     */
+    private function extractChunkIdsFromStoredResults(array $results): array
+    {
+        // New format: documents.{alias}.chunk_ids
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $ids = [];
+            foreach ($documents as $docStats) {
+                if (! is_array($docStats)) {
+                    continue;
+                }
+                $chunkIds = is_array($docStats['chunk_ids'] ?? null) ? $docStats['chunk_ids'] : [];
+                foreach ($chunkIds as $chunkId) {
+                    if (is_string($chunkId) && $chunkId !== '') {
+                        $ids[] = $chunkId;
+                    }
+                }
+            }
+
+            return array_values(array_unique($ids));
+        }
+
+        // Legacy format
+        $legacyIds = is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : [];
+        return array_values(array_unique(array_filter(
+            $legacyIds,
+            static fn (mixed $id): bool => is_string($id) && $id !== '',
+        )));
     }
 }

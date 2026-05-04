@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use InvalidArgumentException;
@@ -14,6 +16,9 @@ use TypeError;
  * Given a cluster of similar memories (queries + notes), produces a unified
  * query that captures the intent of all members, and unified notes that
  * consolidate information without redundancy.
+ *
+ * Receives project context (name + description) so the LLM understands the domain
+ * and avoids generic noise like "in fantasy" in merged queries.
  */
 class MemoryMergeAgent extends RotableAgent
 {
@@ -24,7 +29,10 @@ class MemoryMergeAgent extends RotableAgent
     /** @var array<int, array{query: string, notes: ?string}> */
     protected array $memories = [];
 
-    public function withMemories(array $memories): self
+    protected string $projectName = '';
+    protected ?string $projectDescription = null;
+
+    public function withMemories(array $memories, string $projectName, ?string $projectDescription = null): self
     {
         $this->memories = [];
 
@@ -47,6 +55,9 @@ class MemoryMergeAgent extends RotableAgent
                 'notes' => $notes,
             ];
         }
+
+        $this->projectName = $projectName;
+        $this->projectDescription = $projectDescription;
 
         return $this;
     }
@@ -76,13 +87,21 @@ class MemoryMergeAgent extends RotableAgent
 
     public function instructions(): string
     {
-        return <<<'PROMPT'
-You are a search memory compaction agent.
+        $contextParts = ["Project: {$this->projectName}"];
+        if ($this->projectDescription !== null && $this->projectDescription !== '') {
+            $contextParts[] = "Description: {$this->projectDescription}";
+        }
+        $context = implode("\n", $contextParts);
+
+        return <<<PROMPT
+{$context}
+
+You are a search memory compaction agent working on the project described above.
 
 Your task: merge multiple similar search memories into a single coherent result.
 
 Rules:
-1. The merged query must capture the core search intent. If queries differ, combine concepts with natural language — not pipes or slashes. Prefer a natural question or search phrase.
+1. The merged query must capture the core search intent within THIS project's domain. If queries differ, combine concepts with natural language — not pipes or slashes. Prefer a natural search phrase that makes sense in the project context.
 2. The merged notes must consolidate all factual information without redundancy.
 3. Notes style MUST be caveman: keyword-only fragments, no prose sentences, no fluff.
 4. Notes length MUST be at most 30 words.
@@ -90,7 +109,8 @@ Rules:
 6. Keep the merged query concise (under 100 characters when possible).
 7. If all input notes are null or empty, generate a very short caveman note from the merged query topic.
 8. The output query should read like a natural search a user would type, not a concatenation.
-9. Never output markdown, bullets, or labels like "topic:".
+9. NEVER add generic domain classifiers like "in fantasy", "in D&D", "in RPG" — the project context already establishes the domain.
+10. Never output markdown, bullets, or labels like "topic:".
 PROMPT;
     }
 
@@ -148,7 +168,7 @@ PROMPT;
      * @param array<int, array{query: ?string, notes: ?string}> $memories
      * @return array{query: ?string, notes: ?string}
      */
-    public static function merge(array $memories): array
+    public static function merge(array $memories, string $projectName, ?string $projectDescription = null): array
     {
         $filtered = [];
 
@@ -171,7 +191,7 @@ PROMPT;
 
         try {
             $agent = new self('memory-merge');
-            $result = $agent->withMemories($filtered)->respond();
+            $result = $agent->withMemories($filtered, $projectName, $projectDescription)->respond();
 
             if (is_array($result) && isset($result['query']) && trim($result['query']) !== '') {
                 return [

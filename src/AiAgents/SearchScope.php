@@ -10,4 +10,9 @@ readonly class SearchScope
         public string          $alias,
         public SearchScopeType $type,
     ) {}
+
+    public function getKey(): string
+    {
+        return $this->alias;
+    }
 }

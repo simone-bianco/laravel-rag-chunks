@@ -29,15 +29,19 @@ class SearchTool extends Tool
         ?string $name = 'search_in_project',
         ?string $description = 'Search the knowledge base. Accepts multiple independent search queries executed in parallel in a single call. Use this to retrieve relevant information chunks.',
         protected bool $historyEnabled = false,
-        protected float $compactionThreshold = 0.11,
-        protected int $optimizationChunkThreshold = 12,
-        protected int $optimizationHitThreshold = 5,
+        protected ?float $compactionThreshold = null,
+        protected ?int $optimizationChunkThreshold = null,
         protected ?string $callingAgentId = null,
+        protected ?bool $persistentMemoryEnabled = null,
+        protected ?int $persistentMemoryMaxWords = null,
     ) {
         $this->maxParallel = max(1, min(8, $this->maxParallel));
-        $this->compactionThreshold = max(0.0, min(1.0, $this->compactionThreshold));
-        $this->optimizationChunkThreshold = max(1, $this->optimizationChunkThreshold);
-        $this->optimizationHitThreshold = max(0, $this->optimizationHitThreshold);
+        $this->compactionThreshold = $this->compactionThreshold !== null
+            ? max(0.0, min(1.0, $this->compactionThreshold))
+            : null;
+        $this->optimizationChunkThreshold = $this->optimizationChunkThreshold !== null
+            ? max(1, $this->optimizationChunkThreshold)
+            : null;
         parent::__construct($name, $description);
     }
 
@@ -227,16 +231,6 @@ class SearchTool extends Tool
      */
     private function runScopes(array $scopes, string $persistentKey, array $searches): array
     {
-        $includeImages  = $this->includeImages;
-        $model          = $this->model;
-        $deep           = $this->deep;
-        $maxParallel    = $this->maxParallel;
-        $historyEnabled = $this->historyEnabled;
-        $compactionThreshold = $this->compactionThreshold;
-        $optimizationHitThreshold = $this->optimizationHitThreshold;
-        $callingAgentId = $this->callingAgentId;
-
-        $results = [];
         $tasks = [];
 
         foreach ($scopes as $scopeIndex => $scope) {
@@ -249,7 +243,6 @@ class SearchTool extends Tool
             }
 
             if ($scopeQueries === []) {
-                $results[$scopeIndex] = ['results' => []];
                 continue;
             }
 
@@ -263,46 +256,17 @@ class SearchTool extends Tool
 
             $scopeKey = $persistentKey . ':' . $scope->type->value . ':' . $scope->alias;
 
-            $optimizationChunkThreshold = $this->optimizationChunkThreshold;
-
-            $tasks[$scopeIndex] = function () use ($scope, $scopeKey, $queryLines, $scopeQueries, $includeImages, $model, $deep, $historyEnabled, $compactionThreshold, $optimizationChunkThreshold, $optimizationHitThreshold, $callingAgentId): array {
-                $result = (new SearchAgent(
-                    $scopeKey,
-                    $scope,
-                    $includeImages,
-                    $model,
-                    $deep,
-                    false,
-                    null,
-                    $historyEnabled,
-                    $compactionThreshold,
-                    $optimizationChunkThreshold,
-                    $optimizationHitThreshold,
-                    $callingAgentId,
-                ))->respond("Search queries:\n{$queryLines}");
-
-                if (! is_array($result) || ! isset($result['results'])) {
-                    return ['results' => []];
-                }
-
-                $remapped = [];
-                foreach ($result['results'] as $agentIndex => $queryResult) {
-                    $originalIndex = $scopeQueries[$agentIndex]['original_index'] ?? $agentIndex;
-                    $remapped[$originalIndex] = $queryResult;
-                }
-
-                return ['results' => $remapped];
-            };
+            $tasks[$scopeIndex] = fn (): array => $this->buildScopeSearchResult($scope, $scopeKey, $queryLines, $scopeQueries);
         }
 
         if ($tasks === []) {
-            return $results;
+            return [];
         }
 
         $timeoutSeconds = (int) config('rag_chunks.search_tool_process_timeout', 300);
 
         $results = [];
-        foreach (array_chunk($tasks, max(1, $maxParallel), true) as $taskChunk) {
+        foreach (array_chunk($tasks, max(1, $this->maxParallel), true) as $taskChunk) {
             $chunkResults = $this->runTasksInProcessPool($taskChunk, $timeoutSeconds);
             foreach ($chunkResults as $taskIndex => $taskResult) {
                 $results[(int) $taskIndex] = $taskResult;
@@ -312,6 +276,45 @@ class SearchTool extends Tool
         ksort($results);
 
         return array_values($results);
+    }
+
+    /**
+     * @param array<int, array{original_index: int, query: string}> $scopeQueries
+     * @return array{results: array<int, mixed>}
+     */
+    protected function buildScopeSearchResult(
+        SearchScope $scope,
+        string $scopeKey,
+        string $queryLines,
+        array $scopeQueries,
+    ): array {
+        $result = (new SearchAgent(
+            $scopeKey,
+            $scope,
+            $this->includeImages,
+            $this->model,
+            $this->deep,
+            false,                          // usesUserId
+            null,                           // group
+            $this->historyEnabled,          // ?bool = null: resolved in SearchAgent
+            $this->compactionThreshold,     // ?float = null: resolved in SearchAgent
+            $this->optimizationChunkThreshold, // ?int = null: resolved in SearchAgent
+            $this->callingAgentId,
+            $this->persistentMemoryEnabled,
+            $this->persistentMemoryMaxWords,
+        ))->respond("Search queries:\n{$queryLines}");
+
+        if (! is_array($result) || ! isset($result['results'])) {
+            return ['results' => []];
+        }
+
+        $remapped = [];
+        foreach ($result['results'] as $agentIndex => $queryResult) {
+            $originalIndex = $scopeQueries[$agentIndex]['original_index'] ?? $agentIndex;
+            $remapped[$originalIndex] = $queryResult;
+        }
+
+        return ['results' => $remapped];
     }
 
     /**

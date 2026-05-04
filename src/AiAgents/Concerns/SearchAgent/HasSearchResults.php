@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\AiAgents\Concerns;
+namespace SimoneBianco\LaravelRagChunks\AiAgents\Concerns\SearchAgent;
 
 use Illuminate\Support\Facades\Log;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultService;
@@ -9,7 +9,7 @@ trait HasSearchResults
 {
     protected function searchResultsActive(): bool
     {
-        return $this->historyEnabled === true;
+        return ($this->historyEnabled ?? false) === true;
     }
 
     protected function getRecentSearchResults(string $query, int $count = 5): array

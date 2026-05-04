@@ -27,14 +27,18 @@ class SearchInAllowedProjects extends Tool
         ?string $name = 'search_in_project',
         ?string $description = 'Search inside one allowed project. You must provide projectAlias + 1-5 searches. Searches run in parallel in a single call.',
         protected bool $historyEnabled = false,
-        protected float $compactionThreshold = 0.11,
-        protected int $optimizationChunkThreshold = 12,
-        protected int $optimizationHitThreshold = 5,
+        protected ?float $compactionThreshold = null,
+        protected ?int $optimizationChunkThreshold = null,
         protected ?string $callingAgentId = null,
+        protected ?bool $persistentMemoryEnabled = null,
+        protected ?int $persistentMemoryMaxWords = null,
     ) {
-        $this->compactionThreshold = max(0.0, min(1.0, $this->compactionThreshold));
-        $this->optimizationChunkThreshold = max(1, $this->optimizationChunkThreshold);
-        $this->optimizationHitThreshold = max(0, $this->optimizationHitThreshold);
+        $this->compactionThreshold = $this->compactionThreshold !== null
+            ? max(0.0, min(1.0, $this->compactionThreshold))
+            : null;
+        $this->optimizationChunkThreshold = $this->optimizationChunkThreshold !== null
+            ? max(1, $this->optimizationChunkThreshold)
+            : null;
 
         $this->allowedProjectAliases = array_values(array_unique(array_filter(array_map(
             static fn ($alias) => is_string($alias) ? trim($alias) : '',
@@ -152,7 +156,6 @@ class SearchInAllowedProjects extends Tool
             historyEnabled: $this->historyEnabled,
             compactionThreshold: $this->compactionThreshold,
             optimizationChunkThreshold: $this->optimizationChunkThreshold,
-            optimizationHitThreshold: $this->optimizationHitThreshold,
             callingAgentId: $this->callingAgentId,
         )->respond("Search queries:\n$queryLines");
 

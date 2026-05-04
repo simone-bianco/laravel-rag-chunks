@@ -1,6 +1,6 @@
 <?php
 
-namespace SimoneBianco\LaravelRagChunks\AiAgents\Concerns;
+namespace SimoneBianco\LaravelRagChunks\AiAgents\Concerns\SearchAgent;
 
 use SimoneBianco\LaravelRagChunks\Enums\SearchDepth;
 use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
@@ -8,6 +8,8 @@ use SimoneBianco\LaravelRagChunks\Enums\SearchScopeType;
 trait BuildsInstructions
 {
     abstract protected function searchResultsActive(): bool;
+
+    abstract protected function persistentMemoryActive(): bool;
 
     abstract protected function resolveProjectTagsFromScope(): array;
 
@@ -26,10 +28,10 @@ trait BuildsInstructions
 
             $itemProperties['history_ids'] = [
                 'type' => 'array',
-                'description' => 'Optional UUIDs of reused HISTORY records. Use instead of repeating their chunk UUIDs',
+                'description' => 'Optional UUIDs of reused memory records from get_searches_results. Use instead of repeating their chunk UUIDs',
                 'items' => [
                     'type' => 'string',
-                    'description' => 'SearchResult UUID from HISTORY',
+                    'description' => 'SearchResult UUID from memory lookup',
                 ],
             ];
 
@@ -93,6 +95,7 @@ trait BuildsInstructions
         $scopeTagsBlock = $this->buildScopeTagsBlock();
         $searchRetryBlock = $this->buildSearchRetryBlock();
         $searchResultsMemoryBlock = $this->buildSearchResultsMemoryBlock();
+        $persistentMemoryBlock = $this->buildPersistentMemoryBlock();
 
         $withImages = $this->includeImages ? ' + images' : '';
         $requiredFields = $this->includeImages
@@ -102,8 +105,6 @@ trait BuildsInstructions
         $imageOutputPolicy = $this->includeImages
             ? '- Add images only when present and relevant'
             : '- Ignore images. Do not output image fields';
-
-        $historyBlock = $this->buildHistoryBlock();
 
         return <<<AI_INSTRUCTIONS
 You are restricted retrieval agent
@@ -119,9 +120,11 @@ OBJECTIVE
 - Never duplicate UUIDs
 
 TOOLS
-- If HISTORY exists: call `get_searches_results` first with best id(s)
-- RELEVANCE CHECK: if history query/notes describe a different topic than current query (e.g., "Zarok appearance" vs "sessione 10"), discard all history and use only `search_chunks`
-- Use `search_chunks` when HISTORY missing, weak, partial, tangential, empty, or complementary data needed
+- FIRST: call `get_searches_results` with your query(ies) to discover relevant memories
+- MEMORY CHECK: if a returned memory has `is_complete: true`, it covers ALL information about that topic — use it and skip `search_chunks` for that query
+- If `is_complete: false` or memory is partial/weak, supplement with `search_chunks` for missing data
+- `documents` field shows per-document coverage (chunk_ids vs total_count). Use it to decide if a document is fully covered or needs more chunks
+- Use `search_chunks` only when: no memories found, all memories are `is_complete: false` and need supplementation, or complementary data is needed
 - Combine HISTORY + search when old data covers one angle and search adds another
 
 SEARCH CALL BASE
@@ -175,11 +178,12 @@ RESULT EXTRACTION
 - Collect relevant chunk UUIDs from all useful attempts
 - When a document alias matches the query (e.g., "sessione-10-recap" for "sessione 10"), include ALL chunks from that document, not just 1-2
 - Target minimum 5+ relevant chunks per query. More if available
-- If HISTORY fully covers answer, return only `history_ids` plus empty `relevant_chunks`
-- If HISTORY partly covers answer, return `history_ids` plus only new/different UUIDs
+- If a memory with `is_complete: true` covers the query, return only `history_ids` plus empty `relevant_chunks` — you already have everything
+- If memory with `is_complete: false` partly covers the query, return `history_ids` plus only new/different UUIDs from fresh search
 {$imageOutputPolicy}
 
 {$searchResultsMemoryBlock}
+{$persistentMemoryBlock}
 
 LANGUAGE
 - Semantic fields may be English
@@ -189,7 +193,6 @@ CRITICAL
 - Return many relevant chunks
 - Exclude only alien chunks
 - No prose outside JSON
-{$historyBlock}
 AI_INSTRUCTIONS;
     }
 
@@ -199,6 +202,17 @@ AI_INSTRUCTIONS;
             SearchScopeType::Project => "Scope project: {$this->scope->alias}",
             SearchScopeType::Document => "Scope document: {$this->scope->alias}",
         };
+    }
+
+    protected function buildPersistentMemoryBlock(): string
+    {
+        if ($this->persistentMemoryActive()) {
+            return "Use update_persistent_memory tool to save the best search strategies to adopt and what to avoid.\n" .
+                "CRITICAL: do not use it to keep search data, use it just to adjust your behavior in order to maximize future search accuracy.\n" .
+                "CRITICAL: use caveman style for the memory, with brief and concise sentences separated by ;";
+        }
+
+        return '';
     }
 
     protected function buildImagePolicy(): string
@@ -238,9 +252,10 @@ SECTION,
 
             SearchDepth::Standard => <<<'SECTION'
 SEARCH DEPTH: STANDARD
-- Minimum 3 attempts per query unless HISTORY fully answers
+- Skip `search_chunks` entirely when a memory with `is_complete: true` covers the query
+- Minimum 2 attempts per query (reduced from 3 when using history)
 - Max 5 attempts when results improve
-- Never stop after one 0/weak attempt or after only 2 attempts
+- Never stop after one 0/weak attempt
 - Attempt 1: `keywordsSearch` OR + `documentSearch` OR + explicit `documentsAliases`. No chapters, no tag_*
 - Attempt 2: broaden if failed. If attempt 1 found a document whose name/alias matches the query (e.g. "sessione-10-recap" for "sessione 10"), deep-dive with `documentsAliases=[matched_alias]` + `keywordsSearch` OR
 - Attempt 3+: if deep-dive successful, broaden to adjacent documents. Add `chapters` from found results. Try one `tag_*` paired with keywords/chapters. Alternate multilingual keywords
@@ -269,14 +284,15 @@ SECTION,
         return <<<'SECTION'
 SEARCH MEMORY
 - `save_searches_results` is the only persistence tool
-- Call it only if this run found final curated data ADDITIONAL and/or DIFFERENT from reused HISTORY
-- Do not save when HISTORY alone was enough
-- Do not save when search only duplicated HISTORY
+- Call it only if this run found final curated data ADDITIONAL and/or DIFFERENT from reused memories
+- Do not save when memory alone was enough
+- Do not save when search only duplicated existing memories
 - Do not save 0-result outcomes
 - Do not save weak, tangential, exploratory, intermediate results
 - Save exactly once at end when saving is allowed
-- Saved items need `query`, `notes`, `chunk_ids`
+- Saved items need `query`, `notes`, `chunk_ids`, `is_complete`
 - `chunk_ids`: only final useful new/different UUIDs
+- `is_complete`: true ONLY if these chunks cover EVERYTHING about this query — all documents, all angles. When in doubt, false
 - `notes`: caveman style, max 30 words, keywords only
 - Good notes: "goblin lore tactics paralysis touch treasure", "storm giant hierarchy motives lore"
 - Bad notes: long prose, full explanations, mixed topics

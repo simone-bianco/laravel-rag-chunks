@@ -20,6 +20,7 @@ class SearchResult extends Model
         'query',
         'notes',
         'summary',
+        'is_complete',
         'results',
         'embedding',
         'hits',
@@ -28,11 +29,12 @@ class SearchResult extends Model
     protected function casts()
     {
         return [
-            'embedding' => VectorArray::class,
-            'notes'     => 'string',
-            'summary'   => 'string',
-            'results'   => 'array',
-            'hits'      => 'integer',
+            'embedding'   => VectorArray::class,
+            'notes'       => 'string',
+            'summary'     => 'string',
+            'is_complete' => 'boolean',
+            'results'     => 'array',
+            'hits'        => 'integer',
         ];
     }
 

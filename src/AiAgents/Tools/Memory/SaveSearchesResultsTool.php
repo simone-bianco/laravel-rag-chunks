@@ -16,6 +16,7 @@ use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultAutomationSettings;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultMemoryOptimizationService;
 use SimoneBianco\LaravelRagChunks\Services\SearchResultService;
+use SimoneBianco\LaravelRagChunks\Models\Project;
 
 class SaveSearchesResultsTool extends Tool
 {
@@ -108,6 +109,10 @@ class SaveSearchesResultsTool extends Tool
                                 'description' => 'Chunk UUID.',
                             ],
                         ],
+                        'is_complete' => [
+                            'type' => 'boolean',
+                            'description' => 'Set true ONLY if these chunks cover EVERYTHING knowable about this query — all documents, all angles, all relevant facts. Defaults to false.',
+                        ],
                         'relevant_images' => [
                             'type' => 'array',
                             'description' => 'Relevant images connected to this result set, when any were found.',
@@ -164,6 +169,7 @@ class SaveSearchesResultsTool extends Tool
 
             $query = $this->normalizeQuery($item);
             $notes = $this->normalizeNotes($item);
+            $isComplete = is_bool($item['is_complete'] ?? null) ? $item['is_complete'] : false;
             $chunkIds = $this->normalizeChunkIds($item['chunk_ids'] ?? $item['chunks_uuids'] ?? $item['relevant_chunks'] ?? []);
 
             $isEmptyOutcome = ($chunkIds === []);
@@ -180,19 +186,18 @@ class SaveSearchesResultsTool extends Tool
 
             if ($isEmptyOutcome) {
                 $payload = [
-                    'chunk_ids' => [],
-                    'relevant_chunks' => [],
+                    'documents' => [],
                     'relevant_images' => [],
                 ];
             } else {
                 $payload = $this->buildResultPayload($chunkIds, $item['relevant_images'] ?? []);
-                if (empty($payload['chunk_ids'])) {
+                if (empty($payload['documents'])) {
                     $skipped[] = ['index' => $index, 'reason' => 'no_project_chunks', 'query' => mb_substr($query, 0, 200)];
                     continue;
                 }
             }
 
-            $projectId = $this->resolveProjectId($payload['chunk_ids']);
+            $projectId = $this->resolveProjectIdFromPayload($payload);
             if ($projectId === null) {
                 $skipped[] = ['index' => $index, 'reason' => 'missing_project_context', 'query' => mb_substr($query, 0, 200)];
                 continue;
@@ -201,6 +206,12 @@ class SaveSearchesResultsTool extends Tool
             $automationSettings = SearchResultAutomationSettings::forProjectId($projectId);
 
             $row = SearchResultService::make()->save($query, $payload, $this->creatorAgentId, $projectId, $notes);
+
+            // Store is_complete flag determined by the LLM during the search session.
+            // This tells future agents whether this memory is omnicomprensiva (true)
+            // or partial (false — the safe default when the LLM isn't 100% sure).
+            $row->is_complete = $isComplete;
+            $row->save();
 
             $this->logger()->debug('[SaveSearchesResultsTool] Saved row, checking compaction', [
                 'save_id' => (string) $row->id,
@@ -256,9 +267,7 @@ class SaveSearchesResultsTool extends Tool
                         $saved[] = [
                             'id' => (string) $splitRow->id,
                             'query' => $splitRow->query,
-                            'chunks_count' => is_array($splitRow->results['chunk_ids'] ?? null)
-                                ? count($splitRow->results['chunk_ids'])
-                                : 0,
+                            'chunks_count' => $this->countChunkIdsInResults($splitRow->results),
                             'project_id' => $projectId,
                             'notes' => is_string($splitRow->notes) ? $splitRow->notes : null,
                             'compacted' => true,
@@ -289,7 +298,7 @@ class SaveSearchesResultsTool extends Tool
                 $saved[] = [
                     'id' => (string) $row->id,
                     'query' => $query,
-                    'chunks_count' => count($payload['chunk_ids']),
+                    'chunks_count' => $this->countChunkIdsInResults($payload),
                     'project_id' => $projectId,
                     'notes' => $notes,
                     'optimization' => $optimization,
@@ -377,22 +386,24 @@ class SaveSearchesResultsTool extends Tool
                 'query' => $similar->query,
                 'notes' => is_string($similar->notes) ? $similar->notes : null,
                 'hits' => (int) $similar->hits,
-                'chunk_ids_count' => is_array($similar->results['chunk_ids'] ?? null) ? count($similar->results['chunk_ids']) : 0,
+                'chunk_ids_count' => $this->countChunkIdsInResults($similar->results),
             ],
             'new' => [
                 'id' => (string) $newResult->id,
                 'query' => $newResult->query,
                 'notes' => is_string($newResult->notes) ? $newResult->notes : null,
                 'hits' => (int) $newResult->hits,
-                'chunk_ids_count' => is_array($newResult->results['chunk_ids'] ?? null) ? count($newResult->results['chunk_ids']) : 0,
+                'chunk_ids_count' => $this->countChunkIdsInResults($newResult->results),
             ],
         ];
 
-        // Merge query/notes using MemoryMergeAgent (AI-powered with deterministic fallback)
+        // Merge query/notes using MemoryMergeAgent (AI-powered with deterministic fallback).
+        // Pass project context so the agent understands the domain.
+        $projectContext = $this->resolveProjectContext($projectId);
         $merged = MemoryMergeAgent::merge([
             ['query' => $similar->query, 'notes' => is_string($similar->notes) ? $similar->notes : null],
             ['query' => $newResult->query, 'notes' => is_string($newResult->notes) ? $newResult->notes : null],
-        ]);
+        ], $projectContext['name'], $projectContext['description']);
 
         $summaryBeforeMerge = $this->mergeSummaryText($similar, $newResult);
 
@@ -408,6 +419,7 @@ class SaveSearchesResultsTool extends Tool
         // Merge results (chunk_ids union + relevant_chunks union)
         $similar->results = $this->mergeResultsData($similar, $newResult);
         $similar->summary = $summaryBeforeMerge;
+        $similar->is_complete = false; // Merged result is never automatically complete
 
         // Average embeddings
         $mergedEmbedding = $this->averageEmbeddings(
@@ -423,7 +435,7 @@ class SaveSearchesResultsTool extends Tool
         // Delete the new record — it was merged into the existing one
         $newResult->delete();
 
-        $mergedChunksCount = is_array($similar->results['chunk_ids'] ?? null) ? count($similar->results['chunk_ids']) : 0;
+        $mergedChunksCount = $this->countChunkIdsInResults($similar->results);
         $hasSummaryInput = $summaryBeforeMerge !== null;
         $optimization = $this->optimizeMemory(
             $similar,
@@ -465,6 +477,38 @@ class SaveSearchesResultsTool extends Tool
             'merged_chunks_count' => $mergedChunksCount,
             'optimization' => $optimization,
         ];
+    }
+
+    /**
+     * @return array{name: string, description: ?string}
+     */
+    private function resolveProjectContext(string $projectId): array
+    {
+        $project = Project::query()->find($projectId);
+
+        return [
+            'name' => $project?->name ?? 'Unknown Project',
+            'description' => is_string($project?->description) && trim($project->description) !== ''
+                ? trim($project->description)
+                : null,
+        ];
+    }
+
+    /** @param array<string, mixed>|null $results */
+    private function countChunkIdsInResults(?array $results): int
+    {
+        if ($results === null || $results === []) {
+            return 0;
+        }
+
+        // New format: documents.{alias}.chunk_ids
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            return count($this->extractChunkIdsFromDocuments($documents));
+        }
+
+        // Legacy format
+        return is_array($results['chunk_ids'] ?? null) ? count($results['chunk_ids']) : 0;
     }
 
     /** @return array<string, mixed> */
@@ -520,30 +564,51 @@ class SaveSearchesResultsTool extends Tool
     {
         $base = is_array($existing->results) ? $existing->results : [];
 
-        $existingChunkIds = is_array($base['chunk_ids'] ?? null) ? $base['chunk_ids'] : [];
-        $newChunkIds = is_array($new->results['chunk_ids'] ?? null) ? $new->results['chunk_ids'] : [];
+        // Merge documents from both results
+        $mergedDocuments = $this->mergeDocumentsData(
+            is_array($base['documents'] ?? null) ? $base['documents'] : [],
+            is_array($new->results['documents'] ?? null) ? $new->results['documents'] : [],
+        );
+        $base['documents'] = $mergedDocuments;
 
-        $chunkIds = array_values(array_unique(array_merge(
-            $existingChunkIds,
-            $newChunkIds,
-        )));
+        return $base;
+    }
 
-        $existingRelevantChunks = is_array($base['relevant_chunks'] ?? null) ? $base['relevant_chunks'] : [];
-        $newRelevantChunks = is_array($new->results['relevant_chunks'] ?? null) ? $new->results['relevant_chunks'] : [];
+    /**
+     * @param array<string, array{chunk_ids: array<int, string>, total_count: int}> $base
+     * @param array<string, array{chunk_ids: array<int, string>, total_count: int}> $incoming
+     * @return array<string, array{chunk_ids: array<int, string>, total_count: int}>
+     */
+    private function mergeDocumentsData(array $base, array $incoming): array
+    {
+        $merged = $base;
 
-        foreach ($newRelevantChunks as $chunkId => $chunkPayload) {
-            if (is_string($chunkId) && $chunkId !== '' && is_array($chunkPayload) && ! isset($existingRelevantChunks[$chunkId])) {
-                $existingRelevantChunks[$chunkId] = $chunkPayload;
+        foreach ($incoming as $alias => $stats) {
+            if (! is_array($stats)) {
+                continue;
+            }
+
+            $incomingChunkIds = is_array($stats['chunk_ids'] ?? null) ? $stats['chunk_ids'] : [];
+            $incomingTotal = is_int($stats['total_count'] ?? null) ? $stats['total_count'] : 0;
+
+            if (isset($merged[$alias])) {
+                $existingChunkIds = is_array($merged[$alias]['chunk_ids'] ?? null) ? $merged[$alias]['chunk_ids'] : [];
+                $existingTotal = is_int($merged[$alias]['total_count'] ?? null) ? $merged[$alias]['total_count'] : 0;
+
+                $merged[$alias] = [
+                    'chunk_ids' => array_values(array_unique(array_merge($existingChunkIds, $incomingChunkIds))),
+                    // Use the higher total_count (should be the same for same document)
+                    'total_count' => max($existingTotal, $incomingTotal),
+                ];
+            } else {
+                $merged[$alias] = [
+                    'chunk_ids' => $incomingChunkIds,
+                    'total_count' => $incomingTotal,
+                ];
             }
         }
 
-        $base['chunk_ids'] = $chunkIds;
-
-        if ($existingRelevantChunks !== []) {
-            $base['relevant_chunks'] = $existingRelevantChunks;
-        }
-
-        return $base;
+        return $merged;
     }
 
     /**
@@ -647,11 +712,29 @@ class SaveSearchesResultsTool extends Tool
             ->filter()
             ->values();
 
+        // Compute per-document statistics: document alias → { chunk_ids, total_count }
+        $documents = [];
+        $docIds = $orderedChunks->pluck('document_id')->unique()->filter()->values();
+        if ($docIds->isNotEmpty()) {
+            $totalChunksByDocId = Chunk::query()
+                ->whereIn('document_id', $docIds->all())
+                ->selectRaw('document_id, count(*) as total_count')
+                ->groupBy('document_id')
+                ->pluck('total_count', 'document_id')
+                ->map(fn (mixed $v): int => (int) $v);
+
+            foreach ($orderedChunks->groupBy('document_id') as $docId => $docChunks) {
+                $document = $docChunks->first()?->document;
+                $alias = $document?->alias ?? (string) $docId;
+                $documents[$alias] = [
+                    'chunk_ids' => $docChunks->pluck('id')->values()->toArray(),
+                    'total_count' => $totalChunksByDocId->get((string) $docId, 0),
+                ];
+            }
+        }
+
         return [
-            'chunk_ids' => $orderedChunks->pluck('id')->values()->toArray(),
-            'relevant_chunks' => $orderedChunks->mapWithKeys(static fn (Chunk $chunk): array => [
-                (string) $chunk->id => ChunkMapper::loadAndMap($chunk),
-            ])->toArray(),
+            'documents' => $documents,
             'relevant_images' => $this->normalizeRelevantImages($relevantImages),
         ];
     }
@@ -682,14 +765,49 @@ class SaveSearchesResultsTool extends Tool
     }
 
     /**
-     * @param array<int, string> $chunkIds
+     * @param array<string, mixed> $payload
      */
-    private function resolveProjectId(array $chunkIds): ?string
+    private function resolveProjectIdFromPayload(array $payload): ?string
     {
         if (is_string($this->scopeProjectId) && $this->scopeProjectId !== '') {
             return $this->scopeProjectId;
         }
 
+        $chunkIds = $this->extractChunkIdsFromDocuments(is_array($payload['documents'] ?? null) ? $payload['documents'] : []);
+        if ($chunkIds === []) {
+            return null;
+        }
+
+        return $this->resolveProjectIdFromChunkIds($chunkIds);
+    }
+
+    /**
+     * @param array<string, array{chunk_ids?: array<int, string>}> $documents
+     * @return array<int, string>
+     */
+    private function extractChunkIdsFromDocuments(array $documents): array
+    {
+        $ids = [];
+        foreach ($documents as $docStats) {
+            if (! is_array($docStats)) {
+                continue;
+            }
+            $chunkIds = is_array($docStats['chunk_ids'] ?? null) ? $docStats['chunk_ids'] : [];
+            foreach ($chunkIds as $chunkId) {
+                if (is_string($chunkId) && $chunkId !== '') {
+                    $ids[] = $chunkId;
+                }
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * @param array<int, string> $chunkIds
+     */
+    private function resolveProjectIdFromChunkIds(array $chunkIds): ?string
+    {
         if ($chunkIds === []) {
             return null;
         }
@@ -714,5 +832,13 @@ class SaveSearchesResultsTool extends Tool
         }
 
         return (string) $projectIds->first();
+    }
+
+    /**
+     * @param array<int, string> $chunkIds
+     */
+    private function resolveProjectId(array $chunkIds): ?string
+    {
+        return $this->resolveProjectIdFromChunkIds($chunkIds);
     }
 }

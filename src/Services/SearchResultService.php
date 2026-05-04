@@ -28,19 +28,20 @@ class SearchResultService
         $results = SearchResult::query()
             ->when(is_string($projectId) && $projectId !== '', static fn ($builder) => $builder->where('project_id', $projectId))
             ->nearestNeighbors('embedding', $vector)
-            ->select(['id', 'project_id', 'query', 'notes', 'summary', 'hits', 'results'])
+            ->select(['id', 'project_id', 'query', 'notes', 'summary', 'is_complete', 'hits', 'results'])
             ->addSelect(DB::raw("1.0 - (embedding <=> '{$vectorString}') as similarity"))
             ->limit(max(1, $count))
             ->get()
             ->map(fn (SearchResult $row): array => [
-                'id'         => (string) $row->id,
-                'project_id' => is_string($row->project_id) ? $row->project_id : null,
-                'query'      => (string) $row->query,
-                'notes'      => is_string($row->notes) ? $row->notes : null,
-                'summary'    => is_string($row->summary) && trim($row->summary) !== '' ? trim($row->summary) : null,
-                'hits'       => (int) $row->hits,
-                'similarity' => (float) ($row->similarity ?? 0.0),
-                'results'    => $this->resultsForRow($row),
+                'id'          => (string) $row->id,
+                'project_id'  => is_string($row->project_id) ? $row->project_id : null,
+                'query'       => (string) $row->query,
+                'notes'       => is_string($row->notes) ? $row->notes : null,
+                'summary'     => is_string($row->summary) && trim($row->summary) !== '' ? trim($row->summary) : null,
+                'is_complete' => (bool) $row->is_complete,
+                'hits'        => (int) $row->hits,
+                'similarity'  => (float) ($row->similarity ?? 0.0),
+                'results'     => $this->resultsForRow($row),
             ])
             ->all();
 
@@ -62,6 +63,7 @@ class SearchResultService
                 'query_preview' => mb_substr((string) ($row['query'] ?? ''), 0, 120),
                 'notes_preview' => is_string($row['notes'] ?? null) ? mb_substr($row['notes'], 0, 80) : null,
                 'similarity' => round((float) ($row['similarity'] ?? 0.0), 4),
+                'is_complete' => (bool) ($row['is_complete'] ?? false),
                 'hits' => (int) ($row['hits'] ?? 0),
             ], $results)),
         ]);
@@ -85,13 +87,15 @@ class SearchResultService
             'embedding'   => $vector,
         ]);
 
+        $chunksCount = $this->countChunkIdsInResults($results);
+
         Log::channel('search')->info('[SearchResultService] Search result saved', [
             'search_result_id' => (string) $searchResult->id,
             'ai_agent_id' => $aiAgentId,
             'project_id' => $projectId,
             'notes' => $searchResult->notes,
             'query_preview' => mb_substr($query, 0, 200),
-            'chunks_count' => count($results['chunk_ids'] ?? []),
+            'chunks_count' => $chunksCount,
         ]);
 
         return $searchResult;
@@ -124,15 +128,16 @@ class SearchResultService
         $scopedQuery()->increment('hits');
 
         $rows = $scopedQuery()
-            ->get(['id', 'project_id', 'query', 'notes', 'summary', 'hits', 'results'])
+            ->get(['id', 'project_id', 'query', 'notes', 'summary', 'is_complete', 'hits', 'results'])
             ->map(fn (SearchResult $row): array => [
-                'id'         => (string) $row->id,
-                'project_id' => is_string($row->project_id) ? $row->project_id : null,
-                'query'      => (string) $row->query,
-                'notes'      => is_string($row->notes) ? $row->notes : null,
-                'summary'    => is_string($row->summary) && trim($row->summary) !== '' ? trim($row->summary) : null,
-                'hits'       => (int) $row->hits,
-                'results'    => $this->resultsForRow($row),
+                'id'          => (string) $row->id,
+                'project_id'  => is_string($row->project_id) ? $row->project_id : null,
+                'query'       => (string) $row->query,
+                'notes'       => is_string($row->notes) ? $row->notes : null,
+                'summary'     => is_string($row->summary) && trim($row->summary) !== '' ? trim($row->summary) : null,
+                'is_complete' => (bool) $row->is_complete,
+                'hits'        => (int) $row->hits,
+                'results'     => $this->resultsForRow($row),
             ])
             ->all();
 
@@ -195,21 +200,45 @@ class SearchResultService
 
         $allowed = array_fill_keys($allowedIds, true);
 
-        $results['chunk_ids'] = array_values(array_filter(
-            is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : [],
-            static fn (mixed $chunkId): bool => is_string($chunkId) && isset($allowed[$chunkId]),
-        ));
-
-        if (is_array($results['relevant_chunks'] ?? null)) {
-            $results['relevant_chunks'] = array_filter(
-                $results['relevant_chunks'],
+        // Filter documents: keep only chunks that belong to the project
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $filteredDocuments = [];
+            foreach ($documents as $alias => $docStats) {
+                if (! is_array($docStats)) {
+                    continue;
+                }
+                $docChunkIds = is_array($docStats['chunk_ids'] ?? null) ? $docStats['chunk_ids'] : [];
+                $filteredChunkIds = array_values(array_filter(
+                    $docChunkIds,
+                    static fn (mixed $chunkId): bool => is_string($chunkId) && isset($allowed[$chunkId]),
+                ));
+                if ($filteredChunkIds !== []) {
+                    $filteredDocuments[$alias] = [
+                        'chunk_ids' => $filteredChunkIds,
+                        'total_count' => is_int($docStats['total_count'] ?? null) ? $docStats['total_count'] : count($filteredChunkIds),
+                    ];
+                }
+            }
+            $results['documents'] = $filteredDocuments;
+        } else {
+            // Legacy format: filter chunk_ids and relevant_chunks
+            $results['chunk_ids'] = array_values(array_filter(
+                is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : [],
                 static fn (mixed $chunkId): bool => is_string($chunkId) && isset($allowed[$chunkId]),
-                ARRAY_FILTER_USE_KEY,
-            );
-        }
+            ));
 
-        if ($results['chunk_ids'] === []) {
-            $results['relevant_images'] = [];
+            if (is_array($results['relevant_chunks'] ?? null)) {
+                $results['relevant_chunks'] = array_filter(
+                    $results['relevant_chunks'],
+                    static fn (mixed $chunkId): bool => is_string($chunkId) && isset($allowed[$chunkId]),
+                    ARRAY_FILTER_USE_KEY,
+                );
+            }
+
+            if ($results['chunk_ids'] === [] && $results['documents'] === []) {
+                $results['relevant_images'] = [];
+            }
         }
 
         $row['results'] = $results;
@@ -240,6 +269,24 @@ class SearchResultService
      */
     private function extractChunkIds(array $results): array
     {
+        // New format: extract from documents
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $ids = [];
+            foreach ($documents as $docStats) {
+                if (is_array($docStats) && is_array($docStats['chunk_ids'] ?? null)) {
+                    foreach ($docStats['chunk_ids'] as $chunkId) {
+                        if (is_string($chunkId) && $chunkId !== '') {
+                            $ids[] = $chunkId;
+                        }
+                    }
+                }
+            }
+
+            return array_values(array_unique($ids));
+        }
+
+        // Legacy format
         $chunkIds = is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : [];
         $relevantChunkIds = is_array($results['relevant_chunks'] ?? null) ? array_keys($results['relevant_chunks']) : [];
 
@@ -275,6 +322,26 @@ class SearchResultService
         }
 
         return is_array($row->results) ? $row->results : [];
+    }
+
+    /**
+     * @param array<string, mixed> $results
+     */
+    private function countChunkIdsInResults(array $results): int
+    {
+        $documents = is_array($results['documents'] ?? null) ? $results['documents'] : [];
+        if ($documents !== []) {
+            $count = 0;
+            foreach ($documents as $docStats) {
+                if (is_array($docStats) && is_array($docStats['chunk_ids'] ?? null)) {
+                    $count += count($docStats['chunk_ids']);
+                }
+            }
+
+            return $count;
+        }
+
+        return count(is_array($results['chunk_ids'] ?? null) ? $results['chunk_ids'] : []);
     }
 
     /**

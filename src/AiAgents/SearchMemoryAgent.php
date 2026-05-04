@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace SimoneBianco\LaravelRagChunks\AiAgents;
 
 use InvalidArgumentException;
@@ -8,7 +10,20 @@ use SimoneBianco\LaravelAiAgents\Agents\RotableAgent;
 use Throwable;
 use TypeError;
 
-class SearchResultOptimizationAgent extends RotableAgent
+/**
+ * Unified optimization agent for search-result memories.
+ *
+ * Replaces two separate agents:
+ * - SearchResultOptimizationAgent (decide keep/compact/split)
+ * - SearchResultSummaryAgent (create compact summaries)
+ *
+ * Receives project context (name + description) so the LLM understands
+ * the domain when summarizing and grouping chunk content.
+ *
+ * Note: memory MERGE (deduplication of similar queries/notes) is handled
+ * by MemoryMergeAgent — those are different concerns.
+ */
+class SearchMemoryAgent extends RotableAgent
 {
     protected $history = 'LarAgent\\Context\\Drivers\\InMemoryStorage';
 
@@ -17,25 +32,34 @@ class SearchResultOptimizationAgent extends RotableAgent
     protected $maxCompletionTokens = 8192;
 
     protected string $query = '';
-
     protected ?string $notes = null;
-
     protected ?string $existingSummary = null;
-
     protected string $chunkCatalog = '';
-
     protected bool $forceSplit = false;
-
     protected int $maxSummaryWords = 1000;
 
-    public function withInput(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit, int $maxSummaryWords = 1000): self
-    {
+    protected string $projectName = '';
+    protected ?string $projectDescription = null;
+
+    public function withInput(
+        string $query,
+        ?string $notes,
+        ?string $existingSummary,
+        string $chunkCatalog,
+        bool $forceSplit,
+        string $projectName,
+        ?string $projectDescription = null,
+        ?int $maxSummaryWords = null,
+    ): self {
         $this->query = trim($query);
         $this->notes = is_string($notes) && trim($notes) !== '' ? trim($notes) : null;
         $this->existingSummary = is_string($existingSummary) && trim($existingSummary) !== '' ? trim($existingSummary) : null;
         $this->chunkCatalog = trim($chunkCatalog);
         $this->forceSplit = $forceSplit;
-        $this->maxSummaryWords = self::normalizeMaxWords($maxSummaryWords);
+        $this->maxSummaryWords = self::normalizeMaxWords($maxSummaryWords ?? 1000);
+
+        $this->projectName = $projectName;
+        $this->projectDescription = $projectDescription;
 
         return $this;
     }
@@ -74,8 +98,12 @@ class SearchResultOptimizationAgent extends RotableAgent
                             'additionalProperties' => false,
                         ],
                     ],
+                    'is_complete' => [
+                        'type' => 'boolean',
+                        'description' => 'Set true ONLY if this memory (after optimization) absolutely covers ALL relevant information about its topic — no missing documents, no missing chunks, no missing angles. Set false if you are not 100% sure or if the memory is partial.',
+                    ],
                 ],
-                'required' => ['action', 'summary', 'groups'],
+                'required' => ['action', 'summary', 'groups', 'is_complete'],
                 'additionalProperties' => false,
             ],
         ];
@@ -83,8 +111,16 @@ class SearchResultOptimizationAgent extends RotableAgent
 
     public function instructions(): string
     {
+        $contextParts = ["Project: {$this->projectName}"];
+        if ($this->projectDescription !== null && $this->projectDescription !== '') {
+            $contextParts[] = "Description: {$this->projectDescription}";
+        }
+        $context = implode("\n", $contextParts);
+
         return <<<PROMPT
-You optimize one saved RAG search-result memory.
+{$context}
+
+You optimize one saved RAG search-result memory for the project described above.
 
 INPUT
 - query: reusable memory title/query.
@@ -107,14 +143,15 @@ RULES
 5. Summary max {$this->maxSummaryWords} words. Do not be terse: include all relevant facts, names, dates, places, events, numbers, causal links from the chunks that relate to the query.
 6. Split groups must use only chunk IDs from chunk_catalog; each group needs at least one chunk_id.
 7. Notes are ultra-short keyword fragments, max 30 words.
-8. Do not invent facts or topics. Return schema-compliant JSON only.
+8. Set is_complete: true ONLY if you are 100% certain that these chunks cover EVERY relevant fact about the query topic across ALL documents. If ANY related document, chapter, event, character, or angle might be missing, set false. When in doubt, false.
+9. Do not invent facts or topics. Return schema-compliant JSON only.
 PROMPT;
     }
 
     public function respond(?string $message = null): array|string
     {
         if ($this->query === '' || $this->chunkCatalog === '') {
-            throw new InvalidArgumentException('[SearchResultOptimizationAgent] query and chunk catalog are required.');
+            throw new InvalidArgumentException('[SearchMemoryAgent] query and chunk catalog are required.');
         }
 
         $payload = json_encode([
@@ -126,7 +163,7 @@ PROMPT;
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if (! is_string($payload) || $payload === '') {
-            throw new RuntimeException('[SearchResultOptimizationAgent] Failed to encode payload.');
+            throw new RuntimeException('[SearchMemoryAgent] Failed to encode payload.');
         }
 
         try {
@@ -143,7 +180,7 @@ PROMPT;
                 return $response;
             }
 
-            throw new RuntimeException('[SearchResultOptimizationAgent] Unexpected response type from AI provider.');
+            throw new RuntimeException('[SearchMemoryAgent] Unexpected response type from AI provider.');
         } catch (TypeError $exception) {
             throw new RuntimeException('AI provider returned invalid content: ' . $exception->getMessage(), 0, $exception);
         }
@@ -154,14 +191,25 @@ PROMPT;
         return $message;
     }
 
-    /** @return array{action: string, summary: ?string, groups: array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}>} */
-    public static function optimize(string $query, ?string $notes, ?string $existingSummary, string $chunkCatalog, bool $forceSplit = false, ?int $maxSummaryWords = 1000): array
-    {
+    /** @return array{action: string, summary: ?string, groups: array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}>, is_complete: bool} */
+    public static function optimize(
+        string $query,
+        ?string $notes,
+        ?string $existingSummary,
+        string $chunkCatalog,
+        bool $forceSplit,
+        string $projectName,
+        ?string $projectDescription = null,
+        ?int $maxSummaryWords = null,
+    ): array {
         $maxSummaryWords = self::normalizeMaxWords($maxSummaryWords ?? 1000);
 
         try {
             $agent = new self('search-result-optimization');
-            $result = $agent->withInput($query, $notes, $existingSummary, $chunkCatalog, $forceSplit, $maxSummaryWords)->respond();
+            $result = $agent->withInput(
+                $query, $notes, $existingSummary, $chunkCatalog,
+                $forceSplit, $projectName, $projectDescription, $maxSummaryWords,
+            )->respond();
 
             if (! is_array($result)) {
                 return self::fallback($forceSplit);
@@ -180,20 +228,61 @@ PROMPT;
                 ? self::limitWords(trim($result['summary']), $maxSummaryWords)
                 : null;
 
+            $isComplete = is_bool($result['is_complete'] ?? null) ? $result['is_complete'] : false;
+
             return [
                 'action' => $action,
                 'summary' => $summary,
                 'groups' => self::normalizeGroups(is_array($result['groups'] ?? null) ? $result['groups'] : []),
+                'is_complete' => $isComplete,
             ];
         } catch (Throwable) {
             return self::fallback($forceSplit);
         }
     }
 
-    /** @return array{action: string, summary: ?string, groups: array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}>} */
+    public static function summarize(
+        string $query,
+        ?string $notes,
+        string $chunkText,
+        string $projectName,
+        ?string $projectDescription = null,
+        ?int $maxWords = null,
+    ): string {
+        $query = trim($query);
+        $chunkText = trim($chunkText);
+        $maxWords = self::normalizeMaxWords($maxWords ?? 1000);
+
+        if ($query === '' || $chunkText === '') {
+            return '';
+        }
+
+        try {
+            $result = self::optimize(
+                query: $query,
+                notes: $notes,
+                existingSummary: null,
+                chunkCatalog: $chunkText,
+                forceSplit: false,
+                projectName: $projectName,
+                projectDescription: $projectDescription,
+                maxSummaryWords: $maxWords,
+            );
+
+            if ($result['summary'] !== null && $result['summary'] !== '') {
+                return $result['summary'];
+            }
+        } catch (Throwable) {
+            // Fall back to deterministic truncation
+        }
+
+        return self::limitWords($chunkText, $maxWords) ?? '';
+    }
+
+    /** @return array{action: string, summary: ?string, groups: array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}>, is_complete: bool} */
     private static function fallback(bool $forceSplit): array
     {
-        return ['action' => $forceSplit ? 'split' : 'keep', 'summary' => null, 'groups' => []];
+        return ['action' => $forceSplit ? 'split' : 'keep', 'summary' => null, 'groups' => [], 'is_complete' => false];
     }
 
     /** @param array<int, mixed> $groups @return array<int, array{query: string, notes: ?string, chunk_ids: array<int, string>}> */
@@ -232,6 +321,9 @@ PROMPT;
         }
 
         $words = preg_split('/\s+/u', $normalized) ?: [];
+        if ($words === []) {
+            return null;
+        }
 
         return implode(' ', array_slice($words, 0, self::normalizeMaxWords($maxWords)));
     }

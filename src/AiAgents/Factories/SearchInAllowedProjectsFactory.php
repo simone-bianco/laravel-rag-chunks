@@ -24,22 +24,30 @@ final class SearchInAllowedProjectsFactory implements AgentToolFactory
 
         $historyEnabled = (bool) (($config['history_enabled'] ?? $context->get('history_enabled')) ?? false);
 
-        $compactionThreshold = (float) ($context->get('compaction_threshold')
+        $compactionThreshold = $context->get('compaction_threshold')
             ?? $config['compaction_threshold']
-            ?? config('rag_chunks.search_results.auto_merge_distance', 0.11));
+            ?? null;
+        $compactionThreshold = $compactionThreshold !== null ? (float) $compactionThreshold : null;
 
-        $optimizationChunkThreshold = (int) ($context->get('optimization_chunk_threshold')
+        $optimizationChunkThreshold = $context->get('optimization_chunk_threshold')
             ?? $config['optimization_chunk_threshold']
-            ?? config('rag_chunks.search_results.optimization_chunk_threshold', 12));
-
-        $optimizationHitThreshold = (int) ($context->get('optimization_hit_threshold')
-            ?? $config['optimization_hit_threshold']
-            ?? config('rag_chunks.search_results.optimization_hit_threshold', 5));
+            ?? null;
+        $optimizationChunkThreshold = $optimizationChunkThreshold !== null ? (int) $optimizationChunkThreshold : null;
 
         $callingAgentIdRaw = $context->get('calling_agent_id') ?? $config['calling_agent_id'] ?? null;
         $callingAgentId = is_string($callingAgentIdRaw) && trim($callingAgentIdRaw) !== ''
             ? trim($callingAgentIdRaw)
             : null;
+
+        $persistentMemoryEnabled = $context->get('persistent_memory_enabled')
+            ?? $config['persistent_memory_enabled']
+            ?? null;
+        $persistentMemoryEnabled = $persistentMemoryEnabled !== null ? (bool) $persistentMemoryEnabled : null;
+
+        $persistentMemoryMaxWords = $context->get('persistent_memory_max_words')
+            ?? $config['persistent_memory_max_words']
+            ?? null;
+        $persistentMemoryMaxWords = $persistentMemoryMaxWords !== null ? (int) $persistentMemoryMaxWords : null;
 
         return new SearchInAllowedProjects(
             allowedProjectAliases: $aliases,
@@ -47,8 +55,9 @@ final class SearchInAllowedProjectsFactory implements AgentToolFactory
             historyEnabled: $historyEnabled,
             compactionThreshold: $compactionThreshold,
             optimizationChunkThreshold: $optimizationChunkThreshold,
-            optimizationHitThreshold: $optimizationHitThreshold,
             callingAgentId: $callingAgentId,
+            persistentMemoryEnabled: $persistentMemoryEnabled,
+            persistentMemoryMaxWords: $persistentMemoryMaxWords !== 0 ? $persistentMemoryMaxWords : null,
         );
     }
 
