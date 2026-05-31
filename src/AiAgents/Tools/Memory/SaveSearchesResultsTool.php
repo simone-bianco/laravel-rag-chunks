@@ -213,6 +213,14 @@ class SaveSearchesResultsTool extends Tool
             $row->is_complete = $isComplete;
             $row->save();
 
+            if ($isComplete) {
+                $this->logger()->info('[SaveSearchesResultsTool] Memory saved as is_complete: true', [
+                    'search_result_id' => (string) $row->id,
+                    'query' => mb_substr($query, 0, 200),
+                    'project_id' => $projectId,
+                ]);
+            }
+
             $this->logger()->debug('[SaveSearchesResultsTool] Saved row, checking compaction', [
                 'save_id' => (string) $row->id,
                 'project_id' => $projectId,

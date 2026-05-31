@@ -286,6 +286,7 @@ class SearchAgent extends RotableAgent
                     'notes' => $notes,
                     'chunk_ids' => $chunkIds,
                     'relevant_images' => $relevantImages,
+                    'is_complete' => is_bool($result['is_complete'] ?? null) ? $result['is_complete'] : false,
                 ];
             })
             ->filter()

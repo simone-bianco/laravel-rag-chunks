@@ -107,7 +107,7 @@ class GetSearchesResultsTool extends Tool
             $allResults,
         ));
 
-        $this->logger()->info('[GetSearchesResultsTool] Query-based lookup completed', [
+        $this->logger()->info('[GetSearchesResultsTool] Query-based lookup completed (metadata only, no chunk content loaded)', [
             'query_count' => count($queries),
             'found_count' => count($results),
             'project_id' => $this->scopeProjectId,
@@ -115,6 +115,20 @@ class GetSearchesResultsTool extends Tool
                 static fn (array $row): string => (string) ($row['id'] ?? ''),
                 $results,
             )),
+            'memory_sizes' => array_map(
+                static fn (array $row): array => [
+                    'id' => (string) ($row['id'] ?? ''),
+                    'is_complete' => $row['is_complete'] ?? false,
+                    'has_summary' => ($row['summary'] ?? null) !== null,
+                    'documents_count' => count(is_array($row['results']['documents'] ?? null) ? $row['results']['documents'] : []),
+                    'total_chunks' => array_reduce(
+                        is_array($row['results']['documents'] ?? null) ? $row['results']['documents'] : [],
+                        static fn (int $sum, mixed $doc): int => $sum + (is_array($doc['chunk_ids'] ?? null) ? count($doc['chunk_ids']) : 0),
+                        0,
+                    ),
+                ],
+                $results,
+            ),
         ]);
 
         return [

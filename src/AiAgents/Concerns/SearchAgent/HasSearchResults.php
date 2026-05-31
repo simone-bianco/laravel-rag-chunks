@@ -124,19 +124,8 @@ trait HasSearchResults
         return count($queryTokens) >= 4 ? 0.6 : 1.0;
     }
 
-    protected function extractSessionNumber(string $text): ?int
-    {
-        $normalized = mb_strtolower(trim($text));
-        if ($normalized === '') {
-            return null;
-        }
-
-        if (preg_match('/\bsession(?:e)?\s*[-:]?\s*(\d+)\b/u', $normalized, $matches) !== 1) {
-            return null;
-        }
-
-        $value = (int) ($matches[1] ?? 0);
-
-        return $value > 0 ? $value : null;
-    }
+    /**
+     * Removed — was only used by the removed expandChunksForExplicitSessionQuery.
+     * @deprecated
+     */
 }

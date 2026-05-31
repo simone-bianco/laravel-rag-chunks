@@ -3,7 +3,6 @@
 namespace SimoneBianco\LaravelRagChunks\Jobs\Parsing;
 
 use App\Events\PostProcessingProgressEvent;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Cache;
 use SimoneBianco\LaravelProcesses\Models\Process;
@@ -16,11 +15,10 @@ use SimoneBianco\LaravelRagChunks\Services\Parsers\DocumentParserFactory;
 use SimoneBianco\LaravelRagChunks\Services\Parsers\PdfParser;
 use Throwable;
 
-class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUnique
+class PostProcessParsingJob extends BaseDocumentParsingJob
 {
     public int $tries = 12;
     public int $timeout = 7200;
-    public int $uniqueFor = 14400;
 
     public function backoff(): array
     {
@@ -35,18 +33,6 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
     public function __construct(string $processId)
     {
         $this->processId = $processId;
-    }
-
-    public function uniqueId(): string
-    {
-        $documentId = Process::query()
-            ->whereKey($this->processId)
-            ->where('processable_type', Document::class)
-            ->value('processable_id');
-
-        return $documentId !== null
-            ? 'document:' . (string) $documentId
-            : 'process:' . $this->processId;
     }
 
     /**
@@ -70,7 +56,7 @@ class PostProcessParsingJob extends BaseDocumentParsingJob implements ShouldBeUn
             $this->enrichContext();
 
             $lockKey = "rag_chunks:post_process:document:{$document->id}";
-            $lockTtl = $this->timeout + 300;
+            $lockTtl = min($this->timeout + 300, 3600);
             $lock = Cache::lock($lockKey, $lockTtl);
 
             if (!$lock->get()) {

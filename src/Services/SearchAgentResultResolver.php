@@ -8,7 +8,6 @@ use SimoneBianco\LaravelRagChunks\AiAgents\Concerns\NormalizesChunkIds;
 use SimoneBianco\LaravelRagChunks\AiAgents\Tools\ChunkMapper;
 use SimoneBianco\LaravelRagChunks\Enums\RelationType;
 use SimoneBianco\LaravelRagChunks\Models\Chunk;
-use SimoneBianco\LaravelRagChunks\Models\Document;
 use SimoneBianco\LaravelRagChunks\Models\SearchResult;
 
 class SearchAgentResultResolver
@@ -53,6 +52,9 @@ class SearchAgentResultResolver
                 'relevant_images' => is_array($searchResult['relevant_images'] ?? null)
                     ? $searchResult['relevant_images']
                     : [],
+                'is_complete' => is_bool($searchResult['is_complete'] ?? null)
+                    ? $searchResult['is_complete']
+                    : false,
             ];
 
             foreach ($manualChunkIds as $chunkId) {
@@ -102,12 +104,6 @@ class SearchAgentResultResolver
                 ->filter()
                 ->values();
 
-            $orderedChunks = $this->expandChunksForExplicitSessionQuery(
-                $orderedChunks,
-                $entry['query'],
-                $scopeProjectId,
-            );
-
             // Collect the query's own chunk IDs for memory deduplication
             $queryChunkIdSet = array_fill_keys(
                 $orderedChunks->pluck('id')->map(static fn (mixed $id): string => (string) $id)->all(),
@@ -149,6 +145,7 @@ class SearchAgentResultResolver
                     $chunk->id => ChunkMapper::loadAndMap($chunk),
                 ])->toArray(),
                 'relevant_images' => $this->normalizeRelevantImages($entry['relevant_images']),
+                'is_complete' => $entry['is_complete'],
                 'memory_results' => $queryMemoryResults,
             ];
         }
@@ -269,94 +266,11 @@ class SearchAgentResultResolver
     /**
      * @param Collection<int, Chunk> $orderedChunks
      * @return Collection<int, Chunk>
+     *
+     * @deprecated Removed — auto-expansion defeated RAG purpose.
+     *   The SearchAgent must use search_chunks parameters to discover
+     *   relevant chunks. Never auto-load entire documents by session number.
      */
-    private function expandChunksForExplicitSessionQuery(Collection $orderedChunks, string $query, ?string $scopeProjectId): Collection
-    {
-        $sessionNumber = $this->extractSessionNumber($query);
-        if ($sessionNumber === null || $orderedChunks->isEmpty()) {
-            return $orderedChunks;
-        }
-
-        $matchedDocumentIds = $orderedChunks
-            ->pluck('document_id')
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
-            ->values()
-            ->all();
-
-        if ($matchedDocumentIds === []) {
-            return $orderedChunks;
-        }
-
-        $candidateDocuments = Document::query()
-            ->whereIn('id', $matchedDocumentIds)
-            ->get(['id', 'alias', 'name']);
-
-        $sessionDocuments = $candidateDocuments
-            ->filter(fn (Document $document): bool => $this->documentMatchesSessionNumber($document, $sessionNumber))
-            ->values();
-
-        if ($sessionDocuments->isEmpty()) {
-            return $orderedChunks;
-        }
-
-        $expandedChunks = Chunk::query()
-            ->whereIn('document_id', $sessionDocuments->pluck('id')->all())
-            ->when(is_string($scopeProjectId) && $scopeProjectId !== '', function ($query) use ($scopeProjectId): void {
-                $query->whereHas('document', fn ($documentQuery) => $documentQuery->where('project_id', $scopeProjectId));
-            })
-            ->with([
-                'dedupMedia',
-                'outgoingRelations.to_entity',
-                'incomingRelations' => function ($query) {
-                    $query->where('type', RelationType::BIDIRECTIONAL->value)->with('from_entity');
-                },
-            ])
-            ->withNeighborSnippets()
-            ->orderBy('document_id')
-            ->orderBy('order')
-            ->get()
-            ->keyBy('id');
-
-        if ($expandedChunks->isEmpty()) {
-            return $orderedChunks;
-        }
-
-        $existingById = $orderedChunks
-            ->keyBy(static fn (Chunk $chunk): string => (string) $chunk->id);
-
-        foreach ($expandedChunks as $chunkId => $chunk) {
-            if (! $existingById->has((string) $chunkId)) {
-                $existingById->put((string) $chunkId, $chunk);
-            }
-        }
-
-        return $existingById->values();
-    }
-
-    private function documentMatchesSessionNumber(Document $document, int $sessionNumber): bool
-    {
-        $alias = mb_strtolower(trim((string) ($document->alias ?? '')));
-        $name = mb_strtolower(trim((string) ($document->name ?? '')));
-
-        if ($alias === '' && $name === '') {
-            return false;
-        }
-
-        $patterns = [
-            'sessione-' . $sessionNumber,
-            'sessione ' . $sessionNumber,
-            'session-' . $sessionNumber,
-            'session ' . $sessionNumber,
-        ];
-
-        foreach ($patterns as $pattern) {
-            if (str_contains($alias, $pattern) || str_contains($name, $pattern)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     private function isMemoryResultRelevantToQuery(string $query, array $memoryResult): bool
     {
@@ -436,21 +350,9 @@ class SearchAgentResultResolver
         return count($queryTokens) >= 4 ? 0.6 : 1.0;
     }
 
-    private function extractSessionNumber(string $text): ?int
-    {
-        $normalized = mb_strtolower(trim($text));
-        if ($normalized === '') {
-            return null;
-        }
-
-        if (preg_match('/\bsession(?:e)?\s*[-:]?\s*(\d+)\b/u', $normalized, $matches) !== 1) {
-            return null;
-        }
-
-        $value = (int) ($matches[1] ?? 0);
-
-        return $value > 0 ? $value : null;
-    }
+    /**
+     * @deprecated Removed together with expandChunksForExplicitSessionQuery.
+     */
 
     /**
      * @param array<string, array<string, mixed>> $historyById
@@ -490,6 +392,19 @@ class SearchAgentResultResolver
 
         $hasSummary = $summary !== '';
         $chunksCount = $resolvedChunks->count();
+
+        // Memory is fully redundant — every chunk already in the query result
+        // and no summary to provide value. Skip it entirely.
+        if ($chunksCount === 0 && ! $hasSummary) {
+            Log::channel('search')->debug('[Resolver] Memory fully redundant, skipped', [
+                'memory_id' => $historyId,
+                'original_chunks' => count($allHistoryChunkIds),
+                'unique_after_dedup' => 0,
+                'has_summary' => false,
+            ]);
+
+            return null;
+        }
 
         $memoryResult = [
             'id' => $historyId,

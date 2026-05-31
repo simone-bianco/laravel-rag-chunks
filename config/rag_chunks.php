@@ -18,7 +18,7 @@ return [
         ],
         'image_postprocessor' => [
             'provider' => 'openai',
-            'model' => 'gpt-5-mini',
+            'model' => 'gpt-5.4-mini',
             'preferred_chunk_length' => 600,
             'pdftoppm_binary' => env('RAG_PDFTOPPM_BINARY', 'pdftoppm'),
             'pdftotext_binary' => env('RAG_PDFTOTEXT_BINARY', 'pdftotext'),

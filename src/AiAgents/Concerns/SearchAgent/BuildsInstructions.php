@@ -36,6 +36,11 @@ trait BuildsInstructions
                 ],
             ];
 
+            $itemProperties['is_complete'] = [
+                'type' => 'boolean',
+                'description' => 'True ONLY when these chunks cover EVERYTHING knowable about this query. Default false. Set true when a document alias perfectly matches the query (e.g. "api-reference-v2" for "API v2 reference") AND you returned ALL chunks and total_count confirm full coverage. Also true if topic is exhaustively covered across multiple documents. False in all other cases — even when you think most info is covered.',
+            ];
+
             $itemRequired[] = 'query';
 
             // Root-level persistence control
@@ -47,7 +52,7 @@ trait BuildsInstructions
 
             $rootProperties['store_context'] = [
                 'type' => 'string',
-                'description' => 'When store_mode=split: short instructions for the split agent (e.g. "split into 3: red dragons, black dragons, beholders"). Empty otherwise.',
+                'description' => 'When store_mode=split: short instructions for the split agent (e.g. "split into 3: authentication, rate limiting, error handling"). Empty otherwise.',
             ];
         }
 
@@ -208,7 +213,7 @@ ZERO / WEAK RESULTS
 RESULT EXTRACTION
 - Collect relevant chunk UUIDs from all useful attempts
 {$resultMemoryLines}
-- When a document alias matches the query (e.g., "sessione-10-recap" for "sessione 10"), include ALL chunks from that document, not just 1-2
+- When a document alias matches the query (e.g., "api-reference-v2" for "API v2 reference"), deep-dive with `documentsAliases=[matched_alias]` + `keywordsSearch` to find the best chunks inside it. NEVER blindly include ALL chunks of a large document — documents can contain thousands of chunks covering many unrelated topics
 - Target minimum 5+ relevant chunks per query. More if available
 {$imageOutputPolicy}
 
@@ -237,9 +242,16 @@ AI_INSTRUCTIONS;
     protected function buildPersistentMemoryBlock(): string
     {
         if ($this->persistentMemoryActive()) {
-            return "Use update_persistent_memory tool to save the best search strategies to adopt and what to avoid.\n" .
-                "CRITICAL: do not use it to keep search data, use it just to adjust your behavior in order to maximize future search accuracy.\n" .
-                "CRITICAL: use caveman style for the memory, with brief and concise sentences separated by ;";
+            return <<<'SECTION'
+PERSISTENT MEMORY
+- Use `update_persistent_memory` to save reusable SEARCH STRATEGIES, not search results
+- Focus on parameter optimization: tags, textSearch, questionsSearch, semanticTagsSearch, documentSearch patterns
+- NEVER save per-query details or specific document references (unless doc has 500+ chunks or multiple docs share the same topic — then brief filter tip only)
+- Style: caveman, punchy, no full sentences. One entry per line, separated by ;
+- NO blank lines between entries. Each line = one strategy tip
+- Format examples: "recaps -> deep dive for named npcs; session docs -> documentSearch sessione+number; avoid tag filters first pass; broaden textSearch keywords on weak results"
+- MANDATORY: skip saving when you have nothing new to add — only save genuinely useful patterns
+SECTION;
         }
 
         return '';
@@ -291,7 +303,7 @@ SEARCH DEPTH: STANDARD
 - Max 5 attempts when results improve
 - Never stop after one 0/weak attempt
 - Attempt 1: `keywordsSearch` OR + `documentSearch` OR + explicit `documentsAliases`. No chapters, no tag_*
-- Attempt 2: broaden if failed. If attempt 1 found a document whose name/alias matches the query (e.g. "sessione-10-recap" for "sessione 10"), deep-dive with `documentsAliases=[matched_alias]` + `keywordsSearch` OR
+- Attempt 2: broaden if failed. If attempt 1 found a document whose name/alias matches the query (e.g. "api-reference" for "API reference"), deep-dive with `documentsAliases=[matched_alias]` + `keywordsSearch` OR
 - Attempt 3+: if deep-dive successful, broaden to adjacent documents. Add `chapters` from found results. Try one `tag_*` paired with keywords/chapters. Alternate multilingual keywords
 - Stop only when results are dense (8+ relevant chunks) and precise
 SECTION,
@@ -320,58 +332,22 @@ SEARCH MEMORY
 - No tool call needed to save — the server persists results based on store_mode
 - store_mode decision:
   - none: skip persistence. Use when HISTORY fully covers the query, or the query is too specific (e.g. "GDP comparison between Italy and Germany across 100 nations" — unlikely to repeat)
-  - as_is: save all results as one memory. Use for focused queries (e.g. "sessione 10 recap", "red dragon lore") where all chunks belong to one topic
-  - split: save as multiple focused memories. Use for composite queries (e.g. "info on red dragons, black dragons, and beholders") where chunks mix unrelated topics
-- store_context (only for split): short instructions for the split agent (e.g. "split into 3 groups: red dragons, black dragons, beholders"). Max 100 chars, imperative style
+  - as_is: save all results as one memory. Use for focused queries (e.g. "JWT authentication setup", "error handling patterns") where all chunks belong to one topic
+  - split: save as multiple focused memories. Use for composite queries (e.g. "info on authentication, rate limiting, and error handling") where chunks mix unrelated topics
+- store_context (only for split): short instructions for the split agent (e.g. "split into 3 groups: authentication, rate limiting, error handling"). Max 100 chars, imperative style
+- is_complete: true ONLY when these chunks cover EVERYTHING knowable about this query. Criteria:
+  - A document alias perfectly matches the query (e.g. "api-reference-v2" for "API v2 reference") AND you returned ALL chunks from that document (chunk_ids count equals documents[alias].total_count)
+  - OR the topic is exhaustively covered across multiple documents and no other relevant data exists
+  - Default to false in all other cases — even when most info seems covered. Future agents rely on this flag to skip unnecessary searches
 SECTION;
     }
 
+    /**
+     * @deprecated Removed — history injection was replaced by GetSearchesResultsTool.
+     *   The LLM discovers memories via tool call, not via prompt injection.
+     */
     protected function buildHistoryBlock(): string
     {
-        $history = $this->recentSearchResults ?? [];
-
-        if (empty($history)) {
-            return '';
-        }
-
-        $historyList = collect($history)
-            ->map(static function (array $entry): string {
-                $queryJson = json_encode((string) ($entry['query'] ?? ''), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-                if (! is_string($queryJson) || $queryJson === '') {
-                    $queryJson = '""';
-                }
-
-                $notes = is_string($entry['notes'] ?? null)
-                    ? trim((string) $entry['notes'])
-                    : '';
-
-                $notesPart = '';
-
-                if ($notes !== '') {
-                    $notesJson = json_encode($notes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                    $notesPart = ' | notes=' . (is_string($notesJson) && $notesJson !== '' ? $notesJson : '""');
-                }
-
-                $chunksCount = count(is_array($entry['results']['chunk_ids'] ?? null)
-                    ? $entry['results']['chunk_ids']
-                    : []);
-
-                return "- id={$entry['id']} | query={$queryJson}{$notesPart} | chunks_count={$chunksCount}";
-            })
-            ->join("\n");
-
-        return <<<__HISTORY__
-
-HISTORY
-Recent shared cache hits:
-{$historyList}
-Rules:
-- Call `get_searches_results` before `search_chunks`
-- MANDATORY RELEVANCE CHECK: compare history query/notes to current query. If history is about a different topic (e.g., character appearance vs session events), DISCARD it entirely
-- Reuse only SEMANTICALLY CLOSE history: same topic, same type of information requested
-- Search only for missing, new, different, or better data
-- Empty HISTORY record means prior query found no chunks
-__HISTORY__;
+        return '';
     }
 }

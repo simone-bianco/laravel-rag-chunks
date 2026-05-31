@@ -40,7 +40,7 @@ class PostProcessingAgent extends RotableAgent
 
         $config = config('rag_chunks.agents.postprocessor', []);
         $this->config['provider'] = $injectConfig['provider'] ?? $config['provider'] ?? 'openai';
-        $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-5-mini';
+        $this->config['model'] = $injectConfig['model'] ?? $config['model'] ?? 'gpt-5.4-mini';
         $this->preferredChunkLength = $injectConfig['preferred_chunk_length'] ?? $config['preferred_chunk_length'] ?? 600;
 
         Log::channel('document-queue')->debug('Postprocessor config', $this->config);

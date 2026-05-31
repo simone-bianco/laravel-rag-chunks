@@ -19,7 +19,7 @@ class UpdatePersistentMemoryTool extends Tool
         protected ?string $scopeId = null,
         ?int $maxWords = null,
         ?string $name = 'update_persistent_memory',
-        ?string $description = 'Persist information that will be useful in the next iterations (e.g. what strategies are effective to achieve the set goals, and what are not). Style MUST be minimal (caveman mode)'
+        ?string $description = 'Save reusable search strategies (caveman style, one tip per line, ; separated). Focus on parameter patterns (tags, textSearch, documentSearch). NEVER save per-query results. Only reference docs if 500+ chunks or multiple similar docs.'
     ) {
         $this->maxWords = $maxWords;
 
@@ -133,8 +133,8 @@ class UpdatePersistentMemoryTool extends Tool
             ];
         }
 
-        // Append mode with existing row
-        $existing->content = trim(($existing->content ?? '') . "\n\n" . $content);
+        // Append mode with existing row — single newline, no blank lines between entries
+        $existing->content = trim(($existing->content ?? '') . "\n" . $content);
         $existing->save();
 
         $appendedWordCount = str_word_count($existing->content);
