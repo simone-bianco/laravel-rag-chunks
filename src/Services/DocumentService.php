@@ -79,6 +79,23 @@ class DocumentService
             throw new FileNotFoundException("JSONL file not found at $relativeJsonlPath");
         }
 
+        $probeStream = $this->fileService->readStream($relativeJsonlPath);
+        $hasPostProcessedRows = false;
+        try {
+            while (($line = fgets($probeStream)) !== false) {
+                if (trim($line) !== '') {
+                    $hasPostProcessedRows = true;
+                    break;
+                }
+            }
+        } finally {
+            $this->fileService->closeStreams($probeStream, null);
+        }
+
+        if (! $hasPostProcessedRows) {
+            throw new Exception("Post-processed JSONL contains no chunks: $relativeJsonlPath");
+        }
+
         $keepChunksWithImages = (bool) ($options['keep_chunks_with_images'] ?? false);
         $keepTextChunks = (bool) ($options['keep_text_chunks'] ?? false);
         $now = now();

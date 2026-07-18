@@ -800,6 +800,7 @@ class PostProcessor
             $usefulInfoForNextChunking = null;
             $currentIndex = [];
             $processedCount = 0;
+            $emittedChunksCount = 0;
             $totalPages = count($pageImages);
 
             foreach ($pageImages as $index => $pageImage) {
@@ -825,6 +826,8 @@ class PostProcessor
                     $totalPages,
                 );
 
+                $chunksEmitted = count($result['buffer'] ?? []);
+                $emittedChunksCount += $chunksEmitted;
                 $this->processPostProcessingBuffer($result['buffer'], $writeStream, $embedder);
                 $activeContextForNextChunking = $result['active_context_for_next_chunking'] ?? null;
                 $usefulInfoForNextChunking = $result['useful_info_for_next_chunking'] ?? null;
@@ -832,7 +835,7 @@ class PostProcessor
 
                 Log::channel('document-queue')->debug('[PostProcessor] parse_by_image page completed', [
                     'page_number' => $pageImage['page_number'],
-                    'chunks_emitted' => count($result['buffer'] ?? []),
+                    'chunks_emitted' => $chunksEmitted,
                     'processed_pages' => $processedCount,
                     'total_pages' => $totalPages,
                 ]);
@@ -845,6 +848,7 @@ class PostProcessor
             Log::channel('document-queue')->info('[PostProcessor] parse_by_image mode completed', [
                 'processed_pages' => $processedCount,
                 'total_pages' => $totalPages,
+                'chunks_emitted' => $emittedChunksCount,
             ]);
         } finally {
             $this->fileService->closeStreams(null, $writeStream);
@@ -878,6 +882,7 @@ class PostProcessor
             $usefulInfoForNextChunking = null;
             $currentIndex = [];
             $processedCount = 0;
+            $emittedChunksCount = 0;
             $totalPages = count($pageImages);
 
             foreach ($pageImages as $index => $pageImage) {
@@ -889,17 +894,11 @@ class PostProcessor
                 $pageText = $this->extractPageTextWithFallback($sourcePdfRelativePath, $pageImage['page_number']);
                 $characters = $this->countMeaningfulCharacters($pageText);
                 if ($characters < self::MIN_CHARACTERS_FOR_PAGE_PROCESSING) {
-                    Log::channel('document-queue')->info('[PostProcessor] skipping page in parse_by_image due to low extracted text volume', [
+                    Log::channel('document-queue')->info('[PostProcessor] processing page in parse_by_image despite low extracted text volume', [
                         'page_number' => $pageImage['page_number'],
                         'characters' => $characters,
                         'threshold' => self::MIN_CHARACTERS_FOR_PAGE_PROCESSING,
                     ]);
-
-                    if ($onBatchComplete) {
-                        $onBatchComplete($currentLine);
-                    }
-
-                    continue;
                 }
 
                 $result = $this->runImageAgentAndPrepareBuffer(
@@ -916,6 +915,8 @@ class PostProcessor
                     $totalPages,
                 );
 
+                $chunksEmitted = count($result['buffer'] ?? []);
+                $emittedChunksCount += $chunksEmitted;
                 $this->processPostProcessingBuffer($result['buffer'], $writeStream, $embedder);
                 $activeContextForNextChunking = $result['active_context_for_next_chunking'] ?? null;
                 $usefulInfoForNextChunking = $result['useful_info_for_next_chunking'] ?? null;
@@ -923,6 +924,7 @@ class PostProcessor
 
                 Log::channel('document-queue')->debug('[PostProcessor] parse_by_image page processed', [
                     'page_number' => $pageImage['page_number'],
+                    'chunks_emitted' => $chunksEmitted,
                     'processed_pages' => $processedCount,
                     'total_pages' => $totalPages,
                 ]);
@@ -932,10 +934,15 @@ class PostProcessor
                 }
             }
 
+            if ($processedCount === 0 || $emittedChunksCount === 0) {
+                throw new RuntimeException("Image post-processing completed without emitting chunks ({$processedCount}/{$totalPages} pages processed).");
+            }
+
             Log::channel('document-queue')->info('[PostProcessor] parse_by_image completed (direct PDF rendering)', [
                 'source_pdf_path' => $sourcePdfRelativePath,
                 'processed_pages' => $processedCount,
                 'total_pages' => $totalPages,
+                'chunks_emitted' => $emittedChunksCount,
             ]);
         } catch (Throwable $exception) {
             throw new PostProcessingException(
